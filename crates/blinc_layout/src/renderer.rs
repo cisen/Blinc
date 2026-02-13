@@ -8760,15 +8760,14 @@ impl RenderTree {
             }
         }
 
-        // Apply scroll offset
-        let scroll_offset = self.get_scroll_offset(node);
-        let has_scroll = scroll_offset.0.abs() > 0.001 || scroll_offset.1.abs() > 0.001;
-        if has_scroll {
-            ctx.push_transform(Transform::translate(scroll_offset.0, scroll_offset.1));
-        }
-
-        // Push inset clip for children if this element has borders
-        // This prevents children from rendering over the parent's border
+        // Push inset clip for children if this element has borders.
+        // This prevents children (including their shadows) from rendering
+        // over the parent's border stroke.  The clip is at the padding box
+        // (inside border, but padding area is still visible) per CSS spec.
+        //
+        // IMPORTANT: This clip must be pushed BEFORE the scroll transform so it
+        // stays fixed in the element's viewport space.  If pushed after the
+        // scroll transform the clip would drift with the scrolled content.
         let has_border =
             render_node.props.border_width > 0.0 || render_node.props.border_sides.has_any();
         let push_children_clip = clips_content && has_border;
@@ -8777,39 +8776,42 @@ impl RenderTree {
             let sides = &render_node.props.border_sides;
             let uniform_border = render_node.props.border_width;
 
-            let left_inset = sides
+            let border_left = sides
                 .left
                 .as_ref()
                 .map(|b| b.width)
                 .unwrap_or(uniform_border);
-            let right_inset = sides
+            let border_right = sides
                 .right
                 .as_ref()
                 .map(|b| b.width)
                 .unwrap_or(uniform_border);
-            let top_inset = sides
+            let border_top = sides
                 .top
                 .as_ref()
                 .map(|b| b.width)
                 .unwrap_or(uniform_border);
-            let bottom_inset = sides
+            let border_bottom = sides
                 .bottom
                 .as_ref()
                 .map(|b| b.width)
                 .unwrap_or(uniform_border);
 
             let clip_rect = Rect::new(
-                left_inset,
-                top_inset,
-                (bounds.width - left_inset - right_inset).max(0.0),
-                (bounds.height - top_inset - bottom_inset).max(0.0),
+                border_left,
+                border_top,
+                (bounds.width - border_left - border_right).max(0.0),
+                (bounds.height - border_top - border_bottom).max(0.0),
             );
 
-            // Adjust corner radius for inset
+            // Adjust corner radius for border inset
             let radius = render_node.props.border_radius;
-            let max_border = left_inset.max(right_inset).max(top_inset).max(bottom_inset);
-            let inset_radius = if radius.is_uniform() && radius.top_left > max_border {
-                CornerRadius::uniform((radius.top_left - max_border).max(0.0))
+            let max_inset = border_left
+                .max(border_right)
+                .max(border_top)
+                .max(border_bottom);
+            let inset_radius = if radius.is_uniform() && radius.top_left > max_inset {
+                CornerRadius::uniform((radius.top_left - max_inset).max(0.0))
             } else {
                 CornerRadius::default()
             };
@@ -8820,6 +8822,13 @@ impl RenderTree {
                 ClipShape::rect(clip_rect)
             };
             ctx.push_clip(clip_shape);
+        }
+
+        // Apply scroll offset (AFTER children inset clip so clip stays fixed)
+        let scroll_offset = self.get_scroll_offset(node);
+        let has_scroll = scroll_offset.0.abs() > 0.001 || scroll_offset.1.abs() > 0.001;
+        if has_scroll {
+            ctx.push_transform(Transform::translate(scroll_offset.0, scroll_offset.1));
         }
 
         // Render children, passing down the effective opacity and layer inheritance
@@ -8909,19 +8918,14 @@ impl RenderTree {
             }
         }
 
-        // Pop children inset clip
-        if push_children_clip {
-            ctx.pop_clip();
-        }
-
-        // Pop scroll transform
+        // Pop scroll transform (reverse of push order: scroll was pushed after children clip)
         if has_scroll {
             ctx.pop_transform();
         }
 
         // Render scrollbar overlay if this is a scroll container
         // Scrollbar is rendered after scroll transform is popped (in viewport space)
-        // but before clip is popped (clipped within scroll container)
+        // but before children inset clip is popped (clipped within content area)
         if effective_layer == target_layer {
             if let Some(physics) = self.scroll_physics.get(&node) {
                 if let Ok(p) = physics.try_lock() {
@@ -8931,6 +8935,11 @@ impl RenderTree {
                     }
                 }
             }
+        }
+
+        // Pop children inset clip (pushed before scroll, so popped after)
+        if push_children_clip {
+            ctx.pop_clip();
         }
 
         // Pop clip

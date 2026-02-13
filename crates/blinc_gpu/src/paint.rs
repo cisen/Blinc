@@ -2089,7 +2089,12 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             color2: [0.0, 0.0, 0.0, 0.0],
             border: [0.0; 4],
             border_color: [0.0; 4],
-            shadow: [shadow.offset_x * s, shadow.offset_y * s, shadow.blur * s, shadow.spread * s],
+            shadow: [
+                shadow.offset_x * s,
+                shadow.offset_y * s,
+                shadow.blur * s,
+                shadow.spread * s,
+            ],
             shadow_color: [
                 shadow.color.r,
                 shadow.color.g,
@@ -2147,7 +2152,12 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             color2: [0.0, 0.0, 0.0, 0.0],
             border: [0.0; 4],
             border_color: [0.0; 4],
-            shadow: [shadow.offset_x * s, shadow.offset_y * s, shadow.blur * s, shadow.spread * s],
+            shadow: [
+                shadow.offset_x * s,
+                shadow.offset_y * s,
+                shadow.blur * s,
+                shadow.spread * s,
+            ],
             shadow_color: [
                 shadow.color.r,
                 shadow.color.g,

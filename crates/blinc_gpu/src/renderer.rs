@@ -5478,6 +5478,12 @@ impl GpuRenderer {
                                 offset: 128,
                                 shader_location: 8,
                             },
+                            // clip2_bounds (x, y, width, height) - secondary sharp clip
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x4,
+                                offset: 144,
+                                shader_location: 9,
+                            },
                         ],
                     }],
                     compilation_options: Default::default(),

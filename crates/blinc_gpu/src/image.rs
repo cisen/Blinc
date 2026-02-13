@@ -95,7 +95,8 @@ impl GpuImage {
 /// - `filter_a`: `vec4<f32>` (16 bytes) - grayscale, invert, sepia, hue_rotate_rad
 /// - `filter_b`: `vec4<f32>` (16 bytes) - brightness, contrast, saturate, unused
 /// - `transform`: `vec4<f32>` (16 bytes) - 2x2 affine matrix [a, b, c, d]
-///   Total: 144 bytes
+/// - `clip2_bounds`: `vec4<f32>` (16 bytes) - secondary sharp clip (scroll boundary)
+///   Total: 160 bytes
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuImageInstance {
@@ -118,6 +119,10 @@ pub struct GpuImageInstance {
     /// 2x2 CSS affine transform [a, b, c, d] applied around quad center.
     /// Identity = [1, 0, 0, 1]. Supports rotation, scale, and skew.
     pub transform: [f32; 4],
+    /// Secondary clip bounds (x, y, width, height) — sharp rect, no radius.
+    /// Used for scroll container boundaries separate from the primary rounded clip.
+    /// Set to large negative x for no clip.
+    pub clip2_bounds: [f32; 4],
 }
 
 impl Default for GpuImageInstance {
@@ -135,6 +140,8 @@ impl Default for GpuImageInstance {
             filter_b: [1.0, 1.0, 1.0, 0.0], // brightness=1, contrast=1, saturate=1, unused=0
             // Default transform: identity (no rotation, scale, or skew)
             transform: [1.0, 0.0, 0.0, 1.0], // [a, b, c, d] = identity
+            // Default: no secondary clip
+            clip2_bounds: [-10000.0, -10000.0, 100000.0, 100000.0],
         }
     }
 }
@@ -231,6 +238,12 @@ impl GpuImageInstance {
     pub fn with_no_clip(mut self) -> Self {
         self.clip_bounds = [-10000.0, -10000.0, 100000.0, 100000.0];
         self.clip_radius = [0.0; 4];
+        self
+    }
+
+    /// Set secondary sharp clip (scroll container boundary, no radius)
+    pub fn with_clip2_rect(mut self, x: f32, y: f32, width: f32, height: f32) -> Self {
+        self.clip2_bounds = [x, y, width, height];
         self
     }
 

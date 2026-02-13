@@ -152,6 +152,10 @@ struct ImageElement {
     /// Parent border overlay (renders ON TOP of image at parent's bounds).
     /// [x, y, w, h, border_width, border_radius, r, g, b, a]
     parent_border: Option<[f32; 10]>,
+    /// Secondary clip (scroll container boundary) — sharp rect, no radius.
+    /// Kept separate from primary clip_bounds so rounded corners don't morph
+    /// when the primary clip rect shrinks at scroll boundaries.
+    scroll_clip: Option<[f32; 4]>,
 }
 
 /// SVG element data for rendering
@@ -1017,16 +1021,7 @@ impl RenderContext {
         let new_cx = a * cx + c * cy + tx_s;
         let new_cy = b * cx + d * cy + ty_s;
         // Pass original bounds — the 2x2 transform is applied in the shader around the center
-        (
-            new_cx - w * 0.5,
-            new_cy - h * 0.5,
-            w,
-            h,
-            a,
-            b,
-            c,
-            d,
-        )
+        (new_cx - w * 0.5, new_cy - h * 0.5, w, h, a, b, c, d)
     }
 
     /// Render images to target (images must be preloaded first)
@@ -1111,27 +1106,41 @@ impl RenderContext {
             let base_w = dst_rect[2];
             let base_h = dst_rect[3];
 
-            let (draw_x, draw_y, draw_w, draw_h, ta, tb, tc, td) =
+            let (draw_x, draw_y, draw_w, draw_h, ta, tb, tc, td) = if let Some(affine) =
+                image.css_affine
+            {
+                Self::decompose_image_affine(base_x, base_y, base_w, base_h, affine, scale_factor)
+            } else {
+                (base_x, base_y, base_w, base_h, 1.0, 0.0, 0.0, 1.0)
+            };
+
+            // Pre-compute effective clip (transformed by CSS affine if present)
+            let effective_clip = image.clip_bounds.map(|clip| {
                 if let Some(affine) = image.css_affine {
-                    Self::decompose_image_affine(
-                        base_x,
-                        base_y,
-                        base_w,
-                        base_h,
-                        affine,
-                        scale_factor,
-                    )
+                    Self::transform_clip_by_affine(clip, image.clip_radius, affine, scale_factor)
                 } else {
-                    (base_x, base_y, base_w, base_h, 1.0, 0.0, 0.0, 1.0)
-                };
+                    (clip, image.clip_radius)
+                }
+            });
 
             // Render shadow before image if present
             if let Some(ref shadow) = image.shadow {
                 let mut shadow_ctx = GpuPaintContext::new(viewport_width, viewport_height);
+                // Push scroll/parent clip so shadow doesn't escape the container
+                if let Some(clip) = image.clip_bounds {
+                    shadow_ctx.push_clip(blinc_core::ClipShape::RoundedRect {
+                        rect: blinc_core::Rect::new(clip[0], clip[1], clip[2], clip[3]),
+                        corner_radius: blinc_core::CornerRadius {
+                            top_left: image.clip_radius[0],
+                            top_right: image.clip_radius[1],
+                            bottom_right: image.clip_radius[2],
+                            bottom_left: image.clip_radius[3],
+                        },
+                    });
+                }
                 let shadow_rect =
                     blinc_core::Rect::new(image.x, image.y, image.width, image.height);
-                let shadow_radius =
-                    blinc_core::CornerRadius::uniform(image.border_radius);
+                let shadow_radius = blinc_core::CornerRadius::uniform(image.border_radius);
                 shadow_ctx.draw_shadow(shadow_rect, shadow_radius, *shadow);
                 let shadow_batch = shadow_ctx.take_batch();
                 self.renderer.render_overlay(target, &shadow_batch);
@@ -1146,17 +1155,15 @@ impl RenderContext {
                 .with_transform(ta, tb, tc, td)
                 .with_filter(image.filter_a, image.filter_b);
 
-            // Apply clip bounds, transforming by CSS affine if the parent has a CSS transform
-            if let Some(clip) = image.clip_bounds {
-                let (clip, clip_r) = if let Some(affine) = image.css_affine {
-                    Self::transform_clip_by_affine(clip, image.clip_radius, affine, scale_factor)
-                } else {
-                    (clip, image.clip_radius)
-                };
+            // Apply clip bounds (primary rounded clip)
+            if let Some((clip, clip_r)) = effective_clip {
                 instance = instance.with_clip_rounded_rect_corners(
-                    clip[0], clip[1], clip[2], clip[3],
-                    clip_r[0], clip_r[1], clip_r[2], clip_r[3],
+                    clip[0], clip[1], clip[2], clip[3], clip_r[0], clip_r[1], clip_r[2], clip_r[3],
                 );
+            }
+            // Apply secondary scroll clip (sharp rect)
+            if let Some(sc) = image.scroll_clip {
+                instance = instance.with_clip2_rect(sc[0], sc[1], sc[2], sc[3]);
             }
 
             // Render the image
@@ -1164,28 +1171,37 @@ impl RenderContext {
                 .render_images(target, gpu_image.view(), &[instance]);
 
             // Render border on top of image (own border or parent border overlay)
+            // Apply the same scroll/parent clip so borders don't escape the container
             if image.border_width > 0.0 {
                 use blinc_gpu::primitives::GpuPrimitive;
-                let border_primitive =
-                    GpuPrimitive::rect(draw_x, draw_y, draw_w, draw_h)
-                        .with_color(0.0, 0.0, 0.0, 0.0)
-                        .with_corner_radius(image.border_radius)
-                        .with_border(
-                            image.border_width,
-                            image.border_color.r,
-                            image.border_color.g,
-                            image.border_color.b,
-                            image.border_color.a,
-                        );
+                let mut border_primitive = GpuPrimitive::rect(draw_x, draw_y, draw_w, draw_h)
+                    .with_color(0.0, 0.0, 0.0, 0.0)
+                    .with_corner_radius(image.border_radius)
+                    .with_border(
+                        image.border_width,
+                        image.border_color.r,
+                        image.border_color.g,
+                        image.border_color.b,
+                        image.border_color.a,
+                    );
+                if let Some((clip, clip_r)) = effective_clip {
+                    border_primitive.clip_bounds = clip;
+                    border_primitive.clip_radius = clip_r;
+                    border_primitive.type_info[2] = 1; // clip_type = rect
+                }
                 self.renderer
                     .render_primitives_overlay(target, &[border_primitive]);
             } else if let Some(pb) = &image.parent_border {
                 use blinc_gpu::primitives::GpuPrimitive;
-                let border_primitive =
-                    GpuPrimitive::rect(pb[0], pb[1], pb[2], pb[3])
-                        .with_color(0.0, 0.0, 0.0, 0.0)
-                        .with_corner_radius(pb[5])
-                        .with_border(pb[4], pb[6], pb[7], pb[8], pb[9]);
+                let mut border_primitive = GpuPrimitive::rect(pb[0], pb[1], pb[2], pb[3])
+                    .with_color(0.0, 0.0, 0.0, 0.0)
+                    .with_corner_radius(pb[5])
+                    .with_border(pb[4], pb[6], pb[7], pb[8], pb[9]);
+                if let Some((clip, clip_r)) = effective_clip {
+                    border_primitive.clip_bounds = clip;
+                    border_primitive.clip_radius = clip_r;
+                    border_primitive.type_info[2] = 1; // clip_type = rect
+                }
                 self.renderer
                     .render_primitives_overlay(target, &[border_primitive]);
             }
@@ -1244,6 +1260,15 @@ impl RenderContext {
                     (base_x, base_y, base_w, base_h, 1.0, 0.0, 0.0, 1.0)
                 };
 
+            // Pre-compute effective clip (transformed by CSS affine if present)
+            let effective_clip = image.clip_bounds.map(|clip| {
+                if let Some(affine) = image.css_affine {
+                    Self::transform_clip_by_affine(clip, image.clip_radius, affine, 1.0)
+                } else {
+                    (clip, image.clip_radius)
+                }
+            });
+
             // Create GPU instance with proper positioning
             let mut instance = GpuImageInstance::new(draw_x, draw_y, draw_w, draw_h)
                 .with_src_uv(src_uv[0], src_uv[1], src_uv[2], src_uv[3])
@@ -1253,17 +1278,15 @@ impl RenderContext {
                 .with_transform(ta, tb, tc, td)
                 .with_filter(image.filter_a, image.filter_b);
 
-            // Apply clip bounds, transforming by CSS affine if the parent has a CSS transform
-            if let Some(clip) = image.clip_bounds {
-                let (clip, clip_r) = if let Some(affine) = image.css_affine {
-                    Self::transform_clip_by_affine(clip, image.clip_radius, affine, 1.0)
-                } else {
-                    (clip, image.clip_radius)
-                };
+            // Apply clip bounds (primary rounded clip)
+            if let Some((clip, clip_r)) = effective_clip {
                 instance = instance.with_clip_rounded_rect_corners(
-                    clip[0], clip[1], clip[2], clip[3],
-                    clip_r[0], clip_r[1], clip_r[2], clip_r[3],
+                    clip[0], clip[1], clip[2], clip[3], clip_r[0], clip_r[1], clip_r[2], clip_r[3],
                 );
+            }
+            // Apply secondary scroll clip (sharp rect)
+            if let Some(sc) = image.scroll_clip {
+                instance = instance.with_clip2_rect(sc[0], sc[1], sc[2], sc[3]);
             }
 
             // Render the image
@@ -1273,26 +1296,34 @@ impl RenderContext {
             // Render border on top of image (own border or parent border overlay)
             if image.border_width > 0.0 {
                 use blinc_gpu::primitives::GpuPrimitive;
-                let border_primitive =
-                    GpuPrimitive::rect(draw_x, draw_y, draw_w, draw_h)
-                        .with_color(0.0, 0.0, 0.0, 0.0)
-                        .with_corner_radius(image.border_radius)
-                        .with_border(
-                            image.border_width,
-                            image.border_color.r,
-                            image.border_color.g,
-                            image.border_color.b,
-                            image.border_color.a,
-                        );
+                let mut border_primitive = GpuPrimitive::rect(draw_x, draw_y, draw_w, draw_h)
+                    .with_color(0.0, 0.0, 0.0, 0.0)
+                    .with_corner_radius(image.border_radius)
+                    .with_border(
+                        image.border_width,
+                        image.border_color.r,
+                        image.border_color.g,
+                        image.border_color.b,
+                        image.border_color.a,
+                    );
+                if let Some((clip, clip_r)) = effective_clip {
+                    border_primitive.clip_bounds = clip;
+                    border_primitive.clip_radius = clip_r;
+                    border_primitive.type_info[2] = 1;
+                }
                 self.renderer
                     .render_primitives_overlay(target, &[border_primitive]);
             } else if let Some(pb) = &image.parent_border {
                 use blinc_gpu::primitives::GpuPrimitive;
-                let border_primitive =
-                    GpuPrimitive::rect(pb[0], pb[1], pb[2], pb[3])
-                        .with_color(0.0, 0.0, 0.0, 0.0)
-                        .with_corner_radius(pb[5])
-                        .with_border(pb[4], pb[6], pb[7], pb[8], pb[9]);
+                let mut border_primitive = GpuPrimitive::rect(pb[0], pb[1], pb[2], pb[3])
+                    .with_color(0.0, 0.0, 0.0, 0.0)
+                    .with_corner_radius(pb[5])
+                    .with_border(pb[4], pb[6], pb[7], pb[8], pb[9]);
+                if let Some((clip, clip_r)) = effective_clip {
+                    border_primitive.clip_bounds = clip;
+                    border_primitive.clip_radius = clip_r;
+                    border_primitive.type_info[2] = 1;
+                }
                 self.renderer
                     .render_primitives_overlay(target, &[border_primitive]);
             }
@@ -1831,6 +1862,7 @@ impl RenderContext {
                 None, // No initial CSS transform
                 1.0,  // Initial inherited CSS opacity
                 None, // No parent node
+                None, // No initial scroll clip
             );
         }
 
@@ -1871,6 +1903,10 @@ impl RenderContext {
         // Parent node ID for inheriting non-cascading CSS props (border, shadow, filter)
         // to child images that render separately from the SDF pipeline.
         parent_node: Option<LayoutNodeId>,
+        // Scroll container clip — sharp rect kept separate from the primary rounded clip.
+        // This prevents corner radius morphing when a rounded element (card) is partially
+        // scrolled past a sharp scroll boundary.
+        current_scroll_clip: Option<[f32; 4]>,
     ) {
         use blinc_layout::Material;
 
@@ -2006,7 +2042,7 @@ impl RenderContext {
         // When a node clips, we INTERSECT its bounds with any existing clip
         // This ensures nested clipping works correctly (inner clips can't expand outer clips)
         let should_clip = clips_content || has_layout_animation;
-        let (child_clip, child_clip_radius) = if should_clip {
+        let (child_clip, child_clip_radius, child_scroll_clip) = if should_clip {
             // For layout animation, use animated bounds for clipping
             // This ensures content is clipped to the animating size during transition
             let clip_bounds = if has_layout_animation {
@@ -2017,66 +2053,87 @@ impl RenderContext {
             } else {
                 [abs_x, abs_y, bounds.width, bounds.height]
             };
-            // Inset clip by border-width AND padding so children clip to the
-            // content box.  This ensures images and other children inside a
-            // padded container with border-radius are properly rounded.
-            let bw = tree.get_render_node(node)
+            // Inset clip by border-width only.  Per CSS spec, overflow clips
+            // at the padding box (inside border, but padding area is visible).
+            // Padding affects layout positioning, not clipping.
+            let bw = tree
+                .get_render_node(node)
                 .map(|n| n.props.border_width)
                 .unwrap_or(0.0);
-            let (pad_l, pad_r, pad_t, pad_b): (f32, f32, f32, f32) = tree
-                .layout_tree
-                .get_layout(node)
-                .map(|l| (l.padding.left, l.padding.right, l.padding.top, l.padding.bottom))
-                .unwrap_or((0.0, 0.0, 0.0, 0.0));
-            let inset_l = bw + pad_l;
-            let inset_r = bw + pad_r;
-            let inset_t = bw + pad_t;
-            let inset_b = bw + pad_b;
             let this_clip = [
-                clip_bounds[0] + inset_l,
-                clip_bounds[1] + inset_t,
-                (clip_bounds[2] - inset_l - inset_r).max(0.0),
-                (clip_bounds[3] - inset_t - inset_b).max(0.0),
+                clip_bounds[0] + bw,
+                clip_bounds[1] + bw,
+                (clip_bounds[2] - bw * 2.0).max(0.0),
+                (clip_bounds[3] - bw * 2.0).max(0.0),
             ];
 
             // Extract border radius from this node for rounded clipping.
-            // Inner corner radius = max(outer_radius − inset, 0) per CSS box
-            // model.  The inset includes both border-width and padding.
+            // Inner corner radius = max(outer_radius − border_width, 0)
             let this_clip_radius = tree.get_render_node(node).map(|n| {
                 let r = &n.props.border_radius;
-                let inset_tl = inset_l.max(inset_t);
-                let inset_tr = inset_r.max(inset_t);
-                let inset_br = inset_r.max(inset_b);
-                let inset_bl = inset_l.max(inset_b);
                 [
-                    (r.top_left - inset_tl).max(0.0),
-                    (r.top_right - inset_tr).max(0.0),
-                    (r.bottom_right - inset_br).max(0.0),
-                    (r.bottom_left - inset_bl).max(0.0),
+                    (r.top_left - bw).max(0.0),
+                    (r.top_right - bw).max(0.0),
+                    (r.bottom_right - bw).max(0.0),
+                    (r.bottom_left - bw).max(0.0),
                 ]
             });
 
-            let new_clip = if let Some(parent_clip) = current_clip {
-                // Intersect: take the overlap of parent_clip and this_clip
-                let x1 = parent_clip[0].max(this_clip[0]);
-                let y1 = parent_clip[1].max(this_clip[1]);
-                let x2 = (parent_clip[0] + parent_clip[2]).min(this_clip[0] + this_clip[2]);
-                let y2 = (parent_clip[1] + parent_clip[3]).min(this_clip[1] + this_clip[3]);
-                let w = (x2 - x1).max(0.0);
-                let h = (y2 - y1).max(0.0);
-                Some([x1, y1, w, h])
+            let this_has_radius = this_clip_radius
+                .map(|r| r.iter().any(|&v| v > 0.5))
+                .unwrap_or(false);
+            let parent_has_radius = current_clip_radius
+                .map(|r| r.iter().any(|&v| v > 0.5))
+                .unwrap_or(false);
+
+            if let Some(parent_clip) = current_clip {
+                if this_has_radius && !parent_has_radius {
+                    // This node is rounded (card), parent is sharp (scroll container).
+                    // Keep them separate to avoid SDF radius clamping/morphing.
+                    // Primary clip = this node's rounded clip (full card bounds).
+                    // Scroll clip = parent's sharp clip (scroll boundary).
+                    (Some(this_clip), this_clip_radius, Some(parent_clip))
+                } else if !this_has_radius && parent_has_radius {
+                    // This node is sharp (scroll), parent is rounded (card).
+                    // Keep parent as primary rounded clip, this as scroll clip.
+                    (current_clip, current_clip_radius, Some(this_clip))
+                } else {
+                    // Both have same kind of radius — intersect normally.
+                    let x1 = parent_clip[0].max(this_clip[0]);
+                    let y1 = parent_clip[1].max(this_clip[1]);
+                    let parent_right = parent_clip[0] + parent_clip[2];
+                    let parent_bottom = parent_clip[1] + parent_clip[3];
+                    let this_right = this_clip[0] + this_clip[2];
+                    let this_bottom = this_clip[1] + this_clip[3];
+                    let x2 = parent_right.min(this_right);
+                    let y2 = parent_bottom.min(this_bottom);
+                    let w = (x2 - x1).max(0.0);
+                    let h = (y2 - y1).max(0.0);
+                    let clip = Some([x1, y1, w, h]);
+
+                    let child_r = this_clip_radius.unwrap_or([0.0; 4]);
+                    let parent_r = current_clip_radius.unwrap_or([0.0; 4]);
+                    let radius = Some([
+                        child_r[0].max(parent_r[0]),
+                        child_r[1].max(parent_r[1]),
+                        child_r[2].max(parent_r[2]),
+                        child_r[3].max(parent_r[3]),
+                    ]);
+
+                    (clip, radius, current_scroll_clip)
+                }
             } else {
-                Some(this_clip)
-            };
-
-            // Use this node's clip radius when the render node exists (even if all zeros —
-            // a node with border-radius: 0px should NOT inherit parent's rounded corners).
-            // Only fall back to parent clip radius if this node has no render node at all.
-            let new_radius = this_clip_radius.or(current_clip_radius);
-
-            (new_clip, new_radius)
+                // No parent clip — this is the first clip level.
+                if this_has_radius {
+                    // Rounded clip becomes primary, scroll clip passes through.
+                    (Some(this_clip), this_clip_radius, current_scroll_clip)
+                } else {
+                    // Sharp clip becomes scroll clip; no primary rounded clip.
+                    (None, None, Some(this_clip))
+                }
+            }
         } else {
-            (current_clip, current_clip_radius)
+            (current_clip, current_clip_radius, current_scroll_clip)
         };
 
         if let Some(render_node) = tree.get_render_node(node) {
@@ -2291,6 +2348,10 @@ impl RenderContext {
                         .map(|[tl, tr, br, bl]| [tl * scale, tr * scale, br * scale, bl * scale])
                         .unwrap_or([0.0; 4]);
 
+                    // Scale scroll clip by DPI factor
+                    let scaled_scroll_clip = current_scroll_clip
+                        .map(|[cx, cy, cw, ch]| [cx * scale, cy * scale, cw * scale, ch * scale]);
+
                     // Look up parent render props for CSS property inheritance.
                     // Images render via a separate pipeline and don't inherit parent CSS
                     // properties automatically — we must propagate them explicitly.
@@ -2300,8 +2361,10 @@ impl RenderContext {
 
                     // Opacity: own CSS opacity * inherited CSS opacity chain * builder * motion
                     let own_css_opacity = render_node.props.opacity;
-                    let final_opacity =
-                        image_data.opacity * own_css_opacity * inherited_css_opacity * effective_motion_opacity;
+                    let final_opacity = image_data.opacity
+                        * own_css_opacity
+                        * inherited_css_opacity
+                        * effective_motion_opacity;
 
                     // Border-radius: prefer own CSS, then builder.
                     // Parent clip (now at content-box) handles corner rounding.
@@ -2349,9 +2412,7 @@ impl RenderContext {
                     // SDF border (behind) and the image clip edge.
                     let parent_border = parent_props.and_then(|pp| {
                         if pp.clips_content && pp.border_width > 0.0 {
-                            let bc = pp
-                                .border_color
-                                .unwrap_or(blinc_core::Color::TRANSPARENT);
+                            let bc = pp.border_color.unwrap_or(blinc_core::Color::TRANSPARENT);
                             // Get parent bounds for the overlay
                             parent_node.and_then(|pid| {
                                 tree.get_render_bounds(pid, parent_offset).map(|pb| {
@@ -2399,6 +2460,7 @@ impl RenderContext {
                         filter_a,
                         filter_b,
                         parent_border,
+                        scroll_clip: scaled_scroll_clip,
                     });
                 }
                 // Canvas elements are rendered inline during tree traversal (in render_layer)
@@ -2416,6 +2478,9 @@ impl RenderContext {
                                 [tl * scale, tr * scale, br * scale, bl * scale]
                             })
                             .unwrap_or([0.0; 4]);
+                        let scaled_scroll_clip_bg = current_scroll_clip.map(|[cx, cy, cw, ch]| {
+                            [cx * scale, cy * scale, cw * scale, ch * scale]
+                        });
 
                         images.push(ImageElement {
                             source: img_brush.source.clone(),
@@ -2430,7 +2495,10 @@ impl RenderContext {
                                 blinc_core::ImageFit::Tile => 0,
                             },
                             object_position: [img_brush.position.x, img_brush.position.y],
-                            opacity: img_brush.opacity * render_node.props.opacity * inherited_css_opacity * effective_motion_opacity,
+                            opacity: img_brush.opacity
+                                * render_node.props.opacity
+                                * inherited_css_opacity
+                                * effective_motion_opacity,
                             border_radius: render_node.props.border_radius.top_left * scale,
                             tint: [
                                 img_brush.tint.r,
@@ -2462,6 +2530,7 @@ impl RenderContext {
                                 .map(|f| Self::css_filter_to_arrays(f).1)
                                 .unwrap_or([1.0, 1.0, 1.0, 0.0]),
                             parent_border: None,
+                            scroll_clip: scaled_scroll_clip_bg,
                         });
                     }
                 }
@@ -2760,6 +2829,7 @@ impl RenderContext {
                 child_css_affine,
                 child_css_opacity,
                 Some(node), // pass current node as parent for children
+                child_scroll_clip,
             );
         }
 

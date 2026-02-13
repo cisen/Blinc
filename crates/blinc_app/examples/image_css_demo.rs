@@ -253,8 +253,19 @@ fn build_ui(_ctx: &WindowedContext) -> impl ElementBuilder {
             div()
                 .flex_col()
                 .gap_px(4.0)
-                .child(text("Image CSS Styling Demo").size(28.0).weight(FontWeight::Bold).color(Color::WHITE))
-                .child(text("All visual styles applied via ctx.add_css() — Rust only defines structure").size(15.0).color(Color::rgba(1.0, 1.0, 1.0, 0.5))),
+                .child(
+                    text("Image CSS Styling Demo")
+                        .size(28.0)
+                        .weight(FontWeight::Bold)
+                        .color(Color::WHITE),
+                )
+                .child(
+                    text(
+                        "All visual styles applied via ctx.add_css() — Rust only defines structure",
+                    )
+                    .size(15.0)
+                    .color(Color::rgba(1.0, 1.0, 1.0, 0.5)),
+                ),
         )
         // Sections
         .child(opacity_section())
@@ -284,12 +295,20 @@ fn img_card(id: &str, label: &str) -> impl ElementBuilder {
                 .overflow_clip()
                 .child(image(IMG).cover().h(100.0)),
         )
-        .child(text(label).size(12.0).color(Color::rgba(1.0, 1.0, 1.0, 0.5)).weight(FontWeight::SemiBold))
+        .child(
+            text(label)
+                .size(12.0)
+                .color(Color::rgba(1.0, 1.0, 1.0, 0.5))
+                .weight(FontWeight::SemiBold),
+        )
 }
 
 fn section(title: &str) -> Div {
     div().flex_col().gap_px(12.0).child(
-        text(title).size(18.0).weight(FontWeight::SemiBold).color(Color::rgba(1.0, 1.0, 1.0, 0.85)),
+        text(title)
+            .size(18.0)
+            .weight(FontWeight::SemiBold)
+            .color(Color::rgba(1.0, 1.0, 1.0, 0.85)),
     )
 }
 
@@ -298,119 +317,112 @@ fn section(title: &str) -> Div {
 // ============================================================================
 
 fn opacity_section() -> impl ElementBuilder {
-    section("1. Opacity")
-        .child(
-            div()
-                .flex_row()
-                .gap_px(20.0)
-                .items_end()
-                .child(img_card("img-opacity-100", "opacity: 1.0"))
-                .child(img_card("img-opacity-75", "opacity: 0.75"))
-                .child(img_card("img-opacity-50", "opacity: 0.50"))
-                .child(img_card("img-opacity-25", "opacity: 0.25")),
-        )
+    section("1. Opacity").child(
+        div()
+            .flex_row()
+            .gap_px(20.0)
+            .items_end()
+            .child(img_card("img-opacity-100", "opacity: 1.0"))
+            .child(img_card("img-opacity-75", "opacity: 0.75"))
+            .child(img_card("img-opacity-50", "opacity: 0.50"))
+            .child(img_card("img-opacity-25", "opacity: 0.25")),
+    )
 }
 
 fn border_radius_section() -> impl ElementBuilder {
-    section("2. Border Radius")
-        .child(
-            div()
-                .flex_row()
-                .gap_px(20.0)
-                .items_end()
-                .child(img_card("img-radius-0", "0px"))
-                .child(img_card("img-radius-12", "12px"))
-                .child(img_card("img-radius-24", "24px"))
-                .child(img_card("img-radius-circle", "50px (circle)")),
-        )
+    section("2. Border Radius").child(
+        div()
+            .flex_row()
+            .gap_px(20.0)
+            .items_end()
+            .child(img_card("img-radius-0", "0px"))
+            .child(img_card("img-radius-12", "12px"))
+            .child(img_card("img-radius-24", "24px"))
+            .child(img_card("img-radius-circle", "50px (circle)")),
+    )
 }
 
 fn border_section() -> impl ElementBuilder {
-    section("3. Border")
-        .child(
-            div()
-                .flex_row()
-                .gap_px(20.0)
-                .items_end()
-                .child(img_card("img-border-thin", "2px white"))
-                .child(img_card("img-border-thick", "4px blue"))
-                .child(img_card("img-border-accent", "3px amber circle")),
-        )
+    section("3. Border").child(
+        div()
+            .flex_row()
+            .gap_px(20.0)
+            .items_end()
+            .child(img_card("img-border-thin", "2px white"))
+            .child(img_card("img-border-thick", "4px blue"))
+            .child(img_card("img-border-accent", "3px amber circle")),
+    )
 }
 
 fn shadow_section() -> impl ElementBuilder {
-    section("4. Box Shadow")
-        .child(
-            div()
-                .flex_row()
-                .gap_px(20.0)
-                .items_end()
-                .child(img_card("img-shadow-sm", "small"))
-                .child(img_card("img-shadow-md", "medium (blue)"))
-                .child(img_card("img-shadow-lg", "large (amber)")),
-        )
+    section("4. Box Shadow").child(
+        div()
+            .flex_row()
+            .gap_px(20.0)
+            .items_end()
+            .child(img_card("img-shadow-sm", "small"))
+            .child(img_card("img-shadow-md", "medium (blue)"))
+            .child(img_card("img-shadow-lg", "large (amber)")),
+    )
 }
 
 fn transform_section() -> impl ElementBuilder {
-    section("5. CSS Transform (via parent)")
-        .child(
-            div()
-                .flex_row()
-                .gap_px(40.0)
-                .items_end()
-                .child(img_card("img-rotate", "rotate(12deg)"))
-                .child(img_card("img-scale", "scale(1.15)"))
-                .child(img_card("img-skew", "skewX(-8deg)")),
-        )
+    section("5. CSS Transform (via parent)").child(
+        div()
+            .flex_row()
+            .gap_px(40.0)
+            .items_end()
+            .child(img_card("img-rotate", "rotate(12deg)"))
+            .child(img_card("img-scale", "scale(1.15)"))
+            .child(img_card("img-skew", "skewX(-8deg)")),
+    )
 }
 
 fn hover_section() -> impl ElementBuilder {
-    section("6. Hover Transitions (hover over images)")
-        .child(
-            div()
-                .flex_row()
-                .gap_px(20.0)
-                .items_end()
-                .child(img_card("img-hover-scale", "scale + shadow"))
-                .child(img_card("img-hover-opacity", "opacity + border"))
-                .child(img_card("img-hover-rotate", "rotate + scale"))
-                .child(img_card("img-hover-shadow", "glow shadow")),
-        )
+    section("6. Hover Transitions (hover over images)").child(
+        div()
+            .flex_row()
+            .gap_px(20.0)
+            .items_end()
+            .child(img_card("img-hover-scale", "scale + shadow"))
+            .child(img_card("img-hover-opacity", "opacity + border"))
+            .child(img_card("img-hover-rotate", "rotate + scale"))
+            .child(img_card("img-hover-shadow", "glow shadow")),
+    )
 }
 
 fn filter_section() -> impl ElementBuilder {
-    section("8. CSS Filters")
-        .child(
-            div()
-                .flex_row()
-                .flex_wrap()
-                .gap_px(20.0)
-                .items_end()
-                .child(img_card("img-grayscale", "grayscale(100%)"))
-                .child(img_card("img-sepia", "sepia(100%)"))
-                .child(img_card("img-invert", "invert(100%)"))
-                .child(img_card("img-brightness", "brightness(150%)"))
-                .child(img_card("img-contrast", "contrast(200%)"))
-                .child(img_card("img-saturate", "saturate(300%)"))
-                .child(img_card("img-hue-rotate", "hue-rotate(90deg)"))
-                .child(img_card("img-filter-combo", "combo")),
-        )
+    section("8. CSS Filters").child(
+        div()
+            .flex_row()
+            .flex_wrap()
+            .gap_px(20.0)
+            .items_end()
+            .child(img_card("img-grayscale", "grayscale(100%)"))
+            .child(img_card("img-sepia", "sepia(100%)"))
+            .child(img_card("img-invert", "invert(100%)"))
+            .child(img_card("img-brightness", "brightness(150%)"))
+            .child(img_card("img-contrast", "contrast(200%)"))
+            .child(img_card("img-saturate", "saturate(300%)"))
+            .child(img_card("img-hue-rotate", "hue-rotate(90deg)"))
+            .child(img_card("img-filter-combo", "combo")),
+    )
 }
 
 fn bg_image_section() -> impl ElementBuilder {
-    section("7. Background Image (CSS url())")
-        .child(
+    section("7. Background Image (CSS url())").child(
+        div().flex_row().gap_px(20.0).items_end().child(
             div()
-                .flex_row()
-                .gap_px(20.0)
-                .items_end()
+                .flex_col()
+                .gap_px(6.0)
+                .items_center()
+                .child(div().id("bg-image-card"))
                 .child(
-                    div()
-                        .flex_col()
-                        .gap_px(6.0)
-                        .items_center()
-                        .child(div().id("bg-image-card"))
-                        .child(text("background: url(...)").size(12.0).color(Color::rgba(1.0, 1.0, 1.0, 0.5)).weight(FontWeight::SemiBold)),
+                    text("background: url(...)")
+                        .size(12.0)
+                        .color(Color::rgba(1.0, 1.0, 1.0, 0.5))
+                        .weight(FontWeight::SemiBold),
                 ),
-        )
+        ),
+    )
 }

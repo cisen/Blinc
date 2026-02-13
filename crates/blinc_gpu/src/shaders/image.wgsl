@@ -26,6 +26,8 @@ struct ImageInstance {
     // 2x2 affine transform (a, b, c, d) applied around quad center
     // Identity = (1, 0, 0, 1). Supports rotation, scale, and skew.
     @location(8) transform: vec4<f32>,
+    // Secondary clip bounds (x, y, width, height) - sharp rect for scroll boundary
+    @location(9) clip2_bounds: vec4<f32>,
 }
 
 struct VertexOutput {
@@ -41,6 +43,7 @@ struct VertexOutput {
     @location(8) clip_radius: vec4<f32>,
     @location(9) filter_a: vec4<f32>,
     @location(10) filter_b: vec4<f32>,
+    @location(11) clip2_bounds: vec4<f32>,
 }
 
 @group(0) @binding(0)
@@ -113,6 +116,7 @@ fn vs_main(
     output.clip_radius = instance.clip_radius;
     output.filter_a = instance.filter_a;
     output.filter_b = instance.filter_b;
+    output.clip2_bounds = instance.clip2_bounds;
 
     return output;
 }
@@ -243,9 +247,14 @@ fn apply_css_filter(color: vec4<f32>, fa: vec4<f32>, fb: vec4<f32>) -> vec4<f32>
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    // Early clip test - discard if outside clip region
+    // Early clip test - discard if outside either clip region
     let clip_alpha = calculate_clip_alpha(input.world_pos, input.clip_bounds, input.clip_radius);
     if clip_alpha < 0.001 {
+        discard;
+    }
+    // Secondary clip: sharp rect (scroll boundary), no corner radius
+    let clip2_alpha = calculate_clip_alpha(input.world_pos, input.clip2_bounds, vec4<f32>(0.0));
+    if clip2_alpha < 0.001 {
         discard;
     }
 
@@ -273,8 +282,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         color.a *= alpha;
     }
 
-    // Apply clip alpha
-    color.a *= clip_alpha;
+    // Apply both clip alphas
+    color.a *= clip_alpha * clip2_alpha;
 
     // Output premultiplied alpha for correct blending
     // (blend state uses src_factor: One, dst_factor: OneMinusSrcAlpha)

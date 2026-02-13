@@ -5460,6 +5460,24 @@ impl GpuRenderer {
                                 offset: 80,
                                 shader_location: 5,
                             },
+                            // filter_a (grayscale, invert, sepia, hue_rotate_rad)
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x4,
+                                offset: 96,
+                                shader_location: 6,
+                            },
+                            // filter_b (brightness, contrast, saturate, unused)
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x4,
+                                offset: 112,
+                                shader_location: 7,
+                            },
+                            // transform (a, b, c, d) - 2x2 affine matrix
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x4,
+                                offset: 128,
+                                shader_location: 8,
+                            },
                         ],
                     }],
                     compilation_options: Default::default(),

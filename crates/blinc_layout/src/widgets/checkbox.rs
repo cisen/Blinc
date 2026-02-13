@@ -525,7 +525,7 @@ impl ElementBuilder for CheckboxBuilder {
 
 /// Create a checkbox with reactive checked state
 ///
-/// The checkbox uses Stateful<ButtonState> internally for hover detection,
+/// The checkbox uses `Stateful<ButtonState>` internally for hover detection,
 /// and connects to the `State<bool>` signal via `.deps()` for immediate
 /// visual updates on toggle.
 ///

@@ -4683,6 +4683,13 @@ impl RenderTree {
             use crate::element_style::StyleVisibility;
             props.visible = matches!(vis, StyleVisibility::Visible);
         }
+        // Image properties
+        if let Some(of) = style.object_fit {
+            props.object_fit = Some(of);
+        }
+        if let Some(op) = style.object_position {
+            props.object_position = Some(op);
+        }
     }
 
     /// Apply layout properties from an ElementStyle to a taffy Style.

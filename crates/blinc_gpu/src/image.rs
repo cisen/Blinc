@@ -39,7 +39,7 @@ impl GpuImage {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                format: wgpu::TextureFormat::Rgba8Unorm,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             },
@@ -89,10 +89,13 @@ impl GpuImage {
 /// - `dst_rect`: `vec4<f32>` (16 bytes) - destination rectangle
 /// - `src_uv`: `vec4<f32>` (16 bytes) - source UV coordinates
 /// - `tint`: `vec4<f32>` (16 bytes) - tint color
-/// - `params`: `vec4<f32>` (16 bytes) - border_radius, opacity, padding, padding
+/// - `params`: `vec4<f32>` (16 bytes) - border_radius, opacity, sin_rot, cos_rot
 /// - `clip_bounds`: `vec4<f32>` (16 bytes) - clip region
 /// - `clip_radius`: `vec4<f32>` (16 bytes) - clip corner radii
-///   Total: 96 bytes
+/// - `filter_a`: `vec4<f32>` (16 bytes) - grayscale, invert, sepia, hue_rotate_rad
+/// - `filter_b`: `vec4<f32>` (16 bytes) - brightness, contrast, saturate, unused
+/// - `transform`: `vec4<f32>` (16 bytes) - 2x2 affine matrix [a, b, c, d]
+///   Total: 144 bytes
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuImageInstance {
@@ -102,12 +105,19 @@ pub struct GpuImageInstance {
     pub src_uv: [f32; 4],
     /// Tint color (RGBA)
     pub tint: [f32; 4],
-    /// Parameters: (border_radius, opacity, padding, padding)
+    /// Parameters: (border_radius, opacity, sin_rot, cos_rot)
     pub params: [f32; 4],
     /// Clip bounds (x, y, width, height) - set to large negative x for no clip
     pub clip_bounds: [f32; 4],
     /// Clip corner radii (top-left, top-right, bottom-right, bottom-left)
     pub clip_radius: [f32; 4],
+    /// CSS filter A (grayscale, invert, sepia, hue_rotate_rad)
+    pub filter_a: [f32; 4],
+    /// CSS filter B (brightness, contrast, saturate, unused)
+    pub filter_b: [f32; 4],
+    /// 2x2 CSS affine transform [a, b, c, d] applied around quad center.
+    /// Identity = [1, 0, 0, 1]. Supports rotation, scale, and skew.
+    pub transform: [f32; 4],
 }
 
 impl Default for GpuImageInstance {
@@ -120,6 +130,11 @@ impl Default for GpuImageInstance {
             // Default: no clip (large negative value disables clipping)
             clip_bounds: [-10000.0, -10000.0, 100000.0, 100000.0],
             clip_radius: [0.0; 4],
+            // Default filter: identity (no effect)
+            filter_a: [0.0, 0.0, 0.0, 0.0], // grayscale=0, invert=0, sepia=0, hue_rotate=0
+            filter_b: [1.0, 1.0, 1.0, 0.0], // brightness=1, contrast=1, saturate=1, unused=0
+            // Default transform: identity (no rotation, scale, or skew)
+            transform: [1.0, 0.0, 0.0, 1.0], // [a, b, c, d] = identity
         }
     }
 }
@@ -158,9 +173,18 @@ impl GpuImageInstance {
     }
 
     /// Set rotation via sin/cos values (rotates around quad center)
+    /// NOTE: Prefer `with_transform` for full affine (rotation + scale + skew).
+    /// This sets params[2..3] which are unused when `transform` is non-identity.
     pub fn with_rotation_sincos(mut self, sin_rot: f32, cos_rot: f32) -> Self {
         self.params[2] = sin_rot;
         self.params[3] = cos_rot;
+        self
+    }
+
+    /// Set full 2x2 affine transform [a, b, c, d] applied around quad center.
+    /// Supports rotation, scale, and skew. Identity = [1, 0, 0, 1].
+    pub fn with_transform(mut self, a: f32, b: f32, c: f32, d: f32) -> Self {
+        self.transform = [a, b, c, d];
         self
     }
 
@@ -207,6 +231,15 @@ impl GpuImageInstance {
     pub fn with_no_clip(mut self) -> Self {
         self.clip_bounds = [-10000.0, -10000.0, 100000.0, 100000.0];
         self.clip_radius = [0.0; 4];
+        self
+    }
+
+    /// Set CSS filter parameters
+    /// filter_a = (grayscale, invert, sepia, hue_rotate_rad)
+    /// filter_b = (brightness, contrast, saturate, 0)
+    pub fn with_filter(mut self, filter_a: [f32; 4], filter_b: [f32; 4]) -> Self {
+        self.filter_a = filter_a;
+        self.filter_b = filter_b;
         self
     }
 

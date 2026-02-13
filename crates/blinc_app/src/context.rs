@@ -141,6 +141,17 @@ struct ImageElement {
     border_width: f32,
     /// Border color
     border_color: blinc_core::Color,
+    /// CSS transform as 6-element affine [a, b, c, d, tx, ty] (None = no transform)
+    css_affine: Option<[f32; 6]>,
+    /// Drop shadow from CSS
+    shadow: Option<blinc_core::Shadow>,
+    /// CSS filter A (grayscale, invert, sepia, hue_rotate_rad) — identity = [0,0,0,0]
+    filter_a: [f32; 4],
+    /// CSS filter B (brightness, contrast, saturate, unused) — identity = [1,1,1,0]
+    filter_b: [f32; 4],
+    /// Parent border overlay (renders ON TOP of image at parent's bounds).
+    /// [x, y, w, h, border_width, border_radius, r, g, b, a]
+    parent_border: Option<[f32; 10]>,
 }
 
 /// SVG element data for rendering
@@ -533,7 +544,7 @@ impl RenderContext {
             }
 
             // Render images after background primitives
-            self.render_images(target, &images, width as f32, height as f32);
+            self.render_images(target, &images, width as f32, height as f32, scale_factor);
 
             // Render foreground and text
             // Use batch-based rendering when layer effects are present to preserve
@@ -934,6 +945,90 @@ impl RenderContext {
         }
     }
 
+    /// Convert a CssFilter into filter_a/filter_b arrays for the image shader.
+    /// Returns (filter_a, filter_b) where identity = ([0,0,0,0], [1,1,1,0]).
+    fn css_filter_to_arrays(
+        filter: &blinc_layout::element_style::CssFilter,
+    ) -> ([f32; 4], [f32; 4]) {
+        (
+            [
+                filter.grayscale,
+                filter.invert,
+                filter.sepia,
+                filter.hue_rotate.to_radians(),
+            ],
+            [filter.brightness, filter.contrast, filter.saturate, 0.0],
+        )
+    }
+
+    /// Transform clip bounds and radii by a CSS affine.
+    /// When a parent div has a CSS transform (e.g. `scale(1.08)` on hover), the image
+    /// clip must follow the same transform so the image fills the visually-scaled parent.
+    fn transform_clip_by_affine(
+        clip: [f32; 4],
+        clip_radius: [f32; 4],
+        affine: [f32; 6],
+        scale_factor: f32,
+    ) -> ([f32; 4], [f32; 4]) {
+        let [a, b, c, d, tx, ty] = affine;
+        let tx_s = tx * scale_factor;
+        let ty_s = ty * scale_factor;
+        // Transform clip center through the affine
+        let ccx = clip[0] + clip[2] * 0.5;
+        let ccy = clip[1] + clip[3] * 0.5;
+        let new_cx = a * ccx + c * ccy + tx_s;
+        let new_cy = b * ccx + d * ccy + ty_s;
+        // Uniform scale for dimensions
+        let s = (a * d - b * c).abs().sqrt().max(1e-6);
+        let new_clip = [
+            new_cx - clip[2] * s * 0.5,
+            new_cy - clip[3] * s * 0.5,
+            clip[2] * s,
+            clip[3] * s,
+        ];
+        let new_radius = [
+            clip_radius[0] * s,
+            clip_radius[1] * s,
+            clip_radius[2] * s,
+            clip_radius[3] * s,
+        ];
+        (new_clip, new_radius)
+    }
+
+    /// Decompose a CSS affine [a,b,c,d,tx,ty] into position and 2x2 transform for image rendering.
+    /// Input: original rect (already DPI-scaled), affine (layout coords), scale_factor.
+    /// Returns: (draw_x, draw_y, draw_w, draw_h, transform_a, transform_b, transform_c, transform_d)
+    /// The 2x2 matrix [a, b, c, d] is passed to the shader for full affine support (rotation, scale, skew).
+    fn decompose_image_affine(
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        affine: [f32; 6],
+        scale_factor: f32,
+    ) -> (f32, f32, f32, f32, f32, f32, f32, f32) {
+        let [a, b, c, d, tx, ty] = affine;
+        // DPI-scale the translation components
+        let tx_s = tx * scale_factor;
+        let ty_s = ty * scale_factor;
+        // Transform center through the affine (positions are already in screen space)
+        let cx = x + w * 0.5;
+        let cy = y + h * 0.5;
+        let new_cx = a * cx + c * cy + tx_s;
+        let new_cy = b * cx + d * cy + ty_s;
+        // Pass original bounds — the 2x2 transform is applied in the shader around the center
+        (
+            new_cx - w * 0.5,
+            new_cy - h * 0.5,
+            w,
+            h,
+            a,
+            b,
+            c,
+            d,
+        )
+    }
+
     /// Render images to target (images must be preloaded first)
     fn render_images(
         &mut self,
@@ -941,6 +1036,7 @@ impl RenderContext {
         images: &[ImageElement],
         viewport_width: f32,
         viewport_height: f32,
+        scale_factor: f32,
     ) {
         use blinc_image::{calculate_fit_rects, src_rect_to_uv, ObjectFit, ObjectPosition};
 
@@ -1009,29 +1105,57 @@ impl RenderContext {
             // Convert src_rect to UV coordinates
             let src_uv = src_rect_to_uv(src_rect, gpu_image.width(), gpu_image.height());
 
-            // Create GPU instance with proper positioning
-            let mut instance = GpuImageInstance::new(
-                image.x + dst_rect[0],
-                image.y + dst_rect[1],
-                dst_rect[2],
-                dst_rect[3],
-            )
-            .with_src_uv(src_uv[0], src_uv[1], src_uv[2], src_uv[3])
-            .with_tint(image.tint[0], image.tint[1], image.tint[2], image.tint[3])
-            .with_border_radius(image.border_radius)
-            .with_opacity(image.opacity);
+            // Apply CSS affine transform if present
+            let base_x = image.x + dst_rect[0];
+            let base_y = image.y + dst_rect[1];
+            let base_w = dst_rect[2];
+            let base_h = dst_rect[3];
 
-            // Apply clip bounds if specified
+            let (draw_x, draw_y, draw_w, draw_h, ta, tb, tc, td) =
+                if let Some(affine) = image.css_affine {
+                    Self::decompose_image_affine(
+                        base_x,
+                        base_y,
+                        base_w,
+                        base_h,
+                        affine,
+                        scale_factor,
+                    )
+                } else {
+                    (base_x, base_y, base_w, base_h, 1.0, 0.0, 0.0, 1.0)
+                };
+
+            // Render shadow before image if present
+            if let Some(ref shadow) = image.shadow {
+                let mut shadow_ctx = GpuPaintContext::new(viewport_width, viewport_height);
+                let shadow_rect =
+                    blinc_core::Rect::new(image.x, image.y, image.width, image.height);
+                let shadow_radius =
+                    blinc_core::CornerRadius::uniform(image.border_radius);
+                shadow_ctx.draw_shadow(shadow_rect, shadow_radius, *shadow);
+                let shadow_batch = shadow_ctx.take_batch();
+                self.renderer.render_overlay(target, &shadow_batch);
+            }
+
+            // Create GPU instance with proper positioning
+            let mut instance = GpuImageInstance::new(draw_x, draw_y, draw_w, draw_h)
+                .with_src_uv(src_uv[0], src_uv[1], src_uv[2], src_uv[3])
+                .with_tint(image.tint[0], image.tint[1], image.tint[2], image.tint[3])
+                .with_border_radius(image.border_radius)
+                .with_opacity(image.opacity)
+                .with_transform(ta, tb, tc, td)
+                .with_filter(image.filter_a, image.filter_b);
+
+            // Apply clip bounds, transforming by CSS affine if the parent has a CSS transform
             if let Some(clip) = image.clip_bounds {
+                let (clip, clip_r) = if let Some(affine) = image.css_affine {
+                    Self::transform_clip_by_affine(clip, image.clip_radius, affine, scale_factor)
+                } else {
+                    (clip, image.clip_radius)
+                };
                 instance = instance.with_clip_rounded_rect_corners(
-                    clip[0],
-                    clip[1],
-                    clip[2],
-                    clip[3],
-                    image.clip_radius[0],
-                    image.clip_radius[1],
-                    image.clip_radius[2],
-                    image.clip_radius[3],
+                    clip[0], clip[1], clip[2], clip[3],
+                    clip_r[0], clip_r[1], clip_r[2], clip_r[3],
                 );
             }
 
@@ -1039,12 +1163,12 @@ impl RenderContext {
             self.renderer
                 .render_images(target, gpu_image.view(), &[instance]);
 
-            // Render border on top of image if specified
+            // Render border on top of image (own border or parent border overlay)
             if image.border_width > 0.0 {
                 use blinc_gpu::primitives::GpuPrimitive;
                 let border_primitive =
-                    GpuPrimitive::rect(image.x, image.y, image.width, image.height)
-                        .with_color(0.0, 0.0, 0.0, 0.0) // Transparent fill
+                    GpuPrimitive::rect(draw_x, draw_y, draw_w, draw_h)
+                        .with_color(0.0, 0.0, 0.0, 0.0)
                         .with_corner_radius(image.border_radius)
                         .with_border(
                             image.border_width,
@@ -1053,6 +1177,15 @@ impl RenderContext {
                             image.border_color.b,
                             image.border_color.a,
                         );
+                self.renderer
+                    .render_primitives_overlay(target, &[border_primitive]);
+            } else if let Some(pb) = &image.parent_border {
+                use blinc_gpu::primitives::GpuPrimitive;
+                let border_primitive =
+                    GpuPrimitive::rect(pb[0], pb[1], pb[2], pb[3])
+                        .with_color(0.0, 0.0, 0.0, 0.0)
+                        .with_corner_radius(pb[5])
+                        .with_border(pb[4], pb[6], pb[7], pb[8], pb[9]);
                 self.renderer
                     .render_primitives_overlay(target, &[border_primitive]);
             }
@@ -1096,29 +1229,40 @@ impl RenderContext {
             // Convert src_rect to UV coordinates
             let src_uv = src_rect_to_uv(src_rect, gpu_image.width(), gpu_image.height());
 
-            // Create GPU instance with proper positioning
-            let mut instance = GpuImageInstance::new(
-                image.x + dst_rect[0],
-                image.y + dst_rect[1],
-                dst_rect[2],
-                dst_rect[3],
-            )
-            .with_src_uv(src_uv[0], src_uv[1], src_uv[2], src_uv[3])
-            .with_tint(image.tint[0], image.tint[1], image.tint[2], image.tint[3])
-            .with_border_radius(image.border_radius)
-            .with_opacity(image.opacity);
+            // Apply CSS affine transform if present
+            let base_x = image.x + dst_rect[0];
+            let base_y = image.y + dst_rect[1];
+            let base_w = dst_rect[2];
+            let base_h = dst_rect[3];
 
-            // Apply clip bounds if specified
+            // render_images_ref is called for backdrop images; no scale_factor available,
+            // but affine translation is already in screen coords for backdrop path
+            let (draw_x, draw_y, draw_w, draw_h, ta, tb, tc, td) =
+                if let Some(affine) = image.css_affine {
+                    Self::decompose_image_affine(base_x, base_y, base_w, base_h, affine, 1.0)
+                } else {
+                    (base_x, base_y, base_w, base_h, 1.0, 0.0, 0.0, 1.0)
+                };
+
+            // Create GPU instance with proper positioning
+            let mut instance = GpuImageInstance::new(draw_x, draw_y, draw_w, draw_h)
+                .with_src_uv(src_uv[0], src_uv[1], src_uv[2], src_uv[3])
+                .with_tint(image.tint[0], image.tint[1], image.tint[2], image.tint[3])
+                .with_border_radius(image.border_radius)
+                .with_opacity(image.opacity)
+                .with_transform(ta, tb, tc, td)
+                .with_filter(image.filter_a, image.filter_b);
+
+            // Apply clip bounds, transforming by CSS affine if the parent has a CSS transform
             if let Some(clip) = image.clip_bounds {
+                let (clip, clip_r) = if let Some(affine) = image.css_affine {
+                    Self::transform_clip_by_affine(clip, image.clip_radius, affine, 1.0)
+                } else {
+                    (clip, image.clip_radius)
+                };
                 instance = instance.with_clip_rounded_rect_corners(
-                    clip[0],
-                    clip[1],
-                    clip[2],
-                    clip[3],
-                    image.clip_radius[0],
-                    image.clip_radius[1],
-                    image.clip_radius[2],
-                    image.clip_radius[3],
+                    clip[0], clip[1], clip[2], clip[3],
+                    clip_r[0], clip_r[1], clip_r[2], clip_r[3],
                 );
             }
 
@@ -1126,12 +1270,12 @@ impl RenderContext {
             self.renderer
                 .render_images(target, gpu_image.view(), &[instance]);
 
-            // Render border on top of image if specified
+            // Render border on top of image (own border or parent border overlay)
             if image.border_width > 0.0 {
                 use blinc_gpu::primitives::GpuPrimitive;
                 let border_primitive =
-                    GpuPrimitive::rect(image.x, image.y, image.width, image.height)
-                        .with_color(0.0, 0.0, 0.0, 0.0) // Transparent fill
+                    GpuPrimitive::rect(draw_x, draw_y, draw_w, draw_h)
+                        .with_color(0.0, 0.0, 0.0, 0.0)
                         .with_corner_radius(image.border_radius)
                         .with_border(
                             image.border_width,
@@ -1140,6 +1284,15 @@ impl RenderContext {
                             image.border_color.b,
                             image.border_color.a,
                         );
+                self.renderer
+                    .render_primitives_overlay(target, &[border_primitive]);
+            } else if let Some(pb) = &image.parent_border {
+                use blinc_gpu::primitives::GpuPrimitive;
+                let border_primitive =
+                    GpuPrimitive::rect(pb[0], pb[1], pb[2], pb[3])
+                        .with_color(0.0, 0.0, 0.0, 0.0)
+                        .with_corner_radius(pb[5])
+                        .with_border(pb[4], pb[6], pb[7], pb[8], pb[9]);
                 self.renderer
                     .render_primitives_overlay(target, &[border_primitive]);
             }
@@ -1585,9 +1738,8 @@ impl RenderContext {
             };
 
             // Apply CSS affine transform to SVG bounds if present.
-            // Decomposes the affine into scale (applied to bounds) and rotation
-            // (applied in the image shader vertex stage).
-            let (draw_x, draw_y, draw_w, draw_h, sin_rot, cos_rot) =
+            // Pass full 2x2 affine to shader for rotation, scale, and skew support.
+            let (draw_x, draw_y, draw_w, draw_h, ta, tb, tc, td) =
                 if let Some([a, b, c, d, tx, ty]) = svg.css_affine {
                     // DPI-scale the translation components
                     let tx_s = tx * scale_factor;
@@ -1599,33 +1751,25 @@ impl RenderContext {
                     let new_cx = a * cx + c * cy + tx_s;
                     let new_cy = b * cx + d * cy + ty_s;
 
-                    // Extract uniform scale from the 2x2 determinant
-                    let det = a * d - b * c;
-                    let uniform_scale = det.abs().sqrt();
-
-                    // Scale the bounds
-                    let new_w = svg.width * uniform_scale;
-                    let new_h = svg.height * uniform_scale;
-
-                    // Extract rotation angle from the 2x2 part
-                    let angle = b.atan2(a);
-
+                    // Pass original bounds — the 2x2 transform is applied in the shader
                     (
-                        new_cx - new_w * 0.5,
-                        new_cy - new_h * 0.5,
-                        new_w,
-                        new_h,
-                        angle.sin(),
-                        angle.cos(),
+                        new_cx - svg.width * 0.5,
+                        new_cy - svg.height * 0.5,
+                        svg.width,
+                        svg.height,
+                        a,
+                        b,
+                        c,
+                        d,
                     )
                 } else {
-                    (svg.x, svg.y, svg.width, svg.height, 0.0, 1.0)
+                    (svg.x, svg.y, svg.width, svg.height, 1.0, 0.0, 0.0, 1.0)
                 };
 
             // Create instance at (possibly transformed) SVG position
             let mut instance = GpuImageInstance::new(draw_x, draw_y, draw_w, draw_h)
                 .with_opacity(svg.motion_opacity)
-                .with_rotation_sincos(sin_rot, cos_rot);
+                .with_transform(ta, tb, tc, td);
 
             // Apply clip bounds if specified
             if let Some([clip_x, clip_y, clip_w, clip_h]) = svg.clip_bounds {
@@ -1685,6 +1829,8 @@ impl RenderContext {
                 &mut svgs,
                 &mut images,
                 None, // No initial CSS transform
+                1.0,  // Initial inherited CSS opacity
+                None, // No parent node
             );
         }
 
@@ -1719,6 +1865,12 @@ impl RenderContext {
         // Accumulated CSS transform from ancestors as a 6-element affine [a,b,c,d,tx,ty]
         // in layout coordinates. Maps pre-transform coords to post-transform visual coords.
         inherited_css_affine: Option<[f32; 6]>,
+        // Accumulated CSS opacity from ancestors (compounds multiplicatively).
+        // CSS `opacity` applies to the element and its entire visual subtree.
+        inherited_css_opacity: f32,
+        // Parent node ID for inheriting non-cascading CSS props (border, shadow, filter)
+        // to child images that render separately from the SDF pipeline.
+        parent_node: Option<LayoutNodeId>,
     ) {
         use blinc_layout::Material;
 
@@ -1865,20 +2017,43 @@ impl RenderContext {
             } else {
                 [abs_x, abs_y, bounds.width, bounds.height]
             };
-            // Inset clip by padding so children clip to the content box
-            let [pt, pr, pb, pl] = tree.get_node_padding(node);
+            // Inset clip by border-width AND padding so children clip to the
+            // content box.  This ensures images and other children inside a
+            // padded container with border-radius are properly rounded.
+            let bw = tree.get_render_node(node)
+                .map(|n| n.props.border_width)
+                .unwrap_or(0.0);
+            let (pad_l, pad_r, pad_t, pad_b): (f32, f32, f32, f32) = tree
+                .layout_tree
+                .get_layout(node)
+                .map(|l| (l.padding.left, l.padding.right, l.padding.top, l.padding.bottom))
+                .unwrap_or((0.0, 0.0, 0.0, 0.0));
+            let inset_l = bw + pad_l;
+            let inset_r = bw + pad_r;
+            let inset_t = bw + pad_t;
+            let inset_b = bw + pad_b;
             let this_clip = [
-                clip_bounds[0] + pl,
-                clip_bounds[1] + pt,
-                (clip_bounds[2] - pl - pr).max(0.0),
-                (clip_bounds[3] - pt - pb).max(0.0),
+                clip_bounds[0] + inset_l,
+                clip_bounds[1] + inset_t,
+                (clip_bounds[2] - inset_l - inset_r).max(0.0),
+                (clip_bounds[3] - inset_t - inset_b).max(0.0),
             ];
 
-            // Extract border radius from this node for rounded clipping
-            // Order: top_left, top_right, bottom_right, bottom_left
+            // Extract border radius from this node for rounded clipping.
+            // Inner corner radius = max(outer_radius − inset, 0) per CSS box
+            // model.  The inset includes both border-width and padding.
             let this_clip_radius = tree.get_render_node(node).map(|n| {
                 let r = &n.props.border_radius;
-                [r.top_left, r.top_right, r.bottom_right, r.bottom_left]
+                let inset_tl = inset_l.max(inset_t);
+                let inset_tr = inset_r.max(inset_t);
+                let inset_br = inset_r.max(inset_b);
+                let inset_bl = inset_l.max(inset_b);
+                [
+                    (r.top_left - inset_tl).max(0.0),
+                    (r.top_right - inset_tr).max(0.0),
+                    (r.bottom_right - inset_br).max(0.0),
+                    (r.bottom_left - inset_bl).max(0.0),
+                ]
             });
 
             let new_clip = if let Some(parent_clip) = current_clip {
@@ -1894,15 +2069,10 @@ impl RenderContext {
                 Some(this_clip)
             };
 
-            // Use this node's border radius if it has one, otherwise inherit parent's
-            let new_radius = if this_clip_radius
-                .map(|r| r.iter().any(|&v| v > 0.0))
-                .unwrap_or(false)
-            {
-                this_clip_radius
-            } else {
-                current_clip_radius
-            };
+            // Use this node's clip radius when the render node exists (even if all zeros —
+            // a node with border-radius: 0px should NOT inherit parent's rounded corners).
+            // Only fall back to parent clip radius if this node has no render node at all.
+            let new_radius = this_clip_radius.or(current_clip_radius);
 
             (new_clip, new_radius)
         } else {
@@ -2121,16 +2291,99 @@ impl RenderContext {
                         .map(|[tl, tr, br, bl]| [tl * scale, tr * scale, br * scale, bl * scale])
                         .unwrap_or([0.0; 4]);
 
+                    // Look up parent render props for CSS property inheritance.
+                    // Images render via a separate pipeline and don't inherit parent CSS
+                    // properties automatically — we must propagate them explicitly.
+                    let parent_props = parent_node
+                        .and_then(|pid| tree.get_render_node(pid))
+                        .map(|pn| &pn.props);
+
+                    // Opacity: own CSS opacity * inherited CSS opacity chain * builder * motion
+                    let own_css_opacity = render_node.props.opacity;
+                    let final_opacity =
+                        image_data.opacity * own_css_opacity * inherited_css_opacity * effective_motion_opacity;
+
+                    // Border-radius: prefer own CSS, then builder.
+                    // Parent clip (now at content-box) handles corner rounding.
+                    let own_br = render_node.props.border_radius.top_left;
+                    let final_border_radius = if own_br > 0.0 {
+                        own_br * scale
+                    } else {
+                        image_data.border_radius * scale
+                    };
+
+                    // Border: use image's own CSS border (parent border renders via SDF,
+                    // visible because clip now insets by border-width)
+                    let border_width = render_node.props.border_width * scale;
+                    let border_color = render_node
+                        .props
+                        .border_color
+                        .unwrap_or(blinc_core::Color::TRANSPARENT);
+
+                    // Shadow: use image's own (parent shadow renders via SDF)
+                    let shadow = render_node.props.shadow;
+
+                    // Filter: prefer own, fall back to parent
+                    let own_filter = &render_node.props.filter;
+                    let parent_filter = parent_props.and_then(|p| p.filter.as_ref());
+                    let effective_filter = own_filter.as_ref().or(parent_filter);
+                    let filter_a = effective_filter
+                        .map(|f| Self::css_filter_to_arrays(f).0)
+                        .unwrap_or([0.0, 0.0, 0.0, 0.0]);
+                    let filter_b = effective_filter
+                        .map(|f| Self::css_filter_to_arrays(f).1)
+                        .unwrap_or([1.0, 1.0, 1.0, 0.0]);
+
+                    // object-fit / object-position: CSS overrides builder values
+                    let final_object_fit = render_node
+                        .props
+                        .object_fit
+                        .unwrap_or(image_data.object_fit);
+                    let final_object_position = render_node
+                        .props
+                        .object_position
+                        .unwrap_or(image_data.object_position);
+
+                    // Parent border overlay: when the clipping parent has a border,
+                    // render it ON TOP of the image to eliminate AA gap between the
+                    // SDF border (behind) and the image clip edge.
+                    let parent_border = parent_props.and_then(|pp| {
+                        if pp.clips_content && pp.border_width > 0.0 {
+                            let bc = pp
+                                .border_color
+                                .unwrap_or(blinc_core::Color::TRANSPARENT);
+                            // Get parent bounds for the overlay
+                            parent_node.and_then(|pid| {
+                                tree.get_render_bounds(pid, parent_offset).map(|pb| {
+                                    [
+                                        pb.x * scale,
+                                        pb.y * scale,
+                                        pb.width * scale,
+                                        pb.height * scale,
+                                        pp.border_width * scale,
+                                        pp.border_radius.top_left * scale,
+                                        bc.r,
+                                        bc.g,
+                                        bc.b,
+                                        bc.a,
+                                    ]
+                                })
+                            })
+                        } else {
+                            None
+                        }
+                    });
+
                     images.push(ImageElement {
                         source: image_data.source.clone(),
                         x: abs_x * scale,
                         y: abs_y * scale,
                         width: bounds.width * scale,
                         height: bounds.height * scale,
-                        object_fit: image_data.object_fit,
-                        object_position: image_data.object_position,
-                        opacity: image_data.opacity,
-                        border_radius: image_data.border_radius * scale,
+                        object_fit: final_object_fit,
+                        object_position: final_object_position,
+                        opacity: final_opacity,
+                        border_radius: final_border_radius,
                         tint: image_data.tint,
                         clip_bounds: scaled_clip,
                         clip_radius: scaled_clip_radius,
@@ -2139,11 +2392,13 @@ impl RenderContext {
                         placeholder_type: image_data.placeholder_type,
                         placeholder_color: image_data.placeholder_color,
                         z_index: *z_layer,
-                        border_width: render_node.props.border_width * scale,
-                        border_color: render_node
-                            .props
-                            .border_color
-                            .unwrap_or(blinc_core::Color::TRANSPARENT),
+                        border_width,
+                        border_color,
+                        css_affine: inherited_css_affine,
+                        shadow,
+                        filter_a,
+                        filter_b,
+                        parent_border,
                     });
                 }
                 // Canvas elements are rendered inline during tree traversal (in render_layer)
@@ -2175,7 +2430,7 @@ impl RenderContext {
                                 blinc_core::ImageFit::Tile => 0,
                             },
                             object_position: [img_brush.position.x, img_brush.position.y],
-                            opacity: img_brush.opacity * effective_motion_opacity,
+                            opacity: img_brush.opacity * render_node.props.opacity * inherited_css_opacity * effective_motion_opacity,
                             border_radius: render_node.props.border_radius.top_left * scale,
                             tint: [
                                 img_brush.tint.r,
@@ -2192,6 +2447,21 @@ impl RenderContext {
                             z_index: *z_layer,
                             border_width: 0.0,
                             border_color: blinc_core::Color::TRANSPARENT,
+                            css_affine: inherited_css_affine,
+                            shadow: render_node.props.shadow,
+                            filter_a: render_node
+                                .props
+                                .filter
+                                .as_ref()
+                                .map(|f| Self::css_filter_to_arrays(f).0)
+                                .unwrap_or([0.0, 0.0, 0.0, 0.0]),
+                            filter_b: render_node
+                                .props
+                                .filter
+                                .as_ref()
+                                .map(|f| Self::css_filter_to_arrays(f).1)
+                                .unwrap_or([1.0, 1.0, 1.0, 0.0]),
+                            parent_border: None,
                         });
                     }
                 }
@@ -2460,6 +2730,14 @@ impl RenderContext {
             inherited_css_affine
         };
 
+        // Compute inherited CSS opacity for children: compound this node's CSS opacity
+        // CSS `opacity` applies to the element AND its visual subtree
+        let child_css_opacity = if let Some(rn) = tree.get_render_node(node) {
+            inherited_css_opacity * rn.props.opacity
+        } else {
+            inherited_css_opacity
+        };
+
         for child_id in tree.layout().children(node) {
             self.collect_elements_recursive(
                 tree,
@@ -2480,6 +2758,8 @@ impl RenderContext {
                 svgs,
                 images,
                 child_css_affine,
+                child_css_opacity,
+                Some(node), // pass current node as parent for children
             );
         }
 
@@ -3021,7 +3301,7 @@ impl RenderContext {
                         .render_paths_overlay_msaa(target, &batch, self.sample_count);
                 }
 
-                self.render_images(target, &images, width as f32, height as f32);
+                self.render_images(target, &images, width as f32, height as f32, scale_factor);
 
                 // Render foreground primitives (e.g. borders on top)
                 if !batch.foreground_primitives.is_empty() {
@@ -3278,7 +3558,7 @@ impl RenderContext {
         }
 
         // Images render on top
-        self.render_images(target, &images, width as f32, height as f32);
+        self.render_images(target, &images, width as f32, height as f32, scale_factor);
 
         // Render foreground primitives (e.g. borders on top)
         if !batch.foreground_primitives.is_empty() {

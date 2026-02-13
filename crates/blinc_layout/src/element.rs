@@ -1080,6 +1080,10 @@ pub struct RenderProps {
     pub motion_is_exiting: bool,
     /// CSS visibility (false = hidden, keeps layout space but doesn't render)
     pub visible: bool,
+    /// CSS object-fit override for images (0=cover, 1=contain, 2=fill, 3=scale-down, 4=none)
+    pub object_fit: Option<u8>,
+    /// CSS object-position override for images [x, y] in 0.0-1.0 range
+    pub object_position: Option<[f32; 2]>,
 }
 
 impl Default for RenderProps {
@@ -1143,6 +1147,8 @@ impl Default for RenderProps {
             stroke_width: None,
             transform_origin: None,
             visible: true,
+            object_fit: None,
+            object_position: None,
         }
     }
 }

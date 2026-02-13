@@ -270,6 +270,15 @@ impl<'a> GpuPaintContext<'a> {
         )
     }
 
+    /// Extract the uniform scale factor from the current transform.
+    /// This accounts for DPI scaling and any CSS transforms.
+    fn current_uniform_scale(&self) -> f32 {
+        let affine = self.current_affine();
+        let [a, b, c, d, ..] = affine.elements;
+        let det = a * d - b * c;
+        det.abs().sqrt().max(1e-6)
+    }
+
     /// Transform a rect by the current transform (rotation+skew safe)
     ///
     /// Transforms the center of the rect through the full affine. Uses the
@@ -1768,6 +1777,9 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
         let (color, _color2, gradient_params, fill_type) = self.brush_to_colors(&brush);
         let (clip_bounds, clip_radius, clip_type) = self.get_clip_data();
 
+        // Scale border width by the current transform's uniform scale (DPI + CSS transforms)
+        let scaled_border_width = stroke.width * self.current_uniform_scale();
+
         let primitive = GpuPrimitive {
             bounds: [
                 transformed.x(),
@@ -1783,7 +1795,7 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             ],
             color: [0.0, 0.0, 0.0, 0.0], // Transparent fill
             color2: [0.0, 0.0, 0.0, 0.0],
-            border: [stroke.width, 0.0, 0.0, 0.0],
+            border: [scaled_border_width, 0.0, 0.0, 0.0],
             border_color: color,
             shadow: [0.0; 4],
             shadow_color: [0.0; 4],
@@ -2055,6 +2067,11 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
         let opacity = self.combined_opacity();
         let (clip_bounds, clip_radius, clip_type) = self.get_clip_data();
 
+        // Scale shadow values by the current transform's uniform scale (DPI + CSS transforms).
+        // Shadow offset, blur, and spread are in logical pixels but the shader
+        // operates in physical pixel space after the DPI transform.
+        let s = self.current_uniform_scale();
+
         let primitive = GpuPrimitive {
             bounds: [
                 transformed.x(),
@@ -2072,7 +2089,7 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             color2: [0.0, 0.0, 0.0, 0.0],
             border: [0.0; 4],
             border_color: [0.0; 4],
-            shadow: [shadow.offset_x, shadow.offset_y, shadow.blur, shadow.spread],
+            shadow: [shadow.offset_x * s, shadow.offset_y * s, shadow.blur * s, shadow.spread * s],
             shadow_color: [
                 shadow.color.r,
                 shadow.color.g,
@@ -2110,6 +2127,9 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
         let opacity = self.combined_opacity();
         let (clip_bounds, clip_radius, clip_type) = self.get_clip_data();
 
+        // Scale shadow values by the current transform's uniform scale (DPI + CSS transforms)
+        let s = self.current_uniform_scale();
+
         let primitive = GpuPrimitive {
             bounds: [
                 transformed.x(),
@@ -2127,7 +2147,7 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             color2: [0.0, 0.0, 0.0, 0.0],
             border: [0.0; 4],
             border_color: [0.0; 4],
-            shadow: [shadow.offset_x, shadow.offset_y, shadow.blur, shadow.spread],
+            shadow: [shadow.offset_x * s, shadow.offset_y * s, shadow.blur * s, shadow.spread * s],
             shadow_color: [
                 shadow.color.r,
                 shadow.color.g,

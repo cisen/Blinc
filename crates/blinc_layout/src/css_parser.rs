@@ -3515,6 +3515,19 @@ fn apply_property(style: &mut ElementStyle, name: &str, value: &str) {
                 style.left = Some(px);
             }
         }
+        "object-fit" => match value.trim() {
+            "cover" => style.object_fit = Some(0),
+            "contain" => style.object_fit = Some(1),
+            "fill" => style.object_fit = Some(2),
+            "scale-down" => style.object_fit = Some(3),
+            "none" => style.object_fit = Some(4),
+            _ => {}
+        },
+        "object-position" => {
+            if let Some(pos) = parse_object_position(value) {
+                style.object_position = Some(pos);
+            }
+        }
         _ => {
             // Unknown property - log at debug level for forward compatibility
             debug!(
@@ -4271,6 +4284,21 @@ fn apply_property_with_errors(
                 style.right = Some(px);
                 style.bottom = Some(px);
                 style.left = Some(px);
+            } else {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        }
+        "object-fit" => match value.trim() {
+            "cover" => style.object_fit = Some(0),
+            "contain" => style.object_fit = Some(1),
+            "fill" => style.object_fit = Some(2),
+            "scale-down" => style.object_fit = Some(3),
+            "none" => style.object_fit = Some(4),
+            _ => errors.push(ParseError::invalid_value(name, value, line, column)),
+        },
+        "object-position" => {
+            if let Some(pos) = parse_object_position(value) {
+                style.object_position = Some(pos);
             } else {
                 errors.push(ParseError::invalid_value(name, value, line, column));
             }
@@ -5505,6 +5533,49 @@ fn parse_css_px(input: &str) -> Option<f32> {
     }
     // Unitless number = px
     trimmed.parse::<f32>().ok()
+}
+
+/// Parse a CSS `object-position` value into [x, y] in 0.0-1.0 range.
+///
+/// Supports keywords (`left`, `center`, `right`, `top`, `bottom`),
+/// percentages (`25%`), and two-value combinations (`left top`, `50% 25%`).
+fn parse_object_position(input: &str) -> Option<[f32; 2]> {
+    let trimmed = input.trim();
+
+    // Helper: parse a single keyword or percentage to a 0.0-1.0 value
+    fn keyword_or_pct(s: &str) -> Option<f32> {
+        match s {
+            "left" | "top" => Some(0.0),
+            "center" => Some(0.5),
+            "right" | "bottom" => Some(1.0),
+            _ => {
+                if let Some(pct_str) = s.strip_suffix('%') {
+                    pct_str.trim().parse::<f32>().ok().map(|v| v / 100.0)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+    match parts.len() {
+        1 => {
+            // Single value: applied to x, y defaults to 50%
+            let v = keyword_or_pct(parts[0])?;
+            // Keywords top/bottom are y-axis → put in y, x = 50%
+            match parts[0] {
+                "top" | "bottom" => Some([0.5, v]),
+                _ => Some([v, 0.5]),
+            }
+        }
+        2 => {
+            let x = keyword_or_pct(parts[0])?;
+            let y = keyword_or_pct(parts[1])?;
+            Some([x, y])
+        }
+        _ => None,
+    }
 }
 
 /// Parse a CSS dimension value: `Npx`, `N%`, `auto`, `fit-content`, `max-content`

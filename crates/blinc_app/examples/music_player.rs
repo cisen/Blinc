@@ -66,12 +66,9 @@ fn main() -> Result<()> {
                     height: 52px;
                 }
                
-
                 #progress:hover #time-left, #progress:hover #time-right {
                     opacity: 1;
                 }
-
-                
 
                 /* ========================================= */
                 /* Album Header                              */
@@ -84,6 +81,10 @@ fn main() -> Result<()> {
                     border-color: rgba(255, 255, 255, 0.5);
                     border-width: 1.5px;
                     border-style: solid;
+                }
+
+                #album-art img {
+                    object-position: 60% 40%;
                 }
 
                 #title {
@@ -102,8 +103,8 @@ fn main() -> Result<()> {
                     width: 36px;
                     height: 36px;
                     border-radius: 18px;
-                     border-width: 1.5px;
-                     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.20);
+                    border-width: 1.5px;
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.20);
                     border-color: rgba(255, 255, 255, 0.5);
                     backdrop-filter: blur(12px) saturate(180%) brightness(80%);
                     transition: transform 0.2s ease, backdrop-filter 0.2s ease, box-shadow 0.2s ease;
@@ -276,13 +277,10 @@ fn album_header() -> impl ElementBuilder {
                 .items_center()
                 .justify_center()
                 .overflow_clip()
-                .justify_center()
                 .id("album-art")
                 .child(
                     image("crates/blinc_app/examples/assets/Asake-Album-Review-1.webp")
-                        .shadow_params(0.0, 8.0, 12.0, Color::rgba(0.0, 0.0, 0.0, 0.3))
-                        .h(80.0)
-                        .cover(),
+                        .fit(ObjectFit::Cover),
                 ),
         )
         // Song info

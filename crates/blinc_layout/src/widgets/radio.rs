@@ -586,7 +586,7 @@ impl ElementBuilder for RadioGroupBuilder {
 
 /// Create a radio group with reactive state
 ///
-/// The radio group uses Stateful<ButtonState> internally for hover detection.
+/// The radio group uses `Stateful<ButtonState>` internally for hover detection.
 /// Use `.id("name")` to enable CSS styling via `:hover`, `:checked`, `:disabled`.
 ///
 /// # Example

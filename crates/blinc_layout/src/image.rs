@@ -793,6 +793,10 @@ impl ElementBuilder for Image {
         ElementTypeId::Image
     }
 
+    fn semantic_type_name(&self) -> Option<&'static str> {
+        Some("img")
+    }
+
     fn image_render_info(&self) -> Option<ImageRenderInfo> {
         let (placeholder_type, placeholder_color, placeholder_image) = match &self.placeholder {
             Placeholder::None => (0, [0.0, 0.0, 0.0, 0.0], None),

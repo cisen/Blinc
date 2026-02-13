@@ -423,6 +423,14 @@ pub struct ElementStyle {
     pub z_index: Option<i32>,
     /// CSS visibility (visible or hidden — hidden keeps layout space but doesn't render)
     pub visibility: Option<StyleVisibility>,
+
+    // =========================================================================
+    // Image Properties
+    // =========================================================================
+    /// object-fit: how the image fills its container (cover, contain, fill, scale-down, none)
+    pub object_fit: Option<u8>,
+    /// object-position: alignment of image within its container [x, y] in 0.0-1.0 range
+    pub object_position: Option<[f32; 2]>,
 }
 
 impl ElementStyle {
@@ -1165,6 +1173,9 @@ impl ElementStyle {
             left: other.left.or(self.left),
             z_index: other.z_index.or(self.z_index),
             visibility: other.visibility.or(self.visibility),
+            // Image
+            object_fit: other.object_fit.or(self.object_fit),
+            object_position: other.object_position.or(self.object_position),
         }
     }
 

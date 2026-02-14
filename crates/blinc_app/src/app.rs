@@ -254,6 +254,16 @@ impl BlincApp {
         &mut self.ctx
     }
 
+    /// Set the current render target texture for blend mode two-pass compositing.
+    pub fn set_blend_target(&mut self, texture: &wgpu::Texture) {
+        self.ctx.set_blend_target(texture);
+    }
+
+    /// Clear the blend target texture reference after rendering.
+    pub fn clear_blend_target(&mut self) {
+        self.ctx.clear_blend_target();
+    }
+
     /// Get the configuration
     pub fn config(&self) -> &BlincConfig {
         &self.config

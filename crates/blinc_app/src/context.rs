@@ -104,6 +104,10 @@ struct TextElement {
     strikethrough: bool,
     /// Whether text has underline decoration
     underline: bool,
+    /// CSS text-decoration-color override (RGBA)
+    decoration_color: Option<[f32; 4]>,
+    /// CSS text-decoration-thickness override in pixels
+    decoration_thickness: Option<f32>,
     /// Inherited CSS transform from ancestor elements (full 6-element affine in layout coords)
     /// [a, b, c, d, tx, ty] where new_x = a*x + c*y + tx, new_y = b*x + d*y + ty
     css_affine: Option<[f32; 6]>,
@@ -232,6 +236,17 @@ impl RenderContext {
             scratch_svgs: Vec::with_capacity(32),     // Pre-allocate for SVG elements
             scratch_images: Vec::with_capacity(32),   // Pre-allocate for image elements
         }
+    }
+
+    /// Set the current render target texture for blend mode two-pass compositing.
+    /// Must be called before rendering when the batch may use non-Normal blend modes.
+    pub fn set_blend_target(&mut self, texture: &wgpu::Texture) {
+        self.renderer.set_blend_target(texture);
+    }
+
+    /// Clear the blend target texture reference after rendering.
+    pub fn clear_blend_target(&mut self) {
+        self.renderer.clear_blend_target();
     }
 
     /// Load font data into the text rendering registry
@@ -487,6 +502,8 @@ impl RenderContext {
                 // Layer effects require batch-based rendering to process layer commands
                 fg_batch.convert_glyphs_to_primitives();
                 if !fg_batch.is_empty() {
+                    // Pre-load any mask images referenced by layer effects
+                    self.preload_mask_images(&fg_batch);
                     self.renderer.render_overlay(target, &fg_batch);
                 }
                 // Render SVGs as rasterized images for high-quality anti-aliasing
@@ -954,6 +971,31 @@ impl RenderContext {
 
             // LruCache::put evicts oldest entry if at capacity
             self.image_cache.put(image.source.clone(), gpu_image);
+        }
+    }
+
+    /// Pre-load mask images referenced in a primitive batch's layer effects
+    fn preload_mask_images(&mut self, batch: &PrimitiveBatch) {
+        use blinc_core::LayerEffect;
+        for entry in &batch.layer_commands {
+            if let blinc_gpu::primitives::LayerCommand::Push { config } = &entry.command {
+                for effect in &config.effects {
+                    if let LayerEffect::MaskImage { image_url, .. } = effect {
+                        if self.renderer.has_mask_image(image_url) {
+                            continue;
+                        }
+                        let source = blinc_image::ImageSource::from_uri(image_url);
+                        if let Ok(data) = blinc_image::ImageData::load(source) {
+                            self.renderer.load_mask_image_rgba(
+                                image_url,
+                                data.pixels(),
+                                data.width(),
+                                data.height(),
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -2268,8 +2310,18 @@ impl RenderContext {
                     // Rounded clip becomes primary, scroll clip passes through.
                     (Some(this_clip), this_clip_radius, current_scroll_clip)
                 } else {
-                    // Sharp clip becomes scroll clip; no primary rounded clip.
-                    (None, None, Some(this_clip))
+                    // Sharp clip becomes scroll clip; intersect with existing scroll clip
+                    // so nested sharp clips (scroll + stack wrapper) don't lose the outer boundary.
+                    let new_scroll_clip = if let Some(existing) = current_scroll_clip {
+                        let x1 = existing[0].max(this_clip[0]);
+                        let y1 = existing[1].max(this_clip[1]);
+                        let x2 = (existing[0] + existing[2]).min(this_clip[0] + this_clip[2]);
+                        let y2 = (existing[1] + existing[3]).min(this_clip[1] + this_clip[3]);
+                        [x1, y1, (x2 - x1).max(0.0), (y2 - y1).max(0.0)]
+                    } else {
+                        this_clip
+                    };
+                    (None, None, Some(new_scroll_clip))
                 }
             }
         } else {
@@ -2433,8 +2485,82 @@ impl RenderContext {
                         *z_layer
                     );
 
+                    // Apply text-overflow: ellipsis truncation if needed.
+                    // Check both text_data.wrap (set at build time) and render_node.props.white_space
+                    // (set by CSS after build). CSS white-space: nowrap overrides the builder wrap setting.
+                    let is_nowrap = !text_data.wrap
+                        || matches!(
+                            render_node.props.white_space,
+                            Some(blinc_layout::element_style::WhiteSpace::Nowrap)
+                                | Some(blinc_layout::element_style::WhiteSpace::Pre)
+                        );
+                    let content = if is_nowrap
+                        && matches!(
+                            render_node.props.text_overflow,
+                            Some(blinc_layout::element_style::TextOverflow::Ellipsis)
+                        )
+                        && scaled_measured_width > scaled_width
+                        && scaled_width > 0.0
+                    {
+                        // Measure with the same options used for layout
+                        let mut options = blinc_layout::text_measure::TextLayoutOptions::new();
+                        options.font_name = text_data.font_family.name.clone();
+                        options.generic_font = text_data.font_family.generic;
+                        options.font_weight =
+                            match render_node.props.font_weight.unwrap_or(text_data.weight) {
+                                FontWeight::Bold => 700,
+                                FontWeight::Normal => 400,
+                                FontWeight::Light => 300,
+                                _ => 400,
+                            };
+                        options.letter_spacing = render_node
+                            .props
+                            .letter_spacing
+                            .unwrap_or(text_data.letter_spacing);
+
+                        // Measure "..." to know reserved width
+                        let ellipsis = "\u{2026}";
+                        let ellipsis_w = blinc_layout::text_measure::measure_text_with_options(
+                            ellipsis,
+                            scaled_font_size / scale,
+                            &options,
+                        )
+                        .width
+                            * scale;
+                        let target_width = scaled_width - ellipsis_w;
+
+                        if target_width > 0.0 {
+                            // Binary search for the right truncation point
+                            let chars: Vec<char> = text_data.content.chars().collect();
+                            let mut lo = 0usize;
+                            let mut hi = chars.len();
+                            while lo < hi {
+                                let mid = (lo + hi + 1) / 2;
+                                let sub: String = chars[..mid].iter().collect();
+                                let w = blinc_layout::text_measure::measure_text_with_options(
+                                    &sub,
+                                    scaled_font_size / scale,
+                                    &options,
+                                )
+                                .width
+                                    * scale;
+                                if w <= target_width {
+                                    lo = mid;
+                                } else {
+                                    hi = mid - 1;
+                                }
+                            }
+                            let truncated: String = chars[..lo].iter().collect();
+                            format!("{}{}", truncated.trim_end(), ellipsis)
+                        } else {
+                            ellipsis.to_string()
+                        }
+                    } else {
+                        text_data.content.clone()
+                    };
+
                     texts.push(TextElement {
-                        content: text_data.content.clone(),
+                        content,
                         x: scaled_x,
                         y: scaled_y,
                         width: scaled_width,
@@ -2447,7 +2573,7 @@ impl RenderContext {
                         v_align: text_data.v_align,
                         clip_bounds: scaled_clip,
                         motion_opacity: effective_motion_opacity,
-                        wrap: text_data.wrap,
+                        wrap: !is_nowrap && text_data.wrap,
                         line_height: text_data.line_height,
                         measured_width: scaled_measured_width,
                         font_family: text_data.font_family.clone(),
@@ -2458,8 +2584,23 @@ impl RenderContext {
                             .unwrap_or(text_data.letter_spacing),
                         z_index: *z_layer,
                         ascender: text_data.ascender * effective_motion_scale.1 * scale,
-                        strikethrough: text_data.strikethrough,
-                        underline: text_data.underline,
+                        strikethrough: render_node.props.text_decoration.map_or(
+                            text_data.strikethrough,
+                            |td| {
+                                matches!(
+                                    td,
+                                    blinc_layout::element_style::TextDecoration::LineThrough
+                                )
+                            },
+                        ),
+                        underline: render_node.props.text_decoration.map_or(
+                            text_data.underline,
+                            |td| {
+                                matches!(td, blinc_layout::element_style::TextDecoration::Underline)
+                            },
+                        ),
+                        decoration_color: render_node.props.text_decoration_color,
+                        decoration_thickness: render_node.props.text_decoration_thickness,
                         css_affine: node_css_affine,
                         text_shadow: render_node.props.text_shadow,
                     });
@@ -2926,6 +3067,8 @@ impl RenderContext {
                             ascender: scaled_ascender * effective_motion_scale.1, // Scale ascender with motion
                             strikethrough,
                             underline,
+                            decoration_color: render_node.props.text_decoration_color,
+                            decoration_thickness: render_node.props.text_decoration_thickness,
                             css_affine: node_css_affine,
                             text_shadow: render_node.props.text_shadow,
                         });
@@ -3399,10 +3542,16 @@ impl RenderContext {
             // Render z>0 primitives as overlays for z-index support
             // The main batch rendered all primitives in tree order; z>0 elements
             // need a second pass to appear on top of z=0 elements.
+            // Exclude effect/blend layer primitives (already composited correctly).
             let max_z = batch.max_z_layer();
             if max_z > 0 {
+                let effect_indices = batch.effect_layer_indices();
                 for z in 1..=max_z {
-                    let layer_primitives = batch.primitives_for_layer(z);
+                    let layer_primitives = if effect_indices.is_empty() {
+                        batch.primitives_for_layer(z)
+                    } else {
+                        batch.primitives_for_layer_excluding_effects(z, &effect_indices)
+                    };
                     if !layer_primitives.is_empty() {
                         self.renderer
                             .render_primitives_overlay(target, &layer_primitives);
@@ -3540,9 +3689,16 @@ impl RenderContext {
                 // render z>0 primitives as overlays on top of the main batch.
                 // The main batch rendered ALL primitives in tree order (including z>0),
                 // but z>0 elements need to appear on top of z=0 elements.
+                // IMPORTANT: exclude primitives that belong to effect/blend layers,
+                // as those were already composited correctly by render_with_layer_effects.
                 if max_layer > 0 {
+                    let effect_indices = batch.effect_layer_indices();
                     for z in 1..=max_layer {
-                        let layer_primitives = batch.primitives_for_layer(z);
+                        let layer_primitives = if effect_indices.is_empty() {
+                            batch.primitives_for_layer(z)
+                        } else {
+                            batch.primitives_for_layer_excluding_effects(z, &effect_indices)
+                        };
                         if !layer_primitives.is_empty() {
                             self.renderer
                                 .render_primitives_overlay(target, &layer_primitives);
@@ -3556,8 +3712,11 @@ impl RenderContext {
                     self.render_text(target, &all_glyphs);
                 }
 
-                // Render text decorations (flat path - no z-layers)
-                self.render_text_decorations_for_layer(target, &decorations_by_layer, 0);
+                // Render text decorations for all z-layers
+                let max_decoration_z = decorations_by_layer.keys().cloned().max().unwrap_or(0);
+                for z in 0..=max_decoration_z {
+                    self.render_text_decorations_for_layer(target, &decorations_by_layer, z);
+                }
             }
         }
 
@@ -3953,8 +4112,13 @@ fn generate_text_decoration_primitives_by_layer(
             continue;
         }
 
-        // Line thickness scales with font size (roughly 1/14th of font size, minimum 1px)
-        let line_thickness = (text.font_size / 14.0).clamp(1.0, 3.0);
+        // Line thickness: use CSS text-decoration-thickness if set, else scale with font size
+        let line_thickness = text
+            .decoration_thickness
+            .unwrap_or_else(|| (text.font_size / 14.0).clamp(1.0, 3.0));
+
+        // Decoration color: use CSS text-decoration-color if set, else use text color
+        let dec_color = text.decoration_color.unwrap_or(text.color);
 
         let layer_primitives = primitives_by_layer.entry(text.z_index).or_default();
 
@@ -3999,7 +4163,7 @@ fn generate_text_decoration_primitives_by_layer(
                 decoration_width,
                 line_thickness,
             )
-            .with_color(text.color[0], text.color[1], text.color[2], text.color[3]);
+            .with_color(dec_color[0], dec_color[1], dec_color[2], dec_color[3]);
 
             // Apply clip bounds from text element if present
             if let Some(clip) = text.clip_bounds {
@@ -4018,7 +4182,7 @@ fn generate_text_decoration_primitives_by_layer(
                 decoration_width,
                 line_thickness,
             )
-            .with_color(text.color[0], text.color[1], text.color[2], text.color[3]);
+            .with_color(dec_color[0], dec_color[1], dec_color[2], dec_color[3]);
 
             // Apply clip bounds from text element if present
             if let Some(clip) = text.clip_bounds {

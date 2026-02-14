@@ -85,6 +85,8 @@ All notable changes to `blinc_gpu` will be documented in this file.
 
 ### Fixed
 
+- Mix blend mode layers were invisible because `has_layer_effects()` didn't check `blend_mode != Normal`, causing the interleaved z-layer path to strip layer commands from the batch
+- Z>0 overlay pass re-rendered blend-mode primitives without blend, overwriting correctly composited results
 - Simple glass shader pixelation: replaced crude 25-sample box blur with 72-sample golden-angle spiral, eliminating visible grid artifacts
 - Glass blur intensity too weak: corrected Gaussian sigma from `radius * 0.5` to `radius` per CSS spec (blur radius = standard deviation)
 - `set_css_filter` and `clear_css_filter` now properly override the `DrawContext` trait (previously only defined as inherent methods, causing no-op dispatch via `&mut dyn DrawContext`)

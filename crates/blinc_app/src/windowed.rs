@@ -1756,7 +1756,8 @@ impl WindowedApp {
                                     // Use the same texture format that the renderer's pipelines use
                                     let format = blinc_app.texture_format();
                                     let config = wgpu::SurfaceConfiguration {
-                                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                                            | wgpu::TextureUsages::COPY_SRC,
                                         format,
                                         width,
                                         height,
@@ -2975,6 +2976,9 @@ impl WindowedApp {
                             }
 
                             if let Some(ref tree) = render_tree {
+                                // Set blend target for mix-blend-mode support
+                                blinc_app.set_blend_target(&frame.texture);
+
                                 // Render with motion animations
                                 // Use physical pixel dimensions for the render surface
                                 let result = blinc_app.render_tree_with_motion(
@@ -2987,6 +2991,8 @@ impl WindowedApp {
                                 if let Err(e) = result {
                                     tracing::error!("Render error: {}", e);
                                 }
+
+                                blinc_app.clear_blend_target();
                             }
 
                             // =========================================================

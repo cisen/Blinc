@@ -2947,6 +2947,8 @@ struct LayerUniforms {
 @group(0) @binding(0) var<uniform> uniforms: LayerUniforms;
 @group(0) @binding(1) var layer_texture: texture_2d<f32>;
 @group(0) @binding(2) var layer_sampler: sampler;
+@group(0) @binding(3) var dest_texture: texture_2d<f32>;
+@group(0) @binding(4) var dest_sampler: sampler;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -3175,14 +3177,28 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    // For blend modes other than normal, we'd need to read the destination.
-    // Since wgpu doesn't support programmable blending, we use hardware blending
-    // for Normal mode and would need a two-pass approach for other modes.
-    //
-    // For now, output premultiplied alpha for hardware blending:
-    // result = src * src_alpha + dst * (1 - src_alpha)
+    // For non-Normal blend modes, sample the destination texture (pre-copied snapshot)
+    // and apply the CSS blend function. The result is output as premultiplied alpha
+    // so hardware blending (src + dst * (1-srcA)) produces the correct composite:
+    //   final = blended * srcA + dst * (1-srcA) = mix(dst, blended, srcA)
+    if (uniforms.blend_mode != BLEND_NORMAL) {
+        // Compute screen UV from fragment position
+        let screen_uv = in.frag_pos / uniforms.viewport_size;
+        let dst = textureSample(dest_texture, dest_sampler, screen_uv);
 
-    // Premultiply alpha
+        // Unpremultiply source (src.a > 0 since src_alpha > 0.001 and opacity <= 1.0)
+        let src_c = src.rgb / src.a;
+        // Unpremultiply destination
+        let dst_c = select(dst.rgb / dst.a, vec3<f32>(0.0, 0.0, 0.0), dst.a < 0.001);
+
+        // Apply CSS blend mode
+        let blended = apply_blend_mode(src_c, dst_c, uniforms.blend_mode);
+
+        // Output premultiplied for hardware alpha compositing
+        return vec4<f32>(blended * src_alpha, src_alpha);
+    }
+
+    // Normal blend: premultiplied alpha for hardware blending
     let premultiplied = vec4<f32>(src.rgb * src_alpha, src_alpha);
     return premultiplied;
 }
@@ -3425,6 +3441,82 @@ fn fs_color_matrix(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Clamp to valid range
     return clamp(result, vec4<f32>(0.0), vec4<f32>(1.0));
+}
+"#;
+
+/// Mask image shader for CSS mask-image support
+///
+/// Multiplies the layer's alpha by the mask image value.
+/// Supports alpha mode (use mask alpha) and luminance mode (use mask luminance as alpha).
+pub const MASK_IMAGE_SHADER: &str = r#"
+// ============================================================================
+// Mask Image Shader (Layer Effects)
+// ============================================================================
+//
+// Applies a mask image to a layer: output.a = input.a * mask_value
+// mask_mode: 0 = alpha (use mask.a), 1 = luminance (use dot(mask.rgb, luma))
+
+struct MaskUniforms {
+    // 0 = alpha, 1 = luminance
+    mask_mode: u32,
+    _pad: vec3<f32>,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: MaskUniforms;
+@group(0) @binding(1) var input_texture: texture_2d<f32>;
+@group(0) @binding(2) var input_sampler: sampler;
+@group(0) @binding(3) var mask_texture: texture_2d<f32>;
+@group(0) @binding(4) var mask_sampler: sampler;
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+}
+
+// Full-screen quad vertices
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
+    var positions = array<vec2<f32>, 6>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>( 1.0, -1.0),
+        vec2<f32>(-1.0,  1.0),
+        vec2<f32>( 1.0, -1.0),
+        vec2<f32>( 1.0,  1.0),
+        vec2<f32>(-1.0,  1.0),
+    );
+
+    var uvs = array<vec2<f32>, 6>(
+        vec2<f32>(0.0, 1.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(0.0, 0.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(1.0, 0.0),
+        vec2<f32>(0.0, 0.0),
+    );
+
+    var out: VertexOutput;
+    out.position = vec4<f32>(positions[vertex_index], 0.0, 1.0);
+    out.uv = uvs[vertex_index];
+    return out;
+}
+
+@fragment
+fn fs_mask(in: VertexOutput) -> @location(0) vec4<f32> {
+    let src = textureSample(input_texture, input_sampler, in.uv);
+    let mask = textureSample(mask_texture, mask_sampler, in.uv);
+
+    // Compute mask value based on mode
+    var mask_alpha: f32;
+    if (uniforms.mask_mode == 1u) {
+        // Luminance mode: use weighted RGB as alpha
+        mask_alpha = dot(mask.rgb, vec3<f32>(0.2126, 0.7152, 0.0722)) * mask.a;
+    } else {
+        // Alpha mode: use mask alpha channel directly
+        mask_alpha = mask.a;
+    }
+
+    // Multiply source by mask value (premultiplied alpha)
+    return vec4<f32>(src.rgb * mask_alpha, src.a * mask_alpha);
 }
 "#;
 

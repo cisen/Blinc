@@ -1105,6 +1105,20 @@ pub struct RenderProps {
     pub object_position: Option<[f32; 2]>,
     /// Per-SVG-tag style overrides from CSS tag-name selectors (e.g., `path { fill: red; }`)
     pub svg_tag_styles: HashMap<String, SvgTagStyle>,
+    /// CSS mix-blend-mode for this element
+    pub mix_blend_mode: Option<blinc_core::BlendMode>,
+    /// Text decoration line color override
+    pub text_decoration_color: Option<[f32; 4]>,
+    /// Text decoration line thickness override
+    pub text_decoration_thickness: Option<f32>,
+    /// CSS text-overflow behavior
+    pub text_overflow: Option<crate::element_style::TextOverflow>,
+    /// CSS white-space behavior
+    pub white_space: Option<crate::element_style::WhiteSpace>,
+    /// CSS mask-image URL
+    pub mask_image: Option<String>,
+    /// CSS mask-mode
+    pub mask_mode: Option<blinc_core::MaskMode>,
 }
 
 impl Default for RenderProps {
@@ -1174,6 +1188,13 @@ impl Default for RenderProps {
             object_fit: None,
             object_position: None,
             svg_tag_styles: HashMap::new(),
+            mix_blend_mode: None,
+            text_decoration_color: None,
+            text_decoration_thickness: None,
+            text_overflow: None,
+            white_space: None,
+            mask_image: None,
+            mask_mode: None,
         }
     }
 }

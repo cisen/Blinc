@@ -1167,6 +1167,9 @@ impl RenderTree {
             }
         }
 
+        // Inherit CSS text properties from parent (text-decoration, white-space, etc.)
+        self.inherit_text_props_from_parent(&mut props, node_id);
+
         // Determine element type using the trait methods
         let element_type = Self::determine_element_type(element);
 
@@ -1299,6 +1302,9 @@ impl RenderTree {
             }
         }
 
+        // Inherit CSS text properties from parent (text-decoration, white-space, etc.)
+        self.inherit_text_props_from_parent(&mut props, node_id);
+
         // Use the element_type_id to determine type
         let type_id_boxed = element.element_type_id();
         if matches!(type_id_boxed, ElementTypeId::Canvas) {
@@ -1311,24 +1317,7 @@ impl RenderTree {
         let element_type = match type_id_boxed {
             ElementTypeId::Text => {
                 if let Some(info) = element.text_render_info() {
-                    ElementType::Text(TextData {
-                        content: info.content,
-                        font_size: info.font_size,
-                        color: info.color,
-                        align: info.align,
-                        weight: info.weight,
-                        italic: info.italic,
-                        v_align: info.v_align,
-                        wrap: info.wrap,
-                        line_height: info.line_height,
-                        measured_width: info.measured_width,
-                        font_family: info.font_family,
-                        word_spacing: info.word_spacing,
-                        letter_spacing: info.letter_spacing,
-                        ascender: info.ascender,
-                        strikethrough: info.strikethrough,
-                        underline: info.underline,
-                    })
+                    ElementType::Text(Self::build_text_data(info, &props))
                 } else {
                     ElementType::Div
                 }
@@ -1619,28 +1608,14 @@ impl RenderTree {
             }
         }
 
+        // Inherit CSS text properties from parent (text-decoration, white-space, etc.)
+        self.inherit_text_props_from_parent(&mut props, node_id);
+
         // Use the element_type_id to determine type
         let element_type = match element.element_type_id() {
             ElementTypeId::Text => {
                 if let Some(info) = element.text_render_info() {
-                    ElementType::Text(TextData {
-                        content: info.content,
-                        font_size: info.font_size,
-                        color: info.color,
-                        align: info.align,
-                        weight: info.weight,
-                        italic: info.italic,
-                        v_align: info.v_align,
-                        wrap: info.wrap,
-                        line_height: info.line_height,
-                        measured_width: info.measured_width,
-                        font_family: info.font_family,
-                        word_spacing: info.word_spacing,
-                        letter_spacing: info.letter_spacing,
-                        ascender: info.ascender,
-                        strikethrough: info.strikethrough,
-                        underline: info.underline,
-                    })
+                    ElementType::Text(Self::build_text_data(info, &props))
                 } else {
                     ElementType::Div
                 }
@@ -1805,27 +1780,11 @@ impl RenderTree {
         if matches!(type_id, ElementTypeId::Canvas) {
             tracing::trace!("determine_element_type: ElementTypeId::Canvas detected!");
         }
+        let default_props = RenderProps::default();
         match type_id {
             ElementTypeId::Text => {
                 if let Some(info) = element.text_render_info() {
-                    ElementType::Text(TextData {
-                        content: info.content,
-                        font_size: info.font_size,
-                        color: info.color,
-                        align: info.align,
-                        weight: info.weight,
-                        italic: info.italic,
-                        v_align: info.v_align,
-                        wrap: info.wrap,
-                        line_height: info.line_height,
-                        measured_width: info.measured_width,
-                        font_family: info.font_family,
-                        word_spacing: info.word_spacing,
-                        letter_spacing: info.letter_spacing,
-                        ascender: info.ascender,
-                        strikethrough: info.strikethrough,
-                        underline: info.underline,
-                    })
+                    ElementType::Text(Self::build_text_data(info, &default_props))
                 } else {
                     ElementType::Div
                 }
@@ -1907,27 +1866,11 @@ impl RenderTree {
         if matches!(type_id, ElementTypeId::Canvas) {
             tracing::trace!("determine_element_type_boxed: ElementTypeId::Canvas detected!");
         }
+        let default_props = RenderProps::default();
         match type_id {
             ElementTypeId::Text => {
                 if let Some(info) = element.text_render_info() {
-                    ElementType::Text(TextData {
-                        content: info.content,
-                        font_size: info.font_size,
-                        color: info.color,
-                        align: info.align,
-                        weight: info.weight,
-                        italic: info.italic,
-                        v_align: info.v_align,
-                        wrap: info.wrap,
-                        line_height: info.line_height,
-                        measured_width: info.measured_width,
-                        font_family: info.font_family,
-                        word_spacing: info.word_spacing,
-                        letter_spacing: info.letter_spacing,
-                        ascender: info.ascender,
-                        strikethrough: info.strikethrough,
-                        underline: info.underline,
-                    })
+                    ElementType::Text(Self::build_text_data(info, &default_props))
                 } else {
                     ElementType::Div
                 }
@@ -4453,6 +4396,97 @@ impl RenderTree {
         applied
     }
 
+    /// Inherit CSS text properties from the parent RenderNode.
+    ///
+    /// CSS text properties like text-decoration, white-space, text-overflow, etc.
+    /// need to cascade from parent divs to child text elements. Without this,
+    /// CSS like `.my-class { text-decoration: underline; }` on a parent div
+    /// wouldn't affect the child text node.
+    fn inherit_text_props_from_parent(&self, props: &mut RenderProps, node_id: LayoutNodeId) {
+        let parent_id = match self.element_registry.get_parent(node_id) {
+            Some(id) => id,
+            None => return,
+        };
+        let parent_props = match self.render_nodes.get(&parent_id) {
+            Some(node) => &node.props,
+            None => return,
+        };
+
+        // text-decoration (CSS spec: not inherited, but decorations paint across inline content)
+        if props.text_decoration.is_none() {
+            if let Some(td) = parent_props.text_decoration {
+                props.text_decoration = Some(td);
+            }
+        }
+        if props.text_decoration_color.is_none() {
+            if let Some(c) = parent_props.text_decoration_color {
+                props.text_decoration_color = Some(c);
+            }
+        }
+        if props.text_decoration_thickness.is_none() {
+            if let Some(t) = parent_props.text_decoration_thickness {
+                props.text_decoration_thickness = Some(t);
+            }
+        }
+        // white-space (CSS spec: inherited)
+        if props.white_space.is_none() {
+            if let Some(ws) = parent_props.white_space {
+                props.white_space = Some(ws);
+            }
+        }
+        // text-overflow (CSS spec: not inherited, but child text must know)
+        if props.text_overflow.is_none() {
+            if let Some(to) = parent_props.text_overflow {
+                props.text_overflow = Some(to);
+            }
+        }
+    }
+
+    /// Build TextData from TextRenderInfo, applying CSS overrides from RenderProps
+    fn build_text_data(info: crate::div::TextRenderInfo, props: &RenderProps) -> TextData {
+        let mut strikethrough = info.strikethrough;
+        let mut underline = info.underline;
+        let mut wrap = info.wrap;
+        // CSS text-decoration overrides builder values
+        if let Some(td) = props.text_decoration {
+            use crate::element_style::TextDecoration;
+            match td {
+                TextDecoration::Underline => underline = true,
+                TextDecoration::LineThrough => strikethrough = true,
+                TextDecoration::None => {
+                    underline = false;
+                    strikethrough = false;
+                }
+            }
+        }
+        // CSS white-space overrides wrap
+        if let Some(ws) = props.white_space {
+            use crate::element_style::WhiteSpace;
+            match ws {
+                WhiteSpace::Nowrap | WhiteSpace::Pre => wrap = false,
+                WhiteSpace::Normal | WhiteSpace::PreWrap => wrap = true,
+            }
+        }
+        TextData {
+            content: info.content,
+            font_size: info.font_size,
+            color: info.color,
+            align: info.align,
+            weight: info.weight,
+            italic: info.italic,
+            v_align: info.v_align,
+            wrap,
+            line_height: info.line_height,
+            measured_width: info.measured_width,
+            font_family: info.font_family,
+            word_spacing: info.word_spacing,
+            letter_spacing: info.letter_spacing,
+            ascender: info.ascender,
+            strikethrough,
+            underline,
+        }
+    }
+
     /// Apply ElementStyle properties to RenderProps
     fn apply_element_style_to_props(
         props: &mut RenderProps,
@@ -4553,6 +4587,16 @@ impl RenderTree {
                     .layer_effects
                     .retain(|e| !matches!(e, LayerEffect::DropShadow { .. }));
             }
+        }
+        // Mask image → LayerEffect
+        if let Some(ref url) = style.mask_image {
+            props
+                .layer_effects
+                .retain(|e| !matches!(e, LayerEffect::MaskImage { .. }));
+            props.layer_effects.push(LayerEffect::MaskImage {
+                image_url: url.clone(),
+                mask_mode: style.mask_mode.clone().unwrap_or_default(),
+            });
         }
         // Text color
         if let Some(c) = &style.text_color {
@@ -4698,6 +4742,38 @@ impl RenderTree {
         }
         if let Some(op) = style.object_position {
             props.object_position = Some(op);
+        }
+        // Pointer events
+        if let Some(pe) = style.pointer_events {
+            props.pointer_events_none = matches!(pe, blinc_core::PointerEvents::None);
+        }
+        // Cursor
+        if let Some(cursor) = style.cursor {
+            props.cursor = Some(cursor);
+        }
+        // Mix blend mode
+        if let Some(mode) = style.mix_blend_mode {
+            props.mix_blend_mode = Some(mode);
+        }
+        // Text decoration enhancements
+        if let Some(c) = style.text_decoration_color {
+            props.text_decoration_color = Some([c.r, c.g, c.b, c.a]);
+        }
+        if let Some(t) = style.text_decoration_thickness {
+            props.text_decoration_thickness = Some(t);
+        }
+        // Text overflow
+        if let Some(to) = style.text_overflow {
+            props.text_overflow = Some(to);
+        }
+        if let Some(ws) = style.white_space {
+            props.white_space = Some(ws);
+        }
+        if let Some(ref url) = style.mask_image {
+            props.mask_image = Some(url.clone());
+        }
+        if let Some(ref mode) = style.mask_mode {
+            props.mask_mode = Some(mode.clone());
         }
     }
 
@@ -7560,6 +7636,47 @@ impl RenderTree {
                 }
             }
         }
+
+        // Post-pass: propagate inherited text properties (text-decoration, white-space,
+        // text-overflow) from parent to child nodes. This must run AFTER all CSS styles
+        // are applied above, because during initial tree construction the stylesheet
+        // wasn't set yet and inherit_text_props_from_parent found no parent values.
+        let all_node_ids: Vec<LayoutNodeId> = self.render_nodes.keys().copied().collect();
+        for node_id in all_node_ids {
+            let parent_id = match self.element_registry.get_parent(node_id) {
+                Some(id) => id,
+                None => continue,
+            };
+            // Read parent text props (need separate borrow)
+            let parent_text_props = self.render_nodes.get(&parent_id).map(|n| {
+                (
+                    n.props.text_decoration,
+                    n.props.text_decoration_color,
+                    n.props.text_decoration_thickness,
+                    n.props.white_space,
+                    n.props.text_overflow,
+                )
+            });
+            if let Some((td, td_color, td_thick, ws, to)) = parent_text_props {
+                if let Some(node) = self.render_nodes.get_mut(&node_id) {
+                    if node.props.text_decoration.is_none() {
+                        node.props.text_decoration = td;
+                    }
+                    if node.props.text_decoration_color.is_none() {
+                        node.props.text_decoration_color = td_color;
+                    }
+                    if node.props.text_decoration_thickness.is_none() {
+                        node.props.text_decoration_thickness = td_thick;
+                    }
+                    if node.props.white_space.is_none() {
+                        node.props.white_space = ws;
+                    }
+                    if node.props.text_overflow.is_none() {
+                        node.props.text_overflow = to;
+                    }
+                }
+            }
+        }
     }
 
     /// Apply stylesheet state styles based on EventRouter state
@@ -8675,7 +8792,12 @@ impl RenderTree {
         // IMPORTANT: Only push layer when element's layer matches current target to avoid duplicate
         // layer commands across multiple render passes
         let has_layer_effects = !render_node.props.layer_effects.is_empty();
-        let has_opacity_layer = node_motion_opacity < 1.0 || has_layer_effects;
+        let node_blend_mode = render_node
+            .props
+            .mix_blend_mode
+            .unwrap_or(BlendMode::Normal);
+        let has_blend_mode = node_blend_mode != BlendMode::Normal;
+        let has_opacity_layer = node_motion_opacity < 1.0 || has_layer_effects || has_blend_mode;
         let should_push_layer = has_opacity_layer && effective_layer == target_layer;
         if should_push_layer {
             // Scale layer effect radii by DPI factor (CSS px → physical px)
@@ -8708,7 +8830,7 @@ impl RenderTree {
                 id: None,
                 position: Some(blinc_core::Point::new(bounds.x, bounds.y)),
                 size: Some(blinc_core::Size::new(bounds.width, bounds.height)),
-                blend_mode: BlendMode::Normal,
+                blend_mode: node_blend_mode,
                 opacity: node_motion_opacity,
                 depth: false,
                 effects: scaled_effects,

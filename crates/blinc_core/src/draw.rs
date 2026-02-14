@@ -737,6 +737,23 @@ pub enum LayerEffect {
         ///                                       `[1]`
         matrix: [f32; 20],
     },
+    /// Mask image effect (multiplies layer alpha by mask luminance/alpha)
+    MaskImage {
+        /// Image URL or path
+        image_url: String,
+        /// Mask sizing mode
+        mask_mode: MaskMode,
+    },
+}
+
+/// How a mask image is interpreted
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum MaskMode {
+    /// Use the alpha channel of the mask image
+    #[default]
+    Alpha,
+    /// Use the luminance of the mask image as alpha
+    Luminance,
 }
 
 impl LayerEffect {

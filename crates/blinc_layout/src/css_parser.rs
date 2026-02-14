@@ -3630,6 +3630,56 @@ fn apply_property(style: &mut ElementStyle, name: &str, value: &str) {
                 style.object_position = Some(pos);
             }
         }
+        "pointer-events" => match value.trim() {
+            "auto" => style.pointer_events = Some(blinc_core::PointerEvents::Auto),
+            "none" => style.pointer_events = Some(blinc_core::PointerEvents::None),
+            _ => {}
+        },
+        "cursor" => {
+            if let Some(cursor) = parse_cursor(value) {
+                style.cursor = Some(cursor);
+            }
+        }
+        "mix-blend-mode" => {
+            if let Some(mode) = parse_blend_mode(value) {
+                style.mix_blend_mode = Some(mode);
+            }
+        }
+        "text-decoration-color" => {
+            if let Some(c) = parse_color(value) {
+                style.text_decoration_color = Some(c);
+            }
+        }
+        "text-decoration-thickness" => {
+            if let Some(px) = parse_length_value(value) {
+                style.text_decoration_thickness = Some(px);
+            }
+        }
+        "text-overflow" => match value.trim() {
+            "clip" => style.text_overflow = Some(crate::element_style::TextOverflow::Clip),
+            "ellipsis" => style.text_overflow = Some(crate::element_style::TextOverflow::Ellipsis),
+            _ => {}
+        },
+        "white-space" => match value.trim() {
+            "normal" => style.white_space = Some(crate::element_style::WhiteSpace::Normal),
+            "nowrap" => style.white_space = Some(crate::element_style::WhiteSpace::Nowrap),
+            "pre" => style.white_space = Some(crate::element_style::WhiteSpace::Pre),
+            "pre-wrap" => style.white_space = Some(crate::element_style::WhiteSpace::PreWrap),
+            _ => {}
+        },
+        "mask-image" => {
+            let v = value.trim();
+            if v == "none" {
+                style.mask_image = None;
+            } else if let Some(url) = parse_url_value(v) {
+                style.mask_image = Some(url);
+            }
+        }
+        "mask-mode" => match value.trim() {
+            "alpha" => style.mask_mode = Some(blinc_core::MaskMode::Alpha),
+            "luminance" => style.mask_mode = Some(blinc_core::MaskMode::Luminance),
+            _ => {}
+        },
         _ => {
             // Unknown property - log at debug level for forward compatibility
             debug!(
@@ -4454,6 +4504,66 @@ fn apply_property_with_errors(
                 errors.push(ParseError::invalid_value(name, value, line, column));
             }
         }
+        "pointer-events" => match value.trim() {
+            "auto" => style.pointer_events = Some(blinc_core::PointerEvents::Auto),
+            "none" => style.pointer_events = Some(blinc_core::PointerEvents::None),
+            _ => errors.push(ParseError::invalid_value(name, value, line, column)),
+        },
+        "cursor" => {
+            if let Some(cursor) = parse_cursor(value) {
+                style.cursor = Some(cursor);
+            } else {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        }
+        "mix-blend-mode" => {
+            if let Some(mode) = parse_blend_mode(value) {
+                style.mix_blend_mode = Some(mode);
+            } else {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        }
+        "text-decoration-color" => {
+            if let Some(c) = parse_color(value) {
+                style.text_decoration_color = Some(c);
+            } else {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        }
+        "text-decoration-thickness" => {
+            if let Some(px) = parse_length_value(value) {
+                style.text_decoration_thickness = Some(px);
+            } else {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        }
+        "text-overflow" => match value.trim() {
+            "clip" => style.text_overflow = Some(crate::element_style::TextOverflow::Clip),
+            "ellipsis" => style.text_overflow = Some(crate::element_style::TextOverflow::Ellipsis),
+            _ => errors.push(ParseError::invalid_value(name, value, line, column)),
+        },
+        "white-space" => match value.trim() {
+            "normal" => style.white_space = Some(crate::element_style::WhiteSpace::Normal),
+            "nowrap" => style.white_space = Some(crate::element_style::WhiteSpace::Nowrap),
+            "pre" => style.white_space = Some(crate::element_style::WhiteSpace::Pre),
+            "pre-wrap" => style.white_space = Some(crate::element_style::WhiteSpace::PreWrap),
+            _ => errors.push(ParseError::invalid_value(name, value, line, column)),
+        },
+        "mask-image" => {
+            let v = value.trim();
+            if v == "none" {
+                style.mask_image = None;
+            } else if let Some(url) = parse_url_value(v) {
+                style.mask_image = Some(url);
+            } else {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        }
+        "mask-mode" => match value.trim() {
+            "alpha" => style.mask_mode = Some(blinc_core::MaskMode::Alpha),
+            "luminance" => style.mask_mode = Some(blinc_core::MaskMode::Luminance),
+            _ => errors.push(ParseError::invalid_value(name, value, line, column)),
+        },
         _ => {
             // Unknown property - collect as warning
             errors.push(ParseError::unknown_property(name, line, column));
@@ -5837,6 +5947,48 @@ fn parse_text_align(value: &str) -> Option<crate::div::TextAlign> {
         "left" | "start" => Some(TextAlign::Left),
         "center" => Some(TextAlign::Center),
         "right" | "end" => Some(TextAlign::Right),
+        _ => None,
+    }
+}
+
+fn parse_cursor(value: &str) -> Option<crate::element::CursorStyle> {
+    use crate::element::CursorStyle;
+    match value.trim().to_lowercase().as_str() {
+        "default" | "auto" => Some(CursorStyle::Default),
+        "pointer" => Some(CursorStyle::Pointer),
+        "text" => Some(CursorStyle::Text),
+        "crosshair" => Some(CursorStyle::Crosshair),
+        "move" => Some(CursorStyle::Move),
+        "not-allowed" => Some(CursorStyle::NotAllowed),
+        "ns-resize" | "n-resize" | "s-resize" | "row-resize" => Some(CursorStyle::ResizeNS),
+        "ew-resize" | "e-resize" | "w-resize" | "col-resize" => Some(CursorStyle::ResizeEW),
+        "nesw-resize" | "ne-resize" | "sw-resize" => Some(CursorStyle::ResizeNESW),
+        "nwse-resize" | "nw-resize" | "se-resize" => Some(CursorStyle::ResizeNWSE),
+        "grab" => Some(CursorStyle::Grab),
+        "grabbing" => Some(CursorStyle::Grabbing),
+        "wait" => Some(CursorStyle::Wait),
+        "progress" => Some(CursorStyle::Progress),
+        "none" => Some(CursorStyle::None),
+        "help" => Some(CursorStyle::Default), // map to default for now
+        _ => None,
+    }
+}
+
+fn parse_blend_mode(value: &str) -> Option<blinc_core::BlendMode> {
+    use blinc_core::BlendMode;
+    match value.trim().to_lowercase().as_str() {
+        "normal" => Some(BlendMode::Normal),
+        "multiply" => Some(BlendMode::Multiply),
+        "screen" => Some(BlendMode::Screen),
+        "overlay" => Some(BlendMode::Overlay),
+        "darken" => Some(BlendMode::Darken),
+        "lighten" => Some(BlendMode::Lighten),
+        "color-dodge" => Some(BlendMode::ColorDodge),
+        "color-burn" => Some(BlendMode::ColorBurn),
+        "hard-light" => Some(BlendMode::HardLight),
+        "soft-light" => Some(BlendMode::SoftLight),
+        "difference" => Some(BlendMode::Difference),
+        "exclusion" => Some(BlendMode::Exclusion),
         _ => None,
     }
 }

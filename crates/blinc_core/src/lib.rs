@@ -48,7 +48,7 @@ pub mod value;
 
 pub use draw::{
     BlurQuality, DrawCommand, DrawContext, DrawContextExt, FontWeight, ImageId, ImageOptions,
-    LayerConfig, LayerEffect, LineCap, LineJoin, MaterialId, MeshId, MeshInstance, Path,
+    LayerConfig, LayerEffect, LineCap, LineJoin, MaskMode, MaterialId, MeshId, MeshInstance, Path,
     PathCommand, RecordingContext, SdfBuilder, ShapeId, Stroke, TextAlign, TextBaseline, TextStyle,
     Transform,
 };

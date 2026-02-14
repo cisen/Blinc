@@ -16,6 +16,8 @@ All notable changes to `blinc_app` will be documented in this file.
 
 ### Fixed
 
+- Text in stacked/absolute elements now clips correctly within ancestor scroll containers (sharp clip intersects with existing scroll clip instead of replacing it)
+- Text decorations now render for all z-layers in the fast path (was only rendering z=0, dropping decorations when blend mode layers activated the fast path)
 - Text and SVG elements now clip to scroll container boundaries (regression from dual-clip refactor)
 - SVG own-transform applied correctly (not just inherited parent transforms)
 - CSS `transform: rotate()` animation uses original angle values instead of lossy atan2 decomposition

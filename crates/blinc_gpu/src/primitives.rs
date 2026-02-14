@@ -1193,6 +1193,15 @@ impl Default for GlowUniforms {
     }
 }
 
+/// Uniforms for the mask image effect shader
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct MaskImageUniforms {
+    /// 0 = alpha, 1 = luminance
+    pub mask_mode: u32,
+    pub _pad: [f32; 3],
+}
+
 /// A batch of tessellated path geometry
 #[derive(Clone, Default)]
 pub struct PathBatch {
@@ -1350,7 +1359,7 @@ impl PrimitiveBatch {
     pub fn has_layer_effects(&self) -> bool {
         self.layer_commands.iter().any(|entry| {
             if let LayerCommand::Push { config } = &entry.command {
-                !config.effects.is_empty()
+                !config.effects.is_empty() || config.blend_mode != blinc_core::BlendMode::Normal
             } else {
                 false
             }
@@ -1632,6 +1641,46 @@ impl PrimitiveBatch {
             .filter(|p| p.z_layer() == z_layer)
             .cloned()
             .collect()
+    }
+
+    /// Filter primitives by z_layer, excluding those in effect/blend layers
+    pub fn primitives_for_layer_excluding_effects(
+        &self,
+        z_layer: u32,
+        effect_indices: &std::collections::HashSet<usize>,
+    ) -> Vec<GpuPrimitive> {
+        self.primitives
+            .iter()
+            .enumerate()
+            .filter(|(i, p)| p.z_layer() == z_layer && !effect_indices.contains(i))
+            .map(|(_, p)| *p)
+            .collect()
+    }
+
+    /// Get the set of primitive indices that belong to effect/blend layers
+    pub fn effect_layer_indices(&self) -> std::collections::HashSet<usize> {
+        let mut indices = std::collections::HashSet::new();
+        let mut stack: Vec<(usize, &blinc_core::LayerConfig)> = Vec::new();
+        for entry in &self.layer_commands {
+            match &entry.command {
+                LayerCommand::Push { config } => {
+                    stack.push((entry.primitive_index, config));
+                }
+                LayerCommand::Pop => {
+                    if let Some((start_idx, config)) = stack.pop() {
+                        if !config.effects.is_empty()
+                            || config.blend_mode != blinc_core::BlendMode::Normal
+                        {
+                            for i in start_idx..entry.primitive_index {
+                                indices.insert(i);
+                            }
+                        }
+                    }
+                }
+                LayerCommand::Sample { .. } => {}
+            }
+        }
+        indices
     }
 
     /// Filter foreground primitives by z_layer

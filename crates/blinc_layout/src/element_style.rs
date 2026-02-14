@@ -27,7 +27,10 @@
 //!     .pressed(ElementStyle::new().bg(Color::DARK_BLUE).scale(0.98));
 //! ```
 
-use blinc_core::{Brush, ClipPath, Color, CornerRadius, Shadow, Transform};
+use crate::element::CursorStyle;
+use blinc_core::{
+    BlendMode, Brush, ClipPath, Color, CornerRadius, PointerEvents, Shadow, Transform,
+};
 
 /// CSS filter functions applied to an element
 ///
@@ -100,6 +103,28 @@ pub enum TextDecoration {
     Underline,
     /// Line through the middle of the text
     LineThrough,
+}
+
+/// CSS text-overflow behavior
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextOverflow {
+    /// Clip overflowing text (default)
+    Clip,
+    /// Show ellipsis (...) when text overflows
+    Ellipsis,
+}
+
+/// CSS white-space property
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WhiteSpace {
+    /// Normal whitespace handling (collapse + wrap)
+    Normal,
+    /// No wrapping (single line)
+    Nowrap,
+    /// Preserve whitespace and newlines (no wrap)
+    Pre,
+    /// Preserve whitespace but allow wrapping
+    PreWrap,
 }
 
 /// CSS scrollbar-width values
@@ -443,6 +468,40 @@ pub struct ElementStyle {
     pub object_fit: Option<u8>,
     /// object-position: alignment of image within its container [x, y] in 0.0-1.0 range
     pub object_position: Option<[f32; 2]>,
+
+    // =========================================================================
+    // Interaction Properties
+    // =========================================================================
+    /// CSS pointer-events (auto, none)
+    pub pointer_events: Option<PointerEvents>,
+    /// CSS cursor style
+    pub cursor: Option<CursorStyle>,
+
+    // =========================================================================
+    // Blend Mode
+    // =========================================================================
+    /// CSS mix-blend-mode
+    pub mix_blend_mode: Option<BlendMode>,
+
+    // =========================================================================
+    // Text Decoration Enhancements
+    // =========================================================================
+    /// Text decoration line color (CSS text-decoration-color)
+    pub text_decoration_color: Option<Color>,
+    /// Text decoration line thickness in pixels (CSS text-decoration-thickness)
+    pub text_decoration_thickness: Option<f32>,
+
+    // =========================================================================
+    // Text Overflow
+    // =========================================================================
+    /// CSS text-overflow (clip or ellipsis)
+    pub text_overflow: Option<TextOverflow>,
+    /// CSS white-space (normal, nowrap, pre, pre-wrap)
+    pub white_space: Option<WhiteSpace>,
+    /// CSS mask-image URL or path
+    pub mask_image: Option<String>,
+    /// CSS mask-mode (alpha or luminance)
+    pub mask_mode: Option<blinc_core::MaskMode>,
 }
 
 impl ElementStyle {
@@ -1094,6 +1153,70 @@ impl ElementStyle {
     }
 
     // =========================================================================
+    // Interaction Properties
+    // =========================================================================
+
+    /// Set pointer-events behavior
+    pub fn pointer_events(mut self, pe: PointerEvents) -> Self {
+        self.pointer_events = Some(pe);
+        self
+    }
+
+    /// Set pointer-events: none
+    pub fn pointer_events_none(mut self) -> Self {
+        self.pointer_events = Some(PointerEvents::None);
+        self
+    }
+
+    /// Set cursor style
+    pub fn cursor(mut self, cursor: CursorStyle) -> Self {
+        self.cursor = Some(cursor);
+        self
+    }
+
+    /// Set mix-blend-mode
+    pub fn mix_blend_mode(mut self, mode: BlendMode) -> Self {
+        self.mix_blend_mode = Some(mode);
+        self
+    }
+
+    /// Set text-decoration-color
+    pub fn text_decoration_color(mut self, color: Color) -> Self {
+        self.text_decoration_color = Some(color);
+        self
+    }
+
+    /// Set text-decoration-thickness
+    pub fn text_decoration_thickness(mut self, thickness: f32) -> Self {
+        self.text_decoration_thickness = Some(thickness);
+        self
+    }
+
+    /// Set text-overflow
+    pub fn text_overflow(mut self, overflow: TextOverflow) -> Self {
+        self.text_overflow = Some(overflow);
+        self
+    }
+
+    /// Set white-space
+    pub fn white_space(mut self, ws: WhiteSpace) -> Self {
+        self.white_space = Some(ws);
+        self
+    }
+
+    /// Set mask-image URL
+    pub fn mask_image(mut self, url: impl Into<String>) -> Self {
+        self.mask_image = Some(url.into());
+        self
+    }
+
+    /// Set mask-mode
+    pub fn mask_mode(mut self, mode: blinc_core::MaskMode) -> Self {
+        self.mask_mode = Some(mode);
+        self
+    }
+
+    // =========================================================================
     // Merging
     // =========================================================================
 
@@ -1197,6 +1320,26 @@ impl ElementStyle {
             // Image
             object_fit: other.object_fit.or(self.object_fit),
             object_position: other.object_position.or(self.object_position),
+            // Interaction
+            pointer_events: other.pointer_events.or(self.pointer_events),
+            cursor: other.cursor.or(self.cursor),
+            // Blend mode
+            mix_blend_mode: other.mix_blend_mode.or(self.mix_blend_mode),
+            // Text decoration enhancements
+            text_decoration_color: other.text_decoration_color.or(self.text_decoration_color),
+            text_decoration_thickness: other
+                .text_decoration_thickness
+                .or(self.text_decoration_thickness),
+            // Text overflow
+            text_overflow: other.text_overflow.or(self.text_overflow),
+            white_space: other.white_space.or(self.white_space),
+            // Mask
+            mask_image: other
+                .mask_image
+                .as_ref()
+                .or(self.mask_image.as_ref())
+                .cloned(),
+            mask_mode: other.mask_mode.clone().or(self.mask_mode.clone()),
         }
     }
 

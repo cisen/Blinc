@@ -6,6 +6,21 @@ All notable changes to `blinc_app` will be documented in this file.
 
 ### Added
 
+#### SVG CSS Animations
+
+- SVG fill, stroke, stroke-width animatable via `@keyframes` and CSS transitions
+- Stroke-dasharray/dashoffset animation for SVG line-drawing effects
+- SVG path morphing via `d: path("...")` CSS animation (cubic bezier interpolation)
+- SVG sub-element metadata extraction (`extract_element_metadata`) for future per-element targeting
+- `svg_animation_demo` example demonstrating all SVG animation phases
+
+### Fixed
+
+- Text and SVG elements now clip to scroll container boundaries (regression from dual-clip refactor)
+- SVG own-transform applied correctly (not just inherited parent transforms)
+- CSS `transform: rotate()` animation uses original angle values instead of lossy atan2 decomposition
+- Performance: SVG string manipulation only runs on cache miss (not every frame)
+
 #### 3D SDF & Styling Demo
 
 - Expanded `styling_demo` example with 3D shape showcases (box, sphere, cylinder, torus, capsule)

@@ -272,6 +272,12 @@ pub struct ElementStyle {
     pub text_align: Option<crate::div::TextAlign>,
     /// Letter spacing in pixels
     pub letter_spacing: Option<f32>,
+    /// 2D rotation angle in degrees (original CSS value, avoids lossy atan2 decomposition)
+    pub rotate: Option<f32>,
+    /// Scale X factor (original CSS value)
+    pub scale_x: Option<f32>,
+    /// Scale Y factor (original CSS value)
+    pub scale_y: Option<f32>,
     /// Skew X angle in degrees
     pub skew_x: Option<f32>,
     /// Skew Y angle in degrees
@@ -408,6 +414,12 @@ pub struct ElementStyle {
     pub stroke: Option<Color>,
     /// SVG stroke width in pixels
     pub stroke_width: Option<f32>,
+    /// SVG stroke-dasharray pattern (alternating dash/gap lengths)
+    pub stroke_dasharray: Option<Vec<f32>>,
+    /// SVG stroke-dashoffset in pixels
+    pub stroke_dashoffset: Option<f32>,
+    /// SVG path `d` attribute data (for path morphing)
+    pub svg_path_data: Option<String>,
 
     /// CSS position (static, relative, absolute)
     pub position: Option<StylePosition>,
@@ -1107,6 +1119,9 @@ impl ElementStyle {
             line_height: other.line_height.or(self.line_height),
             text_align: other.text_align.or(self.text_align),
             letter_spacing: other.letter_spacing.or(self.letter_spacing),
+            rotate: other.rotate.or(self.rotate),
+            scale_x: other.scale_x.or(self.scale_x),
+            scale_y: other.scale_y.or(self.scale_y),
             skew_x: other.skew_x.or(self.skew_x),
             skew_y: other.skew_y.or(self.skew_y),
             transform_origin: other.transform_origin.or(self.transform_origin),
@@ -1166,6 +1181,12 @@ impl ElementStyle {
             fill: other.fill.or(self.fill),
             stroke: other.stroke.or(self.stroke),
             stroke_width: other.stroke_width.or(self.stroke_width),
+            stroke_dasharray: other
+                .stroke_dasharray
+                .clone()
+                .or(self.stroke_dasharray.clone()),
+            stroke_dashoffset: other.stroke_dashoffset.or(self.stroke_dashoffset),
+            svg_path_data: other.svg_path_data.clone().or(self.svg_path_data.clone()),
             position: other.position.or(self.position),
             top: other.top.or(self.top),
             right: other.right.or(self.right),

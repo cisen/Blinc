@@ -4596,6 +4596,15 @@ impl RenderTree {
         if let Some(sw) = style.stroke_width {
             props.stroke_width = Some(sw);
         }
+        if let Some(ref da) = style.stroke_dasharray {
+            props.stroke_dasharray = Some(da.clone());
+        }
+        if let Some(offset) = style.stroke_dashoffset {
+            props.stroke_dashoffset = Some(offset);
+        }
+        if let Some(ref path_data) = style.svg_path_data {
+            props.svg_path_data = Some(path_data.clone());
+        }
         // Transform origin
         if let Some(to) = style.transform_origin {
             props.transform_origin = Some(to);
@@ -6485,6 +6494,12 @@ impl RenderTree {
         check_transition!(skew_y, "transform", default 0.0);
         check_transition!(transform_origin, "transform-origin");
 
+        // SVG properties
+        check_transition!(svg_fill, "fill");
+        check_transition!(svg_stroke, "stroke");
+        check_transition!(svg_stroke_width, "stroke-width");
+        check_transition!(svg_stroke_dashoffset, "stroke-dashoffset");
+
         if has_any && duration_ms > 0 {
             // If a transition already exists heading to the same target, let it continue
             // rather than restarting with a fresh duration each frame
@@ -6953,6 +6968,23 @@ impl RenderTree {
         if let Some(to) = anim_props.transform_origin {
             props.transform_origin = Some(to);
         }
+
+        // SVG properties
+        if let Some([r, g, b, a]) = anim_props.svg_fill {
+            props.fill = Some([r, g, b, a]);
+        }
+        if let Some([r, g, b, a]) = anim_props.svg_stroke {
+            props.stroke = Some([r, g, b, a]);
+        }
+        if let Some(sw) = anim_props.svg_stroke_width {
+            props.stroke_width = Some(sw);
+        }
+        if let Some(offset) = anim_props.svg_stroke_dashoffset {
+            props.stroke_dashoffset = Some(offset);
+        }
+        if let Some(ref path_data) = anim_props.svg_path_data {
+            props.svg_path_data = Some(path_data.clone());
+        }
     }
 
     /// Extract animatable properties from RenderProps into KeyframeProperties
@@ -7142,6 +7174,23 @@ impl RenderTree {
 
         // Transform origin
         kp.transform_origin = props.transform_origin;
+
+        // SVG properties
+        if let Some(fill) = &props.fill {
+            kp.svg_fill = Some(*fill);
+        }
+        if let Some(stroke) = &props.stroke {
+            kp.svg_stroke = Some(*stroke);
+        }
+        if let Some(sw) = props.stroke_width {
+            kp.svg_stroke_width = Some(sw);
+        }
+        if let Some(offset) = props.stroke_dashoffset {
+            kp.svg_stroke_dashoffset = Some(offset);
+        }
+        if let Some(ref path_data) = props.svg_path_data {
+            kp.svg_path_data = Some(path_data.clone());
+        }
 
         kp
     }

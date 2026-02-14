@@ -266,6 +266,18 @@ pub struct KeyframeProperties {
     // --- Stacking ---
     /// z-index (f32 for smooth interpolation, rounded on apply)
     pub z_index: Option<f32>,
+
+    // --- SVG properties ---
+    /// SVG fill color RGBA
+    pub svg_fill: Option<[f32; 4]>,
+    /// SVG stroke color RGBA
+    pub svg_stroke: Option<[f32; 4]>,
+    /// SVG stroke width in pixels
+    pub svg_stroke_width: Option<f32>,
+    /// SVG stroke-dashoffset in pixels (for line-drawing animations)
+    pub svg_stroke_dashoffset: Option<f32>,
+    /// SVG path `d` attribute data (for path morphing animations)
+    pub svg_path_data: Option<String>,
 }
 
 impl KeyframeProperties {
@@ -468,6 +480,16 @@ impl KeyframeProperties {
             transform_origin: lerp_opt_array2(self.transform_origin, other.transform_origin, t),
             // Stacking
             z_index: lerp_opt(self.z_index, other.z_index, t),
+            // SVG
+            svg_fill: lerp_opt_array4(self.svg_fill, other.svg_fill, t),
+            svg_stroke: lerp_opt_array4(self.svg_stroke, other.svg_stroke, t),
+            svg_stroke_width: lerp_opt(self.svg_stroke_width, other.svg_stroke_width, t),
+            svg_stroke_dashoffset: lerp_opt(
+                self.svg_stroke_dashoffset,
+                other.svg_stroke_dashoffset,
+                t,
+            ),
+            svg_path_data: lerp_path_data(&self.svg_path_data, &other.svg_path_data, t),
         }
     }
 
@@ -545,6 +567,18 @@ fn lerp_opt_array3(a: Option<[f32; 3]>, b: Option<[f32; 3]>, t: f32) -> Option<[
         ]),
         (Some(a), None) => Some(a),
         (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
+/// Helper to interpolate optional SVG path data strings via morph engine
+fn lerp_path_data(a: &Option<String>, b: &Option<String>, t: f32) -> Option<String> {
+    match (a, b) {
+        (Some(from), Some(to)) => {
+            crate::morph::interpolate_paths(from, to, t).or_else(|| Some(to.clone()))
+        }
+        (Some(s), None) => Some(s.clone()),
+        (None, Some(s)) => Some(s.clone()),
         (None, None) => None,
     }
 }

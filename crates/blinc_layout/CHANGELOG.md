@@ -6,6 +6,20 @@ All notable changes to `blinc_layout` will be documented in this file.
 
 ### Added
 
+#### SVG Animation Properties
+
+- `fill`, `stroke`, `stroke-width` as animatable CSS properties for SVG elements
+- `stroke-dasharray`, `stroke-dashoffset` CSS properties for SVG line-drawing effects
+- `d: path("...")` CSS property for SVG path morphing animation
+- `svg_path_data` field on ElementStyle and RenderProps for path data propagation
+- Decomposed transform fields (`rotate`, `scale_x`, `scale_y`) on ElementStyle to avoid lossy atan2 decomposition
+- `parse_scale_values()` helper for extracting original scale factors from CSS
+
+### Fixed
+
+- `style_to_keyframe_properties()` preserves original rotation angle from CSS (avoids 359deg → -1deg via atan2)
+- Clippy: use `Ok(v)` instead of `Some(v) = .ok()` pattern in glass parser
+
 #### CSS Parser & Stylesheet Engine
 
 - Full CSS parser with `#id` selector support and `:hover`, `:focus`, `:active`, `:disabled` pseudo-states

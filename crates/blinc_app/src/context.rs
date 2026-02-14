@@ -173,6 +173,12 @@ struct SvgElement {
     stroke: Option<blinc_core::Color>,
     /// CSS `stroke-width` override for SVG
     stroke_width: Option<f32>,
+    /// CSS `stroke-dasharray` pattern for SVG
+    stroke_dasharray: Option<Vec<f32>>,
+    /// CSS `stroke-dashoffset` for SVG
+    stroke_dashoffset: Option<f32>,
+    /// SVG path `d` attribute data (for path morphing)
+    svg_path_data: Option<String>,
     /// Clip bounds from parent scroll container (x, y, width, height)
     clip_bounds: Option<[f32; 4]>,
     /// Motion opacity inherited from parent motion container
@@ -1556,14 +1562,34 @@ impl RenderContext {
                     3u8.hash(&mut hasher);
                     sw.to_bits().hash(&mut hasher);
                 }
+                if let Some(ref da) = svg.stroke_dasharray {
+                    4u8.hash(&mut hasher);
+                    for v in da {
+                        v.to_bits().hash(&mut hasher);
+                    }
+                }
+                if let Some(offset) = &svg.stroke_dashoffset {
+                    5u8.hash(&mut hasher);
+                    offset.to_bits().hash(&mut hasher);
+                }
+                if let Some(ref path_data) = svg.svg_path_data {
+                    6u8.hash(&mut hasher);
+                    path_data.hash(&mut hasher);
+                }
                 hasher.finish()
             };
 
-            // Build SVG source with inline attribute overrides for fill/stroke/stroke-width.
-            // Uses inline attributes on the root <svg> element (SVG presentation attributes
-            // inherit to children) AND on individual shape elements for overriding explicit attrs.
-            let effective_source =
-                if svg.fill.is_some() || svg.stroke.is_some() || svg.stroke_width.is_some() {
+            // Check cache first — skip string manipulation entirely on cache hit
+            if self.rasterized_svg_cache.get(&cache_key).is_none() {
+                // Cache miss: build SVG source with inline attribute overrides
+                let has_overrides = svg.fill.is_some()
+                    || svg.stroke.is_some()
+                    || svg.stroke_width.is_some()
+                    || svg.stroke_dasharray.is_some()
+                    || svg.stroke_dashoffset.is_some()
+                    || svg.svg_path_data.is_some();
+
+                let effective_source = if has_overrides {
                     fn color_val(c: blinc_core::Color) -> String {
                         if c.a < 1.0 {
                             format!(
@@ -1594,22 +1620,30 @@ impl RenderContext {
                     if let Some(sw) = svg.stroke_width {
                         svg_attrs.push_str(&format!(r#" stroke-width="{}""#, sw));
                     }
+                    if let Some(ref da) = svg.stroke_dasharray {
+                        let da_str = da
+                            .iter()
+                            .map(|v| v.to_string())
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        svg_attrs.push_str(&format!(r#" stroke-dasharray="{}""#, da_str));
+                    }
+                    if let Some(offset) = svg.stroke_dashoffset {
+                        svg_attrs.push_str(&format!(r#" stroke-dashoffset="{}""#, offset));
+                    }
 
                     // Strip existing attribute from a tag region in the SVG string.
-                    // Returns the modified string with the attribute removed.
                     fn strip_attr(s: &mut String, tag_start: usize, tag_end: usize, attr: &str) {
-                        // Search for attr="..." or attr='...' within the tag
                         let region = &s[tag_start..tag_end];
                         let attr_eq = format!("{}=", attr);
                         if let Some(attr_offset) = region.find(&attr_eq) {
                             let abs_attr = tag_start + attr_offset;
-                            let after_eq = abs_attr + attr.len() + 1; // skip past '='
+                            let after_eq = abs_attr + attr.len() + 1;
                             if after_eq < s.len() {
                                 let quote = s.as_bytes()[after_eq];
                                 if quote == b'"' || quote == b'\'' {
                                     if let Some(end_quote) = s[after_eq + 1..].find(quote as char) {
                                         let remove_end = after_eq + 1 + end_quote + 1;
-                                        // Also remove leading whitespace before the attribute
                                         let remove_start =
                                             if abs_attr > 0 && s.as_bytes()[abs_attr - 1] == b' ' {
                                                 abs_attr - 1
@@ -1625,11 +1659,10 @@ impl RenderContext {
 
                     let mut modified = svg.source.clone();
 
-                    // Strip existing attributes that we're about to override from the <svg> tag
+                    // Strip existing attributes from the <svg> tag
                     if let Some(svg_close) = modified.find('>') {
                         if svg.stroke.is_some() {
                             strip_attr(&mut modified, 0, svg_close, "stroke-width");
-                            // Recompute close pos after removal
                             let svg_close = modified.find('>').unwrap_or(0);
                             strip_attr(&mut modified, 0, svg_close, "stroke");
                         }
@@ -1641,12 +1674,19 @@ impl RenderContext {
                             let svg_close = modified.find('>').unwrap_or(0);
                             strip_attr(&mut modified, 0, svg_close, "stroke-width");
                         }
+                        if svg.stroke_dasharray.is_some() {
+                            let svg_close = modified.find('>').unwrap_or(0);
+                            strip_attr(&mut modified, 0, svg_close, "stroke-dasharray");
+                        }
+                        if svg.stroke_dashoffset.is_some() {
+                            let svg_close = modified.find('>').unwrap_or(0);
+                            strip_attr(&mut modified, 0, svg_close, "stroke-dashoffset");
+                        }
                     }
 
-                    // Insert new attributes into the opening <svg tag, before the closing >
+                    // Insert new attributes into the opening <svg tag
                     if !svg_attrs.is_empty() {
                         if let Some(pos) = modified.find('>') {
-                            // Check if it's a self-closing tag like <svg ... />
                             let insert_pos = if pos > 0 && modified.as_bytes()[pos - 1] == b'/' {
                                 pos - 1
                             } else {
@@ -1656,8 +1696,7 @@ impl RenderContext {
                         }
                     }
 
-                    // Also override fill/stroke on individual shape elements
-                    // to handle SVGs that have explicit attributes on paths
+                    // Override fill/stroke on individual shape elements
                     let shape_tags = [
                         "<path",
                         "<circle",
@@ -1675,7 +1714,6 @@ impl RenderContext {
                             if let Some(close) = modified[abs_start..].find('>') {
                                 let abs_close = abs_start + close;
 
-                                // Strip existing attributes from this element before adding overrides
                                 if svg.stroke.is_some() {
                                     strip_attr(&mut modified, abs_tag, abs_close, "stroke-width");
                                     let new_close = abs_start
@@ -1692,6 +1730,31 @@ impl RenderContext {
                                         + modified[abs_start..].find('>').unwrap_or(close);
                                     strip_attr(&mut modified, abs_tag, new_close, "stroke-width");
                                 }
+                                if svg.stroke_dasharray.is_some() {
+                                    let new_close = abs_start
+                                        + modified[abs_start..].find('>').unwrap_or(close);
+                                    strip_attr(
+                                        &mut modified,
+                                        abs_tag,
+                                        new_close,
+                                        "stroke-dasharray",
+                                    );
+                                }
+                                if svg.stroke_dashoffset.is_some() {
+                                    let new_close = abs_start
+                                        + modified[abs_start..].find('>').unwrap_or(close);
+                                    strip_attr(
+                                        &mut modified,
+                                        abs_tag,
+                                        new_close,
+                                        "stroke-dashoffset",
+                                    );
+                                }
+                                if svg.svg_path_data.is_some() && *tag == "<path" {
+                                    let new_close = abs_start
+                                        + modified[abs_start..].find('>').unwrap_or(close);
+                                    strip_attr(&mut modified, abs_tag, new_close, "d");
+                                }
 
                                 // Recompute close position after stripping
                                 let abs_close =
@@ -1703,7 +1766,6 @@ impl RenderContext {
                                 } else {
                                     abs_close
                                 };
-                                // Build per-element attributes
                                 let mut elem_attrs = String::new();
                                 if let Some(fill) = svg.fill {
                                     elem_attrs.push_str(&format!(r#" fill="{}""#, color_val(fill)));
@@ -1714,6 +1776,24 @@ impl RenderContext {
                                 }
                                 if let Some(sw) = svg.stroke_width {
                                     elem_attrs.push_str(&format!(r#" stroke-width="{}""#, sw));
+                                }
+                                if let Some(ref da) = svg.stroke_dasharray {
+                                    let da_str = da
+                                        .iter()
+                                        .map(|v| v.to_string())
+                                        .collect::<Vec<_>>()
+                                        .join(",");
+                                    elem_attrs
+                                        .push_str(&format!(r#" stroke-dasharray="{}""#, da_str));
+                                }
+                                if let Some(offset) = svg.stroke_dashoffset {
+                                    elem_attrs
+                                        .push_str(&format!(r#" stroke-dashoffset="{}""#, offset));
+                                }
+                                if let Some(ref path_data) = svg.svg_path_data {
+                                    if *tag == "<path" {
+                                        elem_attrs.push_str(&format!(r#" d="{}""#, path_data));
+                                    }
                                 }
                                 modified.insert_str(insert_at, &elem_attrs);
                                 search_from = insert_at + elem_attrs.len() + 1;
@@ -1728,8 +1808,6 @@ impl RenderContext {
                     std::borrow::Cow::Borrowed(&svg.source)
                 };
 
-            // Check cache or rasterize on miss
-            if self.rasterized_svg_cache.get(&cache_key).is_none() {
                 // Rasterize the SVG
                 let rasterized = if let Some(tint) = svg.tint {
                     RasterizedSvg::from_str_with_tint(
@@ -2136,6 +2214,59 @@ impl RenderContext {
             (current_clip, current_clip_radius, current_scroll_clip)
         };
 
+        // Compute this node's CSS affine: compose its own CSS transform with inherited.
+        // This must happen BEFORE the element-type match block so that SVGs, text, and images
+        // get their own transform applied (not just the parent's inherited transform).
+        let node_css_affine = if let Some(render_node) = tree.get_render_node(node) {
+            if let Some(blinc_core::Transform::Affine2D(affine)) = &render_node.props.transform {
+                let [a, b, c, d, _tx, _ty] = affine.elements;
+                // Check if transform is non-identity (rotation, skew, or scale)
+                let is_identity = (a - 1.0).abs() < 0.0001
+                    && b.abs() < 0.0001
+                    && c.abs() < 0.0001
+                    && (d - 1.0).abs() < 0.0001;
+                if !is_identity {
+                    // Compute transform center in absolute layout coords
+                    let (cx, cy) =
+                        if let Some([ox_pct, oy_pct]) = render_node.props.transform_origin {
+                            (
+                                abs_x + bounds.width * ox_pct / 100.0,
+                                abs_y + bounds.height * oy_pct / 100.0,
+                            )
+                        } else {
+                            (abs_x + bounds.width / 2.0, abs_y + bounds.height / 2.0)
+                        };
+                    // Build full 6-element affine: T(center) * M * T(-center)
+                    // new_x = a*x + c*y + cx*(1-a) - cy*c
+                    // new_y = b*x + d*y + cy*(1-d) - cx*b
+                    let this_affine =
+                        [a, b, c, d, cx * (1.0 - a) - cy * c, cy * (1.0 - d) - cx * b];
+                    match inherited_css_affine {
+                        Some(parent) => {
+                            // Compose: parent applied first, then this node's transform
+                            // Result = this_affine(parent(x))
+                            let [pa, pb, pc, pd, ptx, pty] = parent;
+                            Some([
+                                a * pa + c * pb,
+                                b * pa + d * pb,
+                                a * pc + c * pd,
+                                b * pc + d * pd,
+                                a * ptx + c * pty + this_affine[4],
+                                b * ptx + d * pty + this_affine[5],
+                            ])
+                        }
+                        None => Some(this_affine),
+                    }
+                } else {
+                    inherited_css_affine
+                }
+            } else {
+                inherited_css_affine
+            }
+        } else {
+            inherited_css_affine
+        };
+
         if let Some(render_node) = tree.get_render_node(node) {
             // Determine effective layer: children inside glass render in Foreground
             let effective_layer = if inside_glass && !is_glass {
@@ -2202,8 +2333,10 @@ impl RenderContext {
                     let scaled_measured_width =
                         text_data.measured_width * effective_motion_scale.0 * scale;
 
-                    // Scale clip bounds if present
-                    let scaled_clip = current_clip
+                    // Scale clip bounds if present — fall back to scroll_clip for
+                    // elements that only support a single clip rect (text, SVG).
+                    let effective_clip = current_clip.or(current_scroll_clip);
+                    let scaled_clip = effective_clip
                         .map(|[cx, cy, cw, ch]| [cx * scale, cy * scale, cw * scale, ch * scale]);
 
                     // Log motion values if non-trivial (for debugging text/shape sync issues)
@@ -2265,7 +2398,7 @@ impl RenderContext {
                         ascender: text_data.ascender * effective_motion_scale.1 * scale,
                         strikethrough: text_data.strikethrough,
                         underline: text_data.underline,
-                        css_affine: inherited_css_affine,
+                        css_affine: node_css_affine,
                         text_shadow: render_node.props.text_shadow,
                     });
                 }
@@ -2306,8 +2439,10 @@ impl RenderContext {
                             (final_x, final_y, base_width, base_height)
                         };
 
-                    // Scale clip bounds if present
-                    let scaled_clip = current_clip
+                    // Scale clip bounds if present — fall back to scroll_clip for
+                    // elements that only support a single clip rect (text, SVG).
+                    let effective_clip = current_clip.or(current_scroll_clip);
+                    let scaled_clip = effective_clip
                         .map(|[cx, cy, cw, ch]| [cx * scale, cy * scale, cw * scale, ch * scale]);
 
                     svgs.push(SvgElement {
@@ -2333,9 +2468,12 @@ impl RenderContext {
                             .map(|c| blinc_core::Color::rgba(c[0], c[1], c[2], c[3]))
                             .or(svg_data.stroke),
                         stroke_width: render_node.props.stroke_width.or(svg_data.stroke_width),
+                        stroke_dasharray: render_node.props.stroke_dasharray.clone(),
+                        stroke_dashoffset: render_node.props.stroke_dashoffset,
+                        svg_path_data: render_node.props.svg_path_data.clone(),
                         clip_bounds: scaled_clip,
                         motion_opacity: effective_motion_opacity,
-                        css_affine: inherited_css_affine,
+                        css_affine: node_css_affine,
                     });
                 }
                 ElementType::Image(image_data) => {
@@ -2455,7 +2593,7 @@ impl RenderContext {
                         z_index: *z_layer,
                         border_width,
                         border_color,
-                        css_affine: inherited_css_affine,
+                        css_affine: node_css_affine,
                         shadow,
                         filter_a,
                         filter_b,
@@ -2515,7 +2653,7 @@ impl RenderContext {
                             z_index: *z_layer,
                             border_width: 0.0,
                             border_color: blinc_core::Color::TRANSPARENT,
-                            css_affine: inherited_css_affine,
+                            css_affine: node_css_affine,
                             shadow: render_node.props.shadow,
                             filter_a: render_node
                                 .props
@@ -2576,7 +2714,9 @@ impl RenderContext {
                     let base_styled_font_size =
                         render_node.props.font_size.unwrap_or(styled_data.font_size);
                     let scaled_font_size = base_styled_font_size * effective_motion_scale.1 * scale;
-                    let scaled_clip = current_clip
+                    // Fall back to scroll_clip for elements that only support a single clip rect
+                    let effective_clip = current_clip.or(current_scroll_clip);
+                    let scaled_clip = effective_clip
                         .map(|[cx, cy, cw, ch]| [cx * scale, cy * scale, cw * scale, ch * scale]);
 
                     // Build non-overlapping segments from potentially overlapping spans
@@ -2723,7 +2863,7 @@ impl RenderContext {
                             ascender: scaled_ascender * effective_motion_scale.1, // Scale ascender with motion
                             strikethrough,
                             underline,
-                            css_affine: inherited_css_affine,
+                            css_affine: node_css_affine,
                             text_shadow: render_node.props.text_shadow,
                         });
 
@@ -2747,57 +2887,6 @@ impl RenderContext {
             abs_x + scroll_offset.0 + static_motion_offset.0,
             abs_y + scroll_offset.1 + static_motion_offset.1,
         );
-
-        // Compute CSS affine for children: compose this node's CSS transform with inherited
-        let child_css_affine = if let Some(render_node) = tree.get_render_node(node) {
-            if let Some(blinc_core::Transform::Affine2D(affine)) = &render_node.props.transform {
-                let [a, b, c, d, _tx, _ty] = affine.elements;
-                // Check if transform is non-identity (rotation, skew, or scale)
-                let is_identity = (a - 1.0).abs() < 0.0001
-                    && b.abs() < 0.0001
-                    && c.abs() < 0.0001
-                    && (d - 1.0).abs() < 0.0001;
-                if !is_identity {
-                    // Compute transform center in absolute layout coords
-                    let (cx, cy) =
-                        if let Some([ox_pct, oy_pct]) = render_node.props.transform_origin {
-                            (
-                                abs_x + bounds.width * ox_pct / 100.0,
-                                abs_y + bounds.height * oy_pct / 100.0,
-                            )
-                        } else {
-                            (abs_x + bounds.width / 2.0, abs_y + bounds.height / 2.0)
-                        };
-                    // Build full 6-element affine: T(center) * M * T(-center)
-                    // new_x = a*x + c*y + cx*(1-a) - cy*c
-                    // new_y = b*x + d*y + cy*(1-d) - cx*b
-                    let this_affine =
-                        [a, b, c, d, cx * (1.0 - a) - cy * c, cy * (1.0 - d) - cx * b];
-                    match inherited_css_affine {
-                        Some(parent) => {
-                            // Compose: parent applied first, then this node's transform
-                            // Result = this_affine(parent(x))
-                            let [pa, pb, pc, pd, ptx, pty] = parent;
-                            Some([
-                                a * pa + c * pb,
-                                b * pa + d * pb,
-                                a * pc + c * pd,
-                                b * pc + d * pd,
-                                a * ptx + c * pty + this_affine[4],
-                                b * ptx + d * pty + this_affine[5],
-                            ])
-                        }
-                        None => Some(this_affine),
-                    }
-                } else {
-                    inherited_css_affine
-                }
-            } else {
-                inherited_css_affine
-            }
-        } else {
-            inherited_css_affine
-        };
 
         // Compute inherited CSS opacity for children: compound this node's CSS opacity
         // CSS `opacity` applies to the element AND its visual subtree
@@ -2826,7 +2915,7 @@ impl RenderContext {
                 texts,
                 svgs,
                 images,
-                child_css_affine,
+                node_css_affine,
                 child_css_opacity,
                 Some(node), // pass current node as parent for children
                 child_scroll_clip,

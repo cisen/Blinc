@@ -163,6 +163,113 @@ impl SvgDocument {
     }
 }
 
+/// Metadata for an SVG sub-element with a non-empty ID.
+/// Used for CSS selector targeting of SVG internals.
+#[derive(Clone, Debug)]
+pub struct SvgSubElement {
+    /// The element's `id` attribute
+    pub id: String,
+    /// SVG tag name ("path", "circle", "rect", "ellipse", "line", "polygon", "polyline")
+    pub tag_name: String,
+    /// Current fill color [r, g, b, a] if set
+    pub fill: Option<[f32; 4]>,
+    /// Current stroke color [r, g, b, a] if set
+    pub stroke: Option<[f32; 4]>,
+    /// Current stroke width if set
+    pub stroke_width: Option<f32>,
+    /// Current stroke-dasharray if set
+    pub dasharray: Option<Vec<f32>>,
+    /// Current stroke-dashoffset
+    pub dashoffset: f32,
+    /// Element opacity (0.0-1.0)
+    pub opacity: f32,
+}
+
+/// Extract metadata for all sub-elements with IDs from an SVG string.
+///
+/// Parses the SVG via usvg and walks the tree, returning metadata for each
+/// element that has a non-empty `id` attribute. This enables CSS selector
+/// targeting of individual SVG elements.
+pub fn extract_element_metadata(svg_str: &str) -> Result<Vec<SvgSubElement>, SvgError> {
+    let options = Options::default();
+    let tree = Tree::from_data(svg_str.as_bytes(), &options)
+        .map_err(|e| SvgError::Parse(e.to_string()))?;
+    let mut elements = Vec::new();
+    extract_from_group(tree.root(), &mut elements);
+    Ok(elements)
+}
+
+fn extract_from_group(group: &usvg::Group, elements: &mut Vec<SvgSubElement>) {
+    for child in group.children() {
+        match child {
+            usvg::Node::Group(g) => {
+                // Groups can have IDs too
+                let id = g.id().to_string();
+                if !id.is_empty() {
+                    elements.push(SvgSubElement {
+                        id,
+                        tag_name: "g".to_string(),
+                        fill: None,
+                        stroke: None,
+                        stroke_width: None,
+                        dasharray: None,
+                        dashoffset: 0.0,
+                        opacity: g.opacity().get(),
+                    });
+                }
+                extract_from_group(g, elements);
+            }
+            usvg::Node::Path(p) => {
+                let id = p.id().to_string();
+                if !id.is_empty() {
+                    let fill = p.fill().and_then(|f| {
+                        if let usvg::Paint::Color(c) = f.paint() {
+                            Some([
+                                c.red as f32 / 255.0,
+                                c.green as f32 / 255.0,
+                                c.blue as f32 / 255.0,
+                                f.opacity().get(),
+                            ])
+                        } else {
+                            None
+                        }
+                    });
+                    let (stroke, stroke_width, dasharray, dashoffset) = if let Some(s) = p.stroke()
+                    {
+                        let sc = if let usvg::Paint::Color(c) = s.paint() {
+                            Some([
+                                c.red as f32 / 255.0,
+                                c.green as f32 / 255.0,
+                                c.blue as f32 / 255.0,
+                                s.opacity().get(),
+                            ])
+                        } else {
+                            None
+                        };
+                        let da = s.dasharray().map(|d| d.to_vec());
+                        (sc, Some(s.width().get()), da, s.dashoffset())
+                    } else {
+                        (None, None, None, 0.0)
+                    };
+                    // usvg flattens circles/rects/ellipses to paths, so tag_name is always "path"
+                    // The original tag name is lost after usvg processing
+                    elements.push(SvgSubElement {
+                        id,
+                        tag_name: "path".to_string(),
+                        fill,
+                        stroke,
+                        stroke_width,
+                        dasharray,
+                        dashoffset,
+                        opacity: 1.0, // path-level opacity is folded into fill/stroke opacity by usvg
+                    });
+                }
+            }
+            usvg::Node::Image(_) | usvg::Node::Text(_) => {}
+        }
+    }
+}
+
 /// Apply a usvg Transform to a Blinc Path
 fn apply_transform(path: &Path, transform: &usvg::Transform) -> Path {
     if transform.is_identity() {

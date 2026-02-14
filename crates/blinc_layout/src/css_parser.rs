@@ -816,30 +816,29 @@ impl CssKeyframes {
             props.opacity = Some(opacity);
         }
 
-        // Try to extract transform components from Affine2D
-        if let Some(Transform::Affine2D(affine)) = &style.transform {
-            let [a, b, c, d, tx, ty] = affine.elements;
+        // Extract transform components for animation.
+        // IMPORTANT: When a transform IS explicitly set, always include all components
+        // (even identity values like scale=1.0, rotate=0.0) so that lerp between
+        // keyframes works correctly (lerp_opt(Some(1.0), Some(1.3), t) interpolates,
+        // while lerp_opt(None, Some(1.3), t) jumps).
+        //
+        // Prefer the original decomposed values (rotate, scale_x, scale_y) stored
+        // during CSS parsing. These preserve the exact angle/factor from the CSS source.
+        // Falling back to Affine2D decomposition is lossy — atan2 maps 359° to -1°.
+        if style.transform.is_some() || style.rotate.is_some() || style.scale_x.is_some() {
+            // Use original decomposed values when available
+            props.rotate = Some(style.rotate.unwrap_or(0.0));
+            props.scale_x = Some(style.scale_x.unwrap_or(1.0));
+            props.scale_y = Some(style.scale_y.unwrap_or(1.0));
 
-            // Extract translation
-            if tx != 0.0 || ty != 0.0 {
+            // Extract translation from the matrix (translation doesn't suffer from wrapping)
+            if let Some(Transform::Affine2D(affine)) = &style.transform {
+                let [_a, _b, _c, _d, tx, ty] = affine.elements;
                 props.translate_x = Some(tx);
                 props.translate_y = Some(ty);
-            }
-
-            // Try to extract scale (valid when no rotation/skew: b=0, c=0)
-            if b.abs() < 0.0001 && c.abs() < 0.0001 {
-                if (a - 1.0).abs() > 0.0001 {
-                    props.scale_x = Some(a);
-                }
-                if (d - 1.0).abs() > 0.0001 {
-                    props.scale_y = Some(d);
-                }
             } else {
-                // Has rotation - extract rotation angle
-                let rotation = b.atan2(a);
-                if rotation.abs() > 0.0001 {
-                    props.rotate = Some(rotation.to_degrees());
-                }
+                props.translate_x = Some(0.0);
+                props.translate_y = Some(0.0);
             }
         }
 
@@ -1064,6 +1063,23 @@ impl CssKeyframes {
         // Transform origin
         if let Some(to) = style.transform_origin {
             props.transform_origin = Some(to);
+        }
+
+        // SVG properties
+        if let Some(fill) = &style.fill {
+            props.svg_fill = Some([fill.r, fill.g, fill.b, fill.a]);
+        }
+        if let Some(stroke) = &style.stroke {
+            props.svg_stroke = Some([stroke.r, stroke.g, stroke.b, stroke.a]);
+        }
+        if let Some(sw) = style.stroke_width {
+            props.svg_stroke_width = Some(sw);
+        }
+        if let Some(offset) = style.stroke_dashoffset {
+            props.svg_stroke_dashoffset = Some(offset);
+        }
+        if let Some(ref path_data) = style.svg_path_data {
+            props.svg_path_data = Some(path_data.clone());
         }
 
         props
@@ -2978,6 +2994,51 @@ fn apply_property(style: &mut ElementStyle, name: &str, value: &str) {
                 style.stroke_width = Some(px);
             }
         }
+        "stroke-dasharray" => {
+            let trimmed = value.trim();
+            if trimmed.eq_ignore_ascii_case("none") {
+                style.stroke_dasharray = Some(vec![]);
+            } else {
+                let dashes: Vec<f32> = trimmed
+                    .split([',', ' '])
+                    .filter_map(|s| {
+                        let s = s.trim();
+                        if s.is_empty() {
+                            None
+                        } else {
+                            parse_length_value(s)
+                        }
+                    })
+                    .collect();
+                if !dashes.is_empty() {
+                    style.stroke_dasharray = Some(dashes);
+                }
+            }
+        }
+        "stroke-dashoffset" => {
+            if let Some(px) = parse_length_value(value) {
+                style.stroke_dashoffset = Some(px);
+            }
+        }
+        "d" => {
+            // CSS d: path("...") for SVG path morphing
+            let trimmed = value.trim();
+            if let Some(inner) = trimmed
+                .strip_prefix("path(")
+                .and_then(|s| s.strip_suffix(')'))
+            {
+                let inner = inner.trim();
+                // Remove surrounding quotes if present
+                let path_data = if (inner.starts_with('"') && inner.ends_with('"'))
+                    || (inner.starts_with('\'') && inner.ends_with('\''))
+                {
+                    &inner[1..inner.len() - 1]
+                } else {
+                    inner
+                };
+                style.svg_path_data = Some(path_data.to_string());
+            }
+        }
         "scrollbar-color" => {
             let parts: Vec<&str> = value.split_whitespace().collect();
             if parts.len() == 2 {
@@ -3628,6 +3689,55 @@ fn apply_property_with_errors(
         "stroke-width" => {
             if let Some(px) = parse_length_value(value) {
                 style.stroke_width = Some(px);
+            } else {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        }
+        "stroke-dasharray" => {
+            let trimmed = value.trim();
+            if trimmed.eq_ignore_ascii_case("none") {
+                style.stroke_dasharray = Some(vec![]);
+            } else {
+                let dashes: Vec<f32> = trimmed
+                    .split([',', ' '])
+                    .filter_map(|s| {
+                        let s = s.trim();
+                        if s.is_empty() {
+                            None
+                        } else {
+                            parse_length_value(s)
+                        }
+                    })
+                    .collect();
+                if !dashes.is_empty() {
+                    style.stroke_dasharray = Some(dashes);
+                } else {
+                    errors.push(ParseError::invalid_value(name, value, line, column));
+                }
+            }
+        }
+        "stroke-dashoffset" => {
+            if let Some(px) = parse_length_value(value) {
+                style.stroke_dashoffset = Some(px);
+            } else {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        }
+        "d" => {
+            let trimmed = value.trim();
+            if let Some(inner) = trimmed
+                .strip_prefix("path(")
+                .and_then(|s| s.strip_suffix(')'))
+            {
+                let inner = inner.trim();
+                let path_data = if (inner.starts_with('"') && inner.ends_with('"'))
+                    || (inner.starts_with('\'') && inner.ends_with('\''))
+                {
+                    &inner[1..inner.len() - 1]
+                } else {
+                    inner
+                };
+                style.svg_path_data = Some(path_data.to_string());
             } else {
                 errors.push(ParseError::invalid_value(name, value, line, column));
             }
@@ -4636,8 +4746,19 @@ fn parse_transform_with_3d(value: &str, style: &mut ElementStyle) -> bool {
         return true;
     }
 
-    // Fall back to 2D transform parsing
+    // Fall back to 2D transform parsing.
+    // Also store decomposed values (rotate, scale) so that
+    // style_to_keyframe_properties can read them directly without
+    // lossy atan2 decomposition from the Affine2D matrix.
     if let Some(transform) = parse_transform(trimmed) {
+        // Extract original rotate/scale values before they're baked into the matrix
+        if let Some(deg) = parse_function_angle(trimmed, "rotate") {
+            style.rotate = Some(deg);
+        }
+        if let Ok((_, (sx, sy))) = parse_scale_values::<nom::error::Error<&str>>(trimmed) {
+            style.scale_x = Some(sx);
+            style.scale_y = Some(sy);
+        }
         style.transform = Some(transform);
         return true;
     }
@@ -4800,6 +4921,24 @@ fn parse_vec3_value(value: &str) -> Option<[f32; 3]> {
     } else {
         None
     }
+}
+
+/// Parse scale(x) or scale(x, y) and return the raw (sx, sy) values
+fn parse_scale_values<'a, E: NomParseError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, (f32, f32), E> {
+    let (input, _) = ws(input)?;
+    let (input, _) = tag_no_case("scale")(input)?;
+    let (input, _) = ws(input)?;
+    let (input, _) = char('(')(input)?;
+    let (input, _) = ws(input)?;
+    let (input, sx) = float(input)?;
+    let (input, _) = ws(input)?;
+    let (input, sy) = opt(preceded(tuple((char(','), ws::<E>)), float))(input)?;
+    let (input, _) = ws(input)?;
+    let (input, _) = char(')')(input)?;
+    let sy = sy.unwrap_or(sx);
+    Ok((input, (sx, sy)))
 }
 
 /// Parse scale(x) or scale(x, y)
@@ -5347,7 +5486,7 @@ fn parse_liquid_glass_functions(value: &str) -> Option<GlassMaterial> {
                     }
                 }
                 "noise" => {
-                    if let Some(v) = arg_str.parse::<f32>().ok() {
+                    if let Ok(v) = arg_str.parse::<f32>() {
                         glass.noise = v;
                         found_any = true;
                     }

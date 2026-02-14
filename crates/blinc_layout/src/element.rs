@@ -1031,6 +1031,12 @@ pub struct RenderProps {
     pub stroke: Option<[f32; 4]>,
     /// SVG stroke width override
     pub stroke_width: Option<f32>,
+    /// SVG stroke-dasharray pattern (alternating dash/gap lengths)
+    pub stroke_dasharray: Option<Vec<f32>>,
+    /// SVG stroke-dashoffset in pixels
+    pub stroke_dashoffset: Option<f32>,
+    /// SVG path `d` attribute data (for path morphing animations)
+    pub svg_path_data: Option<String>,
     /// Transform origin as percentages [x%, y%] (default 50%, 50% = center)
     pub transform_origin: Option<[f32; 2]>,
     /// Layer effects applied to this element (blur, drop shadow, glow, color matrix)
@@ -1145,6 +1151,9 @@ impl Default for RenderProps {
             fill: None,
             stroke: None,
             stroke_width: None,
+            stroke_dasharray: None,
+            stroke_dashoffset: None,
+            svg_path_data: None,
             transform_origin: None,
             visible: true,
             object_fit: None,

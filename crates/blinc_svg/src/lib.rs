@@ -33,6 +33,6 @@ mod path;
 mod rasterize;
 mod style;
 
-pub use document::{SvgDocument, SvgDrawCommand};
+pub use document::{extract_element_metadata, SvgDocument, SvgDrawCommand, SvgSubElement};
 pub use error::SvgError;
 pub use rasterize::RasterizedSvg;

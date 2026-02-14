@@ -16,6 +16,7 @@
 pub mod context;
 pub mod easing;
 pub mod keyframe;
+pub mod morph;
 pub mod presets;
 pub mod scheduler;
 pub mod spring;

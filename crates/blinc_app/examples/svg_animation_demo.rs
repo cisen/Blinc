@@ -550,7 +550,12 @@ fn hamburger_section() -> Div {
             .flex_wrap()
             .gap(32.0)
             .justify_center()
-            .child(demo_cell("Hamburger", HAMBURGER_SVG, "hamburger-classic", 80.0))
+            .child(demo_cell(
+                "Hamburger",
+                HAMBURGER_SVG,
+                "hamburger-classic",
+                80.0,
+            ))
             .child(demo_cell("Cake", CAKE_SVG, "hamburger-cake", 80.0))
             .child(demo_cell("Kebab", KEBAB_SVG, "hamburger-kebab", 80.0))
             .child(demo_cell(
@@ -559,14 +564,24 @@ fn hamburger_section() -> Div {
                 "hamburger-cheese",
                 80.0,
             ))
-            .child(demo_cell("Meatballs", MEATBALLS_SVG, "hamburger-meatball", 80.0))
+            .child(demo_cell(
+                "Meatballs",
+                MEATBALLS_SVG,
+                "hamburger-meatball",
+                80.0,
+            ))
             .child(demo_cell(
                 "Strawberry",
                 STRAWBERRY_SVG,
                 "hamburger-strawberry",
                 80.0,
             ))
-            .child(demo_cell("Candy Box", CANDY_BOX_SVG, "hamburger-candy", 80.0))
+            .child(demo_cell(
+                "Candy Box",
+                CANDY_BOX_SVG,
+                "hamburger-candy",
+                80.0,
+            ))
             .child(demo_cell("Hot Dog", HOT_DOG_SVG, "hamburger-hotdog", 80.0))
             .child(demo_cell("Bento", BENTO_SVG, "hamburger-bento", 80.0)),
     )

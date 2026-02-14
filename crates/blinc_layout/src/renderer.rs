@@ -5985,6 +5985,186 @@ impl RenderTree {
         any_applied
     }
 
+    /// Apply SVG tag-name CSS rules (e.g., `path { fill: red; }`, `#my-svg circle { stroke: blue; }`)
+    ///
+    /// For each complex rule targeting an SVG tag name, finds SVG layout nodes whose
+    /// ancestor chain matches the remaining selector segments and stores per-tag
+    /// style overrides on those nodes' RenderProps.
+    fn apply_svg_tag_styles(&mut self, router: &crate::event_router::EventRouter) -> bool {
+        let stylesheet = match &self.stylesheet {
+            Some(s) => s.clone(),
+            None => return false,
+        };
+
+        let svg_tag_rules = stylesheet.svg_tag_rules();
+        if svg_tag_rules.is_empty() {
+            return false;
+        }
+
+        // Collect interaction state
+        let hovered_nodes: std::collections::HashSet<LayoutNodeId> =
+            router.hovered_nodes().collect();
+        let pressed_nodes: std::collections::HashSet<LayoutNodeId> =
+            router.pressed_target().into_iter().collect();
+        let focused_node: Option<LayoutNodeId> = {
+            let mut focused = None;
+            for id in self.element_registry.all_ids() {
+                if let Some(nid) = self.element_registry.get(&id) {
+                    if router.is_focused(nid) {
+                        focused = Some(nid);
+                        break;
+                    }
+                }
+            }
+            focused
+        };
+
+        // Find all SVG layout nodes
+        let svg_nodes: Vec<LayoutNodeId> = self
+            .render_nodes
+            .keys()
+            .copied()
+            .filter(|&nid| self.element_registry.get_element_type(nid).as_deref() == Some("svg"))
+            .collect();
+
+        if svg_nodes.is_empty() {
+            return false;
+        }
+
+        let mut any_changed = false;
+
+        for &svg_node in &svg_nodes {
+            let mut tag_styles: std::collections::HashMap<String, crate::element::SvgTagStyle> =
+                std::collections::HashMap::new();
+
+            for &(tag_name, ancestor_segments, style) in &svg_tag_rules {
+                // Check if ancestor segments match the SVG node
+                let matches = if ancestor_segments.is_empty() {
+                    // Bare tag selector (e.g., `path { ... }`) — matches all SVGs
+                    true
+                } else {
+                    // Build a temporary ComplexSelector with ancestor segments + SVG node as target
+                    // The last ancestor segment targets the SVG node itself
+                    let last_idx = ancestor_segments.len() - 1;
+                    let (last_compound, _) = &ancestor_segments[last_idx];
+
+                    // Check if the SVG node matches the last ancestor compound
+                    let svg_hovered = hovered_nodes.contains(&svg_node);
+                    let svg_pressed = pressed_nodes.contains(&svg_node);
+                    let svg_focused = focused_node == Some(svg_node);
+
+                    if !self.compound_matches(
+                        last_compound,
+                        svg_node,
+                        svg_hovered,
+                        svg_pressed,
+                        svg_focused,
+                    ) {
+                        false
+                    } else if ancestor_segments.len() == 1 {
+                        // Only one ancestor segment and it matched the SVG node
+                        true
+                    } else {
+                        // Walk remaining ancestor segments up the tree
+                        let mut current_node = svg_node;
+                        let mut all_matched = true;
+                        for i in (0..last_idx).rev() {
+                            let (compound, combinator) = &ancestor_segments[i];
+                            let combinator =
+                                combinator.unwrap_or(crate::css_parser::Combinator::Descendant);
+                            match combinator {
+                                crate::css_parser::Combinator::Child => {
+                                    let parent =
+                                        match self.element_registry.get_parent(current_node) {
+                                            Some(p) => p,
+                                            None => {
+                                                all_matched = false;
+                                                break;
+                                            }
+                                        };
+                                    let p_hov = hovered_nodes.contains(&parent);
+                                    let p_prs = pressed_nodes.contains(&parent);
+                                    let p_foc = focused_node == Some(parent);
+                                    if !self.compound_matches(compound, parent, p_hov, p_prs, p_foc)
+                                    {
+                                        all_matched = false;
+                                        break;
+                                    }
+                                    current_node = parent;
+                                }
+                                crate::css_parser::Combinator::Descendant => {
+                                    let ancestors = self.element_registry.ancestors(current_node);
+                                    let mut found = false;
+                                    for ancestor in &ancestors {
+                                        let a_hov = hovered_nodes.contains(ancestor);
+                                        let a_prs = pressed_nodes.contains(ancestor);
+                                        let a_foc = focused_node == Some(*ancestor);
+                                        if self.compound_matches(
+                                            compound, *ancestor, a_hov, a_prs, a_foc,
+                                        ) {
+                                            current_node = *ancestor;
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                    if !found {
+                                        all_matched = false;
+                                        break;
+                                    }
+                                }
+                                _ => {
+                                    all_matched = false;
+                                    break;
+                                }
+                            }
+                        }
+                        all_matched
+                    }
+                };
+
+                if matches {
+                    // Extract SVG-relevant properties from ElementStyle into SvgTagStyle
+                    let entry = tag_styles.entry(tag_name.to_string()).or_default();
+                    if let Some(fill) = style.fill {
+                        entry.fill = Some([fill.r, fill.g, fill.b, fill.a]);
+                    }
+                    if let Some(stroke) = style.stroke {
+                        entry.stroke = Some([stroke.r, stroke.g, stroke.b, stroke.a]);
+                    }
+                    if let Some(sw) = style.stroke_width {
+                        entry.stroke_width = Some(sw);
+                    }
+                    if let Some(ref da) = style.stroke_dasharray {
+                        entry.stroke_dasharray = Some(da.clone());
+                    }
+                    if let Some(offset) = style.stroke_dashoffset {
+                        entry.stroke_dashoffset = Some(offset);
+                    }
+                    if let Some(opacity) = style.opacity {
+                        entry.opacity = Some(opacity);
+                    }
+                }
+            }
+
+            // Apply tag styles to render props
+            if !tag_styles.is_empty() {
+                if let Some(render_node) = self.render_nodes.get_mut(&svg_node) {
+                    if render_node.props.svg_tag_styles != tag_styles {
+                        render_node.props.svg_tag_styles = tag_styles;
+                        any_changed = true;
+                    }
+                }
+            } else if let Some(render_node) = self.render_nodes.get_mut(&svg_node) {
+                if !render_node.props.svg_tag_styles.is_empty() {
+                    render_node.props.svg_tag_styles.clear();
+                    any_changed = true;
+                }
+            }
+        }
+
+        any_changed
+    }
+
     // =========================================================================
     // CSS Keyframe Animation Methods
     // =========================================================================
@@ -7265,6 +7445,121 @@ impl RenderTree {
                 }
             }
         }
+
+        // Apply base (non-state) SVG tag-name rules to SVG nodes
+        let svg_tag_rules = stylesheet.svg_tag_rules();
+        if !svg_tag_rules.is_empty() {
+            let empty_set: std::collections::HashSet<LayoutNodeId> =
+                std::collections::HashSet::new();
+            let svg_nodes: Vec<LayoutNodeId> = self
+                .render_nodes
+                .keys()
+                .copied()
+                .filter(|&nid| {
+                    self.element_registry.get_element_type(nid).as_deref() == Some("svg")
+                })
+                .collect();
+
+            for &svg_node in &svg_nodes {
+                let mut tag_styles: std::collections::HashMap<String, crate::element::SvgTagStyle> =
+                    std::collections::HashMap::new();
+                for &(tag_name, ancestor_segments, style) in &svg_tag_rules {
+                    // Skip state-dependent rules (handled by apply_svg_tag_styles)
+                    let has_state = ancestor_segments.iter().any(|(c, _)| c.has_state());
+                    if has_state {
+                        continue;
+                    }
+                    let matches = if ancestor_segments.is_empty() {
+                        true
+                    } else {
+                        // Check if ancestor segments match the SVG node's chain
+                        let last_idx = ancestor_segments.len() - 1;
+                        let (last_compound, _) = &ancestor_segments[last_idx];
+                        if !self.compound_matches(last_compound, svg_node, false, false, false) {
+                            false
+                        } else if ancestor_segments.len() == 1 {
+                            true
+                        } else {
+                            let mut current_node = svg_node;
+                            let mut all_matched = true;
+                            for i in (0..last_idx).rev() {
+                                let (compound, combinator) = &ancestor_segments[i];
+                                let combinator =
+                                    combinator.unwrap_or(crate::css_parser::Combinator::Descendant);
+                                match combinator {
+                                    crate::css_parser::Combinator::Child => {
+                                        match self.element_registry.get_parent(current_node) {
+                                            Some(parent) => {
+                                                if !self.compound_matches(
+                                                    compound, parent, false, false, false,
+                                                ) {
+                                                    all_matched = false;
+                                                    break;
+                                                }
+                                                current_node = parent;
+                                            }
+                                            None => {
+                                                all_matched = false;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    crate::css_parser::Combinator::Descendant => {
+                                        let ancestors =
+                                            self.element_registry.ancestors(current_node);
+                                        let mut found = false;
+                                        for ancestor in &ancestors {
+                                            if self.compound_matches(
+                                                compound, *ancestor, false, false, false,
+                                            ) {
+                                                current_node = *ancestor;
+                                                found = true;
+                                                break;
+                                            }
+                                        }
+                                        if !found {
+                                            all_matched = false;
+                                            break;
+                                        }
+                                    }
+                                    _ => {
+                                        all_matched = false;
+                                        break;
+                                    }
+                                }
+                            }
+                            all_matched
+                        }
+                    };
+                    if matches {
+                        let entry = tag_styles.entry(tag_name.to_string()).or_default();
+                        if let Some(fill) = style.fill {
+                            entry.fill = Some([fill.r, fill.g, fill.b, fill.a]);
+                        }
+                        if let Some(stroke) = style.stroke {
+                            entry.stroke = Some([stroke.r, stroke.g, stroke.b, stroke.a]);
+                        }
+                        if let Some(sw) = style.stroke_width {
+                            entry.stroke_width = Some(sw);
+                        }
+                        if let Some(ref da) = style.stroke_dasharray {
+                            entry.stroke_dasharray = Some(da.clone());
+                        }
+                        if let Some(offset) = style.stroke_dashoffset {
+                            entry.stroke_dashoffset = Some(offset);
+                        }
+                        if let Some(opacity) = style.opacity {
+                            entry.opacity = Some(opacity);
+                        }
+                    }
+                }
+                if !tag_styles.is_empty() {
+                    if let Some(render_node) = self.render_nodes.get_mut(&svg_node) {
+                        render_node.props.svg_tag_styles = tag_styles;
+                    }
+                }
+            }
+        }
     }
 
     /// Apply stylesheet state styles based on EventRouter state
@@ -7354,6 +7649,11 @@ impl RenderTree {
 
         // Apply complex selector rules (class selectors, descendant/child combinators, etc.)
         if self.apply_complex_selector_styles(router) {
+            any_applied = true;
+        }
+
+        // Apply SVG tag-name CSS rules (e.g., `path { fill: red; }`)
+        if self.apply_svg_tag_styles(router) {
             any_applied = true;
         }
 

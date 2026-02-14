@@ -1285,6 +1285,11 @@ impl AnimationFillMode {
     }
 }
 
+/// Known SVG shape tag names for CSS tag-name selectors targeting SVG sub-elements.
+pub const SVG_TAG_NAMES: &[&str] = &[
+    "path", "circle", "rect", "ellipse", "line", "polygon", "polyline", "g",
+];
+
 /// A parsed stylesheet containing styles keyed by element ID
 #[derive(Clone, Default, Debug)]
 pub struct Stylesheet {
@@ -1611,6 +1616,42 @@ impl Stylesheet {
     /// Check if there are any complex rules that involve state changes
     pub fn has_complex_state_rules(&self) -> bool {
         self.complex_rules.iter().any(|(sel, _)| sel.has_state())
+    }
+
+    /// Returns complex rules whose rightmost compound selector targets an SVG tag name.
+    ///
+    /// Each entry returns: (tag_name, ancestor_segments if any, style).
+    /// For a bare `path { fill: red; }`, ancestor_segments is empty.
+    /// For `#my-svg path { fill: red; }`, ancestor_segments contains the `#my-svg` part.
+    #[allow(clippy::type_complexity)]
+    pub fn svg_tag_rules(
+        &self,
+    ) -> Vec<(
+        &str,
+        &[(CompoundSelector, Option<Combinator>)],
+        &ElementStyle,
+    )> {
+        let mut results = Vec::new();
+        for (selector, style) in &self.complex_rules {
+            if let Some((target_compound, _)) = selector.segments.last() {
+                // Check if the rightmost compound has a Type that matches an SVG tag name
+                for part in &target_compound.parts {
+                    if let SelectorPart::Type(name) = part {
+                        if SVG_TAG_NAMES.contains(&name.as_str()) {
+                            // Ancestor segments = everything except the last
+                            let ancestors = if selector.segments.len() > 1 {
+                                &selector.segments[..selector.segments.len() - 1]
+                            } else {
+                                &[]
+                            };
+                            results.push((name.as_str(), ancestors, style));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        results
     }
 
     /// Merge another stylesheet into this one (cascade — later rules override earlier)

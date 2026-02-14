@@ -186,6 +186,8 @@ struct SvgElement {
     /// Inherited CSS transform from ancestor elements (full 6-element affine in layout coords)
     /// [a, b, c, d, tx, ty] where new_x = a*x + c*y + tx, new_y = b*x + d*y + ty
     css_affine: Option<[f32; 6]>,
+    /// Per-SVG-tag style overrides from CSS tag-name selectors (e.g., `path { fill: red; }`)
+    tag_overrides: std::collections::HashMap<String, blinc_layout::element::SvgTagStyle>,
 }
 
 /// Debug bounds element for layout visualization
@@ -1576,6 +1578,34 @@ impl RenderContext {
                     6u8.hash(&mut hasher);
                     path_data.hash(&mut hasher);
                 }
+                // Hash per-tag style overrides
+                if !svg.tag_overrides.is_empty() {
+                    7u8.hash(&mut hasher);
+                    // Sort keys for deterministic hashing
+                    let mut keys: Vec<&String> = svg.tag_overrides.keys().collect();
+                    keys.sort();
+                    for key in keys {
+                        key.hash(&mut hasher);
+                        if let Some(ts) = svg.tag_overrides.get(key) {
+                            if let Some(f) = &ts.fill {
+                                for v in f {
+                                    v.to_bits().hash(&mut hasher);
+                                }
+                            }
+                            if let Some(s) = &ts.stroke {
+                                for v in s {
+                                    v.to_bits().hash(&mut hasher);
+                                }
+                            }
+                            if let Some(sw) = &ts.stroke_width {
+                                sw.to_bits().hash(&mut hasher);
+                            }
+                            if let Some(op) = &ts.opacity {
+                                op.to_bits().hash(&mut hasher);
+                            }
+                        }
+                    }
+                }
                 hasher.finish()
             };
 
@@ -1587,7 +1617,8 @@ impl RenderContext {
                     || svg.stroke_width.is_some()
                     || svg.stroke_dasharray.is_some()
                     || svg.stroke_dashoffset.is_some()
-                    || svg.svg_path_data.is_some();
+                    || svg.svg_path_data.is_some()
+                    || !svg.tag_overrides.is_empty();
 
                 let effective_source = if has_overrides {
                     fn color_val(c: blinc_core::Color) -> String {
@@ -1707,6 +1738,29 @@ impl RenderContext {
                         "<polyline",
                     ];
                     for tag in &shape_tags {
+                        let tag_name = tag.trim_start_matches('<');
+                        let tag_style = svg.tag_overrides.get(tag_name);
+
+                        // Per-tag overrides take priority over global element-level overrides
+                        let effective_fill: Option<blinc_core::Color> = tag_style
+                            .and_then(|ts| ts.fill)
+                            .map(|c| blinc_core::Color::rgba(c[0], c[1], c[2], c[3]))
+                            .or(svg.fill);
+                        let effective_stroke: Option<blinc_core::Color> = tag_style
+                            .and_then(|ts| ts.stroke)
+                            .map(|c| blinc_core::Color::rgba(c[0], c[1], c[2], c[3]))
+                            .or(svg.stroke);
+                        let effective_stroke_width: Option<f32> = tag_style
+                            .and_then(|ts| ts.stroke_width)
+                            .or(svg.stroke_width);
+                        let effective_dasharray: Option<Vec<f32>> = tag_style
+                            .and_then(|ts| ts.stroke_dasharray.clone())
+                            .or_else(|| svg.stroke_dasharray.clone());
+                        let effective_dashoffset: Option<f32> = tag_style
+                            .and_then(|ts| ts.stroke_dashoffset)
+                            .or(svg.stroke_dashoffset);
+                        let effective_opacity: Option<f32> = tag_style.and_then(|ts| ts.opacity);
+
                         let mut search_from = 0;
                         while let Some(tag_start) = modified[search_from..].find(tag) {
                             let abs_tag = search_from + tag_start;
@@ -1714,23 +1768,23 @@ impl RenderContext {
                             if let Some(close) = modified[abs_start..].find('>') {
                                 let abs_close = abs_start + close;
 
-                                if svg.stroke.is_some() {
+                                if effective_stroke.is_some() {
                                     strip_attr(&mut modified, abs_tag, abs_close, "stroke-width");
                                     let new_close = abs_start
                                         + modified[abs_start..].find('>').unwrap_or(close);
                                     strip_attr(&mut modified, abs_tag, new_close, "stroke");
                                 }
-                                if svg.fill.is_some() {
+                                if effective_fill.is_some() {
                                     let new_close = abs_start
                                         + modified[abs_start..].find('>').unwrap_or(close);
                                     strip_attr(&mut modified, abs_tag, new_close, "fill");
                                 }
-                                if svg.stroke_width.is_some() {
+                                if effective_stroke_width.is_some() {
                                     let new_close = abs_start
                                         + modified[abs_start..].find('>').unwrap_or(close);
                                     strip_attr(&mut modified, abs_tag, new_close, "stroke-width");
                                 }
-                                if svg.stroke_dasharray.is_some() {
+                                if effective_dasharray.is_some() {
                                     let new_close = abs_start
                                         + modified[abs_start..].find('>').unwrap_or(close);
                                     strip_attr(
@@ -1740,7 +1794,7 @@ impl RenderContext {
                                         "stroke-dasharray",
                                     );
                                 }
-                                if svg.stroke_dashoffset.is_some() {
+                                if effective_dashoffset.is_some() {
                                     let new_close = abs_start
                                         + modified[abs_start..].find('>').unwrap_or(close);
                                     strip_attr(
@@ -1749,6 +1803,11 @@ impl RenderContext {
                                         new_close,
                                         "stroke-dashoffset",
                                     );
+                                }
+                                if effective_opacity.is_some() {
+                                    let new_close = abs_start
+                                        + modified[abs_start..].find('>').unwrap_or(close);
+                                    strip_attr(&mut modified, abs_tag, new_close, "opacity");
                                 }
                                 if svg.svg_path_data.is_some() && *tag == "<path" {
                                     let new_close = abs_start
@@ -1767,17 +1826,17 @@ impl RenderContext {
                                     abs_close
                                 };
                                 let mut elem_attrs = String::new();
-                                if let Some(fill) = svg.fill {
+                                if let Some(fill) = effective_fill {
                                     elem_attrs.push_str(&format!(r#" fill="{}""#, color_val(fill)));
                                 }
-                                if let Some(stroke) = svg.stroke {
+                                if let Some(stroke) = effective_stroke {
                                     elem_attrs
                                         .push_str(&format!(r#" stroke="{}""#, color_val(stroke)));
                                 }
-                                if let Some(sw) = svg.stroke_width {
+                                if let Some(sw) = effective_stroke_width {
                                     elem_attrs.push_str(&format!(r#" stroke-width="{}""#, sw));
                                 }
-                                if let Some(ref da) = svg.stroke_dasharray {
+                                if let Some(ref da) = effective_dasharray {
                                     let da_str = da
                                         .iter()
                                         .map(|v| v.to_string())
@@ -1786,9 +1845,12 @@ impl RenderContext {
                                     elem_attrs
                                         .push_str(&format!(r#" stroke-dasharray="{}""#, da_str));
                                 }
-                                if let Some(offset) = svg.stroke_dashoffset {
+                                if let Some(offset) = effective_dashoffset {
                                     elem_attrs
                                         .push_str(&format!(r#" stroke-dashoffset="{}""#, offset));
+                                }
+                                if let Some(opacity) = effective_opacity {
+                                    elem_attrs.push_str(&format!(r#" opacity="{}""#, opacity));
                                 }
                                 if let Some(ref path_data) = svg.svg_path_data {
                                     if *tag == "<path" {
@@ -2474,6 +2536,7 @@ impl RenderContext {
                         clip_bounds: scaled_clip,
                         motion_opacity: effective_motion_opacity,
                         css_affine: node_css_affine,
+                        tag_overrides: render_node.props.svg_tag_styles.clone(),
                     });
                 }
                 ElementType::Image(image_data) => {

@@ -33,6 +33,18 @@ const CHECK_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0
   <path d="M20,55 L40,75 L80,25" fill="none" stroke="#10b981" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>"##;
 
+/// Mixed SVG with paths and circles for tag-name targeting demo
+const MIXED_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <circle cx="50" cy="50" r="40" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
+  <path d="M30,50 L45,65 L70,35" fill="none" stroke="#475569" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>"##;
+
+/// SVG with rect and circle for selective targeting
+const SHAPES_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <rect x="15" y="15" width="70" height="70" rx="8" fill="#dbeafe" stroke="#3b82f6" stroke-width="2"/>
+  <circle cx="50" cy="50" r="20" fill="#bfdbfe" stroke="#2563eb" stroke-width="2"/>
+</svg>"##;
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -147,6 +159,27 @@ const SVG_CSS: &str = r#"
     stroke: #f59e0b;
     stroke-width: 5;
 }
+
+/* Tag-name CSS selectors — target specific SVG sub-element types */
+#tag-check-svg path {
+    stroke: #8b5cf6;
+    stroke-width: 5;
+}
+#tag-check-svg circle {
+    fill: #f3e8ff;
+    stroke: #a78bfa;
+}
+
+#tag-shapes-svg rect {
+    fill: #fef3c7;
+    stroke: #f59e0b;
+    stroke-width: 3;
+}
+#tag-shapes-svg circle {
+    fill: #fed7aa;
+    stroke: #ea580c;
+    stroke-width: 2;
+}
 "#;
 
 fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
@@ -170,7 +203,8 @@ fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
                     .child(color_section())
                     .child(line_drawing_section())
                     .child(morph_section())
-                    .child(hover_section()),
+                    .child(hover_section())
+                    .child(tag_selector_section()),
             ),
         )
 }
@@ -334,6 +368,32 @@ fn hover_section() -> Div {
                 "Stroke Transition",
                 STAR_SVG,
                 "hover-stroke-svg",
+                80.0,
+            )),
+    )
+}
+
+/// Tag-name CSS selectors targeting SVG sub-elements
+fn tag_selector_section() -> Div {
+    section_card(
+        "Tag-Name CSS Selectors",
+        "CSS selectors like `path { }` and `circle { }` target specific SVG sub-element types",
+    )
+    .child(
+        div()
+            .flex_row()
+            .gap(48.0)
+            .justify_center()
+            .child(demo_cell(
+                "path=purple, circle=lilac",
+                MIXED_SVG,
+                "tag-check-svg",
+                80.0,
+            ))
+            .child(demo_cell(
+                "rect=amber, circle=orange",
+                SHAPES_SVG,
+                "tag-shapes-svg",
                 80.0,
             )),
     )

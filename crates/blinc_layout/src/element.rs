@@ -3,6 +3,8 @@
 //! Provides the core abstractions for building layout trees that can be
 //! rendered via the DrawContext API.
 
+use std::collections::HashMap;
+
 use blinc_core::{
     BlurQuality, Brush, ClipPath, Color, CornerRadius, DynFloat, DynValue, LayerEffect, Rect,
     Shadow, Transform, ValueContext,
@@ -10,6 +12,17 @@ use blinc_core::{
 use taffy::Layout;
 
 use crate::tree::LayoutNodeId;
+
+/// Per-tag SVG style overrides for CSS tag-name selectors (e.g., `path { fill: red; }`)
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SvgTagStyle {
+    pub fill: Option<[f32; 4]>,
+    pub stroke: Option<[f32; 4]>,
+    pub stroke_width: Option<f32>,
+    pub stroke_dasharray: Option<Vec<f32>>,
+    pub stroke_dashoffset: Option<f32>,
+    pub opacity: Option<f32>,
+}
 
 // ============================================================================
 // Cursor Style
@@ -1090,6 +1103,8 @@ pub struct RenderProps {
     pub object_fit: Option<u8>,
     /// CSS object-position override for images [x, y] in 0.0-1.0 range
     pub object_position: Option<[f32; 2]>,
+    /// Per-SVG-tag style overrides from CSS tag-name selectors (e.g., `path { fill: red; }`)
+    pub svg_tag_styles: HashMap<String, SvgTagStyle>,
 }
 
 impl Default for RenderProps {
@@ -1158,6 +1173,7 @@ impl Default for RenderProps {
             visible: true,
             object_fit: None,
             object_position: None,
+            svg_tag_styles: HashMap::new(),
         }
     }
 }

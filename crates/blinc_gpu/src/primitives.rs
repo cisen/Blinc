@@ -81,8 +81,10 @@ pub enum ClipType {
 /// - light: `vec4<f32>`           (16 bytes) - (dir_x, dir_y, dir_z, intensity)
 /// - filter_a: `vec4<f32>`        (16 bytes) - (grayscale, invert, sepia, hue_rotate_rad)
 /// - filter_b: `vec4<f32>`        (16 bytes) - (brightness, contrast, saturate, 0)
+/// - mask_params: `vec4<f32>`     (16 bytes) - mask gradient geometry (x1,y1,x2,y2 or cx,cy,r,0)
+/// - mask_info: `vec4<f32>`       (16 bytes) - (mask_type, start_alpha, end_alpha, 0)
 /// - type_info: `vec4<u32>`       (16 bytes) - (primitive_type, fill_type, clip_type, z_layer)
-///   Total: 304 bytes
+///   Total: 336 bytes
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuPrimitive {
@@ -126,6 +128,11 @@ pub struct GpuPrimitive {
     pub filter_a: [f32; 4],
     /// CSS filter B (brightness, contrast, saturate, 0)
     pub filter_b: [f32; 4],
+    /// Mask gradient params: linear=(x1,y1,x2,y2), radial=(cx,cy,r,0) in pixel coords
+    pub mask_params: [f32; 4],
+    /// Mask info: [mask_type, start_alpha, end_alpha, 0]
+    /// mask_type: 0=none, 1=linear, 2=radial
+    pub mask_info: [f32; 4],
     /// Type info (primitive_type, fill_type, clip_type, z_layer)
     pub type_info: [u32; 4],
 }
@@ -159,7 +166,10 @@ impl Default for GpuPrimitive {
             // Default filter: identity (no effect)
             filter_a: [0.0, 0.0, 0.0, 0.0], // grayscale=0, invert=0, sepia=0, hue_rotate=0
             filter_b: [1.0, 1.0, 1.0, 0.0], // brightness=1, contrast=1, saturate=1, unused=0
-            type_info: [0; 4],              // clip_type defaults to None (0)
+            // Default mask: none
+            mask_params: [0.0; 4],
+            mask_info: [0.0; 4], // mask_type=0 (none)
+            type_info: [0; 4],   // clip_type defaults to None (0)
         }
     }
 }
@@ -408,6 +418,8 @@ impl GpuPrimitive {
             light: [0.0, -1.0, 0.5, 0.8],
             filter_a: [0.0, 0.0, 0.0, 0.0],
             filter_b: [1.0, 1.0, 1.0, 0.0],
+            mask_params: [0.0; 4],
+            mask_info: [0.0; 4],
             type_info: [
                 PrimitiveType::Text as u32,
                 is_color_flag,
@@ -449,6 +461,8 @@ impl GpuPrimitive {
             light: [0.0, -1.0, 0.5, 0.8],
             filter_a: [0.0, 0.0, 0.0, 0.0],
             filter_b: [1.0, 1.0, 1.0, 0.0],
+            mask_params: [0.0; 4],
+            mask_info: [0.0; 4],
             type_info: [PrimitiveType::Text as u32, 0, ClipType::None as u32, 0],
         }
     }

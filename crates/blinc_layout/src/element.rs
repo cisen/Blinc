@@ -1115,8 +1115,8 @@ pub struct RenderProps {
     pub text_overflow: Option<crate::element_style::TextOverflow>,
     /// CSS white-space behavior
     pub white_space: Option<crate::element_style::WhiteSpace>,
-    /// CSS mask-image URL
-    pub mask_image: Option<String>,
+    /// CSS mask-image (URL or gradient)
+    pub mask_image: Option<blinc_core::MaskImage>,
     /// CSS mask-mode
     pub mask_mode: Option<blinc_core::MaskMode>,
 }

@@ -756,6 +756,15 @@ pub enum MaskMode {
     Luminance,
 }
 
+/// CSS mask-image value
+#[derive(Clone, Debug)]
+pub enum MaskImage {
+    /// URL to an image file
+    Url(String),
+    /// Gradient mask (reuses the existing Gradient type)
+    Gradient(crate::layer::Gradient),
+}
+
 impl LayerEffect {
     /// Create a blur effect with default quality
     pub fn blur(radius: f32) -> Self {
@@ -1180,6 +1189,14 @@ pub trait DrawContext {
 
     /// Reset CSS filter state to identity
     fn clear_css_filter(&mut self) {}
+
+    /// Set mask gradient parameters for the current element
+    /// params: linear=(x1,y1,x2,y2), radial=(cx,cy,r,0) in pixel coords
+    /// info: [mask_type, start_alpha, end_alpha, 0] where mask_type: 0=none, 1=linear, 2=radial
+    fn set_mask_gradient(&mut self, _params: [f32; 4], _info: [f32; 4]) {}
+
+    /// Clear mask gradient state
+    fn clear_mask_gradient(&mut self) {}
 
     // ─────────────────────────────────────────────────────────────────────────
     // 2D Drawing Operations

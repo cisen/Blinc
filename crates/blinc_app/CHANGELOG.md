@@ -16,6 +16,7 @@ All notable changes to `blinc_app` will be documented in this file.
 
 ### Fixed
 
+- Double border on CSS-transformed image containers: removed redundant `parent_border` overlay from image rendering (border from `render_layer_with_motion` is sufficient and transform-aware)
 - Text in stacked/absolute elements now clips correctly within ancestor scroll containers (sharp clip intersects with existing scroll clip instead of replacing it)
 - Text decorations now render for all z-layers in the fast path (was only rendering z=0, dropping decorations when blend mode layers activated the fast path)
 - Text and SVG elements now clip to scroll container boundaries (regression from dual-clip refactor)

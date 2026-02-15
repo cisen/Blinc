@@ -17,6 +17,8 @@ All notable changes to `blinc_layout` will be documented in this file.
 
 ### Fixed
 
+- Border morph/distortion on rounded clipping containers: overflow clip now deferred to after border rendering, preventing double-AA between border SDF and clip SDF at the same boundary
+- Borders on elements with `overflow: clip` now render in the foreground layer (after images), matching CSS painting order (content → border → outline)
 - `style_to_keyframe_properties()` preserves original rotation angle from CSS (avoids 359deg → -1deg via atan2)
 - Clippy: use `Ok(v)` instead of `Some(v) = .ok()` pattern in glass parser
 

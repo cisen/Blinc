@@ -498,8 +498,8 @@ pub struct ElementStyle {
     pub text_overflow: Option<TextOverflow>,
     /// CSS white-space (normal, nowrap, pre, pre-wrap)
     pub white_space: Option<WhiteSpace>,
-    /// CSS mask-image URL or path
-    pub mask_image: Option<String>,
+    /// CSS mask-image (URL or gradient)
+    pub mask_image: Option<blinc_core::MaskImage>,
     /// CSS mask-mode (alpha or luminance)
     pub mask_mode: Option<blinc_core::MaskMode>,
 }
@@ -1206,7 +1206,13 @@ impl ElementStyle {
 
     /// Set mask-image URL
     pub fn mask_image(mut self, url: impl Into<String>) -> Self {
-        self.mask_image = Some(url.into());
+        self.mask_image = Some(blinc_core::MaskImage::Url(url.into()));
+        self
+    }
+
+    /// Set mask-image gradient
+    pub fn mask_gradient(mut self, gradient: blinc_core::Gradient) -> Self {
+        self.mask_image = Some(blinc_core::MaskImage::Gradient(gradient));
         self
     }
 

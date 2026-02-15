@@ -13,8 +13,8 @@ struct ImageInstance {
     @location(1) src_uv: vec4<f32>,
     // Tint color (RGBA)
     @location(2) tint: vec4<f32>,
-    // Border radius, opacity, (unused), (unused)
-    @location(3) params: vec4<f32>, // (border_radius, opacity, _, _)
+    // params: (border_radius, opacity, border_width, packed_border_color)
+    @location(3) params: vec4<f32>,
     // Clip bounds (x, y, width, height) - set to large values for no clip
     @location(4) clip_bounds: vec4<f32>,
     // Clip corner radii (top-left, top-right, bottom-right, bottom-left)
@@ -28,6 +28,10 @@ struct ImageInstance {
     @location(8) transform: vec4<f32>,
     // Secondary clip bounds (x, y, width, height) - sharp rect for scroll boundary
     @location(9) clip2_bounds: vec4<f32>,
+    // Mask gradient params: linear=(x1,y1,x2,y2), radial=(cx,cy,r,0) in OBB space
+    @location(10) mask_params: vec4<f32>,
+    // Mask info: [mask_type, start_alpha, end_alpha, 0] (0=none, 1=linear, 2=radial)
+    @location(11) mask_info: vec4<f32>,
 }
 
 struct VertexOutput {
@@ -36,14 +40,16 @@ struct VertexOutput {
     @location(1) tint: vec4<f32>,
     @location(2) local_pos: vec2<f32>,
     @location(3) rect_size: vec2<f32>,
-    @location(4) border_radius: f32,
-    @location(5) opacity: f32,
-    @location(6) world_pos: vec2<f32>,
-    @location(7) clip_bounds: vec4<f32>,
-    @location(8) clip_radius: vec4<f32>,
-    @location(9) filter_a: vec4<f32>,
-    @location(10) filter_b: vec4<f32>,
-    @location(11) clip2_bounds: vec4<f32>,
+    // params: (border_radius, opacity, border_width, packed_border_color_as_f32)
+    @location(4) params: vec4<f32>,
+    @location(5) world_pos: vec2<f32>,
+    @location(6) clip_bounds: vec4<f32>,
+    @location(7) clip_radius: vec4<f32>,
+    @location(8) filter_a: vec4<f32>,
+    @location(9) filter_b: vec4<f32>,
+    @location(10) clip2_bounds: vec4<f32>,
+    @location(11) mask_params: vec4<f32>,
+    @location(12) mask_info: vec4<f32>,
 }
 
 @group(0) @binding(0)
@@ -109,14 +115,15 @@ fn vs_main(
     output.tint = instance.tint;
     output.local_pos = local_pos * vec2<f32>(instance.dst_rect.z, instance.dst_rect.w);
     output.rect_size = vec2<f32>(instance.dst_rect.z, instance.dst_rect.w);
-    output.border_radius = instance.params.x;
-    output.opacity = instance.params.y;
+    output.params = instance.params;
     output.world_pos = vec2<f32>(x, y);
     output.clip_bounds = instance.clip_bounds;
     output.clip_radius = instance.clip_radius;
     output.filter_a = instance.filter_a;
     output.filter_b = instance.filter_b;
     output.clip2_bounds = instance.clip2_bounds;
+    output.mask_params = instance.mask_params;
+    output.mask_info = instance.mask_info;
 
     return output;
 }
@@ -258,6 +265,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
+    // Unpack params
+    let border_radius = input.params.x;
+    let opacity = input.params.y;
+    let border_width = input.params.z;
+
     // Sample the texture
     var color = textureSample(image_texture, image_sampler, input.uv);
 
@@ -272,18 +284,64 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Apply opacity
-    color.a *= input.opacity;
+    color.a *= opacity;
 
-    // Apply rounded corners if radius > 0
-    if input.border_radius > 0.0 {
-        let sdf = rounded_rect_sdf(input.local_pos, input.rect_size, input.border_radius);
-        // Anti-aliased edge (1 pixel smooth)
-        let alpha = 1.0 - smoothstep(-1.0, 1.0, sdf);
-        color.a *= alpha;
+    // Apply rounded corners and optional border
+    if border_radius > 0.0 || border_width > 0.0 {
+        let sdf = rounded_rect_sdf(input.local_pos, input.rect_size, border_radius);
+        // Anti-aliased outer edge
+        let outer_aa = 1.0 - smoothstep(-1.0, 1.0, sdf);
+
+        if border_width > 0.0 {
+            // Unpack border color from packed u32 in params.w (RGBA, 8 bits each)
+            let packed = bitcast<u32>(input.params.w);
+            let bc = vec4<f32>(
+                f32((packed >> 24u) & 0xFFu) / 255.0,
+                f32((packed >> 16u) & 0xFFu) / 255.0,
+                f32((packed >> 8u) & 0xFFu) / 255.0,
+                f32(packed & 0xFFu) / 255.0,
+            );
+            // Border factor: 0 deep inside image, 1 in border region
+            let border_factor = smoothstep(-border_width - 1.0, -border_width + 1.0, sdf);
+            // Blend image → border color at inner edge
+            color = vec4<f32>(
+                mix(color.rgb, bc.rgb, border_factor),
+                mix(color.a, bc.a, border_factor),
+            );
+        }
+
+        color.a *= outer_aa;
     }
 
     // Apply both clip alphas
     color.a *= clip_alpha * clip2_alpha;
+
+    // Mask gradient evaluation
+    let mask_type = input.mask_info.x;
+    if mask_type > 0.5 {
+        // Compute normalized UV within the image quad (0-1)
+        let mask_uv = input.local_pos / max(input.rect_size, vec2<f32>(0.001));
+        var mask_t: f32;
+        if mask_type < 1.5 {
+            // Linear mask gradient
+            let m_start = input.mask_params.xy;
+            let m_end = input.mask_params.zw;
+            let m_dir = m_end - m_start;
+            let m_len_sq = dot(m_dir, m_dir);
+            if m_len_sq > 0.0001 {
+                mask_t = clamp(dot(mask_uv - m_start, m_dir) / m_len_sq, 0.0, 1.0);
+            } else {
+                mask_t = 0.0;
+            }
+        } else {
+            // Radial mask gradient
+            let m_center = input.mask_params.xy;
+            let m_radius = input.mask_params.z;
+            mask_t = clamp(length(mask_uv - m_center) / max(m_radius, 0.001), 0.0, 1.0);
+        }
+        let mask_alpha = mix(input.mask_info.y, input.mask_info.z, mask_t);
+        color = vec4<f32>(color.rgb * mask_alpha, color.a * mask_alpha);
+    }
 
     // Output premultiplied alpha for correct blending
     // (blend state uses src_factor: One, dst_factor: OneMinusSrcAlpha)

@@ -267,6 +267,11 @@ pub struct KeyframeProperties {
     /// z-index (f32 for smooth interpolation, rounded on apply)
     pub z_index: Option<f32>,
 
+    // --- Mask gradient ---
+    /// Combined mask gradient: [mask_type, start_alpha, end_alpha, 0, p0, p1, p2, p3]
+    /// where p0..p3 = linear(x1,y1,x2,y2) or radial(cx,cy,r,0) in OBB space
+    pub mask_gradient: Option<[f32; 8]>,
+
     // --- SVG properties ---
     /// SVG fill color RGBA
     pub svg_fill: Option<[f32; 4]>,
@@ -480,6 +485,8 @@ impl KeyframeProperties {
             transform_origin: lerp_opt_array2(self.transform_origin, other.transform_origin, t),
             // Stacking
             z_index: lerp_opt(self.z_index, other.z_index, t),
+            // Mask gradient
+            mask_gradient: lerp_opt_array8(self.mask_gradient, other.mask_gradient, t),
             // SVG
             svg_fill: lerp_opt_array4(self.svg_fill, other.svg_fill, t),
             svg_stroke: lerp_opt_array4(self.svg_stroke, other.svg_stroke, t),
@@ -591,6 +598,24 @@ fn lerp_opt_array4(a: Option<[f32; 4]>, b: Option<[f32; 4]>, t: f32) -> Option<[
             a[1] + (b[1] - a[1]) * t,
             a[2] + (b[2] - a[2]) * t,
             a[3] + (b[3] - a[3]) * t,
+        ]),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
+fn lerp_opt_array8(a: Option<[f32; 8]>, b: Option<[f32; 8]>, t: f32) -> Option<[f32; 8]> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some([
+            a[0] + (b[0] - a[0]) * t,
+            a[1] + (b[1] - a[1]) * t,
+            a[2] + (b[2] - a[2]) * t,
+            a[3] + (b[3] - a[3]) * t,
+            a[4] + (b[4] - a[4]) * t,
+            a[5] + (b[5] - a[5]) * t,
+            a[6] + (b[6] - a[6]) * t,
+            a[7] + (b[7] - a[7]) * t,
         ]),
         (Some(a), None) => Some(a),
         (None, Some(b)) => Some(b),

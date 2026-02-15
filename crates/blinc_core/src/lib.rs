@@ -48,9 +48,9 @@ pub mod value;
 
 pub use draw::{
     BlurQuality, DrawCommand, DrawContext, DrawContextExt, FontWeight, ImageId, ImageOptions,
-    LayerConfig, LayerEffect, LineCap, LineJoin, MaskMode, MaterialId, MeshId, MeshInstance, Path,
-    PathCommand, RecordingContext, SdfBuilder, ShapeId, Stroke, TextAlign, TextBaseline, TextStyle,
-    Transform,
+    LayerConfig, LayerEffect, LineCap, LineJoin, MaskImage, MaskMode, MaterialId, MeshId,
+    MeshInstance, Path, PathCommand, RecordingContext, SdfBuilder, ShapeId, Stroke, TextAlign,
+    TextBaseline, TextStyle, Transform,
 };
 pub use events::{Event, EventData, EventDispatcher, EventType, KeyCode, Modifiers};
 pub use fsm::{FsmId, FsmRuntime, StateId, StateMachine, Transition};

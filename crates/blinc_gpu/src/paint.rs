@@ -158,6 +158,9 @@ pub struct GpuPaintContext<'a> {
     // CSS filter transient fields (set per-element, reset after)
     current_filter_a: [f32; 4], // grayscale, invert, sepia, hue_rotate_rad
     current_filter_b: [f32; 4], // brightness, contrast, saturate, 0
+    // Mask gradient transient fields (set per-element, reset after)
+    current_mask_params: [f32; 4], // gradient geometry
+    current_mask_info: [f32; 4],   // [mask_type, start_alpha, end_alpha, 0]
 }
 
 impl<'a> GpuPaintContext<'a> {
@@ -191,6 +194,8 @@ impl<'a> GpuPaintContext<'a> {
             current_3d_group_shapes: Vec::new(),
             current_filter_a: [0.0, 0.0, 0.0, 0.0],
             current_filter_b: [1.0, 1.0, 1.0, 0.0],
+            current_mask_params: [0.0; 4],
+            current_mask_info: [0.0; 4],
         }
     }
 
@@ -236,6 +241,8 @@ impl<'a> GpuPaintContext<'a> {
             current_3d_group_shapes: Vec::new(),
             current_filter_a: [0.0, 0.0, 0.0, 0.0],
             current_filter_b: [1.0, 1.0, 1.0, 0.0],
+            current_mask_params: [0.0; 4],
+            current_mask_info: [0.0; 4],
         }
     }
 
@@ -458,6 +465,18 @@ impl<'a> GpuPaintContext<'a> {
     pub fn clear_css_filter(&mut self) {
         self.current_filter_a = [0.0, 0.0, 0.0, 0.0];
         self.current_filter_b = [1.0, 1.0, 1.0, 0.0];
+    }
+
+    /// Set mask gradient parameters for the current element
+    pub fn set_mask_gradient(&mut self, params: [f32; 4], info: [f32; 4]) {
+        self.current_mask_params = params;
+        self.current_mask_info = info;
+    }
+
+    /// Reset mask gradient state
+    pub fn clear_mask_gradient(&mut self) {
+        self.current_mask_params = [0.0; 4];
+        self.current_mask_info = [0.0; 4];
     }
 
     /// Scale corner radius by the current transform's average scale factor
@@ -1336,6 +1355,16 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
         self.current_filter_b = [1.0, 1.0, 1.0, 0.0];
     }
 
+    fn set_mask_gradient(&mut self, params: [f32; 4], info: [f32; 4]) {
+        self.current_mask_params = params;
+        self.current_mask_info = info;
+    }
+
+    fn clear_mask_gradient(&mut self) {
+        self.current_mask_params = [0.0; 4];
+        self.current_mask_info = [0.0; 4];
+    }
+
     fn fill_path(&mut self, path: &Path, brush: Brush) {
         // Apply current opacity to the brush
         let opacity = self.combined_opacity();
@@ -1660,6 +1689,8 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             light: self.current_light_params(),
             filter_a: self.current_filter_a,
             filter_b: self.current_filter_b,
+            mask_params: self.current_mask_params,
+            mask_info: self.current_mask_info,
             type_info: [
                 PrimitiveType::Rect as u32,
                 fill_type as u32,
@@ -1750,6 +1781,8 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             light: self.current_light_params(),
             filter_a: self.current_filter_a,
             filter_b: self.current_filter_b,
+            mask_params: self.current_mask_params,
+            mask_info: self.current_mask_info,
             type_info: [
                 PrimitiveType::Rect as u32,
                 fill_type as u32,
@@ -1809,6 +1842,8 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             light: self.current_light_params(),
             filter_a: self.current_filter_a,
             filter_b: self.current_filter_b,
+            mask_params: self.current_mask_params,
+            mask_info: self.current_mask_info,
             type_info: [
                 PrimitiveType::Rect as u32,
                 fill_type as u32,
@@ -1903,6 +1938,8 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             light: self.current_light_params(),
             filter_a: self.current_filter_a,
             filter_b: self.current_filter_b,
+            mask_params: self.current_mask_params,
+            mask_info: self.current_mask_info,
             type_info: [
                 PrimitiveType::Circle as u32,
                 fill_type as u32,
@@ -1973,6 +2010,8 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             light: self.current_light_params(),
             filter_a: self.current_filter_a,
             filter_b: self.current_filter_b,
+            mask_params: self.current_mask_params,
+            mask_info: self.current_mask_info,
             type_info: [
                 PrimitiveType::Circle as u32,
                 fill_type as u32,
@@ -2111,6 +2150,8 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             light: self.current_light_params(),
             filter_a: self.current_filter_a,
             filter_b: self.current_filter_b,
+            mask_params: self.current_mask_params,
+            mask_info: self.current_mask_info,
             type_info: [
                 PrimitiveType::Shadow as u32,
                 FillType::Solid as u32,
@@ -2174,6 +2215,8 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             light: self.current_light_params(),
             filter_a: self.current_filter_a,
             filter_b: self.current_filter_b,
+            mask_params: self.current_mask_params,
+            mask_info: self.current_mask_info,
             type_info: [
                 PrimitiveType::InnerShadow as u32,
                 FillType::Solid as u32,
@@ -2225,6 +2268,8 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             light: self.current_light_params(),
             filter_a: self.current_filter_a,
             filter_b: self.current_filter_b,
+            mask_params: self.current_mask_params,
+            mask_info: self.current_mask_info,
             type_info: [
                 PrimitiveType::CircleShadow as u32,
                 FillType::Solid as u32,
@@ -2275,6 +2320,8 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             light: self.current_light_params(),
             filter_a: self.current_filter_a,
             filter_b: self.current_filter_b,
+            mask_params: self.current_mask_params,
+            mask_info: self.current_mask_info,
             type_info: [
                 PrimitiveType::CircleInnerShadow as u32,
                 FillType::Solid as u32,

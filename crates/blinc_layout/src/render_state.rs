@@ -336,22 +336,27 @@ impl CssAnimationStore {
         }
 
         // Tick CSS transitions
+        // NOTE: Completed transitions are NOT removed here — they stay in the store
+        // so apply_all_css_transition_props can apply their final values. Call
+        // remove_completed_transitions() after applying transition props.
         let mut trans_playing = false;
-        let mut completed_transitions = Vec::new();
-        for (node_id, trans) in &mut self.transitions {
+        for trans in self.transitions.values_mut() {
             if trans.tick(dt_ms) {
                 trans_playing = true;
-            } else {
-                completed_transitions.push(*node_id);
             }
         }
 
-        // Remove completed transitions
-        for node_id in completed_transitions {
-            self.transitions.remove(&node_id);
-        }
-
         (anim_playing, trans_playing)
+    }
+
+    /// Remove completed transitions from the store.
+    ///
+    /// Must be called AFTER `apply_all_css_transition_props()` so that the final
+    /// transition values are applied to render props before removal. If transitions
+    /// are removed during tick(), the final values never get applied, causing the
+    /// before-snapshot to use stale intermediate values and restarting the transition.
+    pub fn remove_completed_transitions(&mut self) {
+        self.transitions.retain(|_, trans| trans.is_playing);
     }
 
     /// Check if there are any active CSS animations

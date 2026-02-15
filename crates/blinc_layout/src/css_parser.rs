@@ -3671,8 +3671,16 @@ fn apply_property(style: &mut ElementStyle, name: &str, value: &str) {
             let v = value.trim();
             if v == "none" {
                 style.mask_image = None;
+            } else if v.starts_with("linear-gradient(") {
+                if let Some(g) = parse_linear_gradient(v) {
+                    style.mask_image = Some(blinc_core::MaskImage::Gradient(g));
+                }
+            } else if v.starts_with("radial-gradient(") {
+                if let Some(g) = parse_radial_gradient(v) {
+                    style.mask_image = Some(blinc_core::MaskImage::Gradient(g));
+                }
             } else if let Some(url) = parse_url_value(v) {
-                style.mask_image = Some(url);
+                style.mask_image = Some(blinc_core::MaskImage::Url(url));
             }
         }
         "mask-mode" => match value.trim() {
@@ -4553,8 +4561,20 @@ fn apply_property_with_errors(
             let v = value.trim();
             if v == "none" {
                 style.mask_image = None;
+            } else if v.starts_with("linear-gradient(") {
+                if let Some(g) = parse_linear_gradient(v) {
+                    style.mask_image = Some(blinc_core::MaskImage::Gradient(g));
+                } else {
+                    errors.push(ParseError::invalid_value(name, value, line, column));
+                }
+            } else if v.starts_with("radial-gradient(") {
+                if let Some(g) = parse_radial_gradient(v) {
+                    style.mask_image = Some(blinc_core::MaskImage::Gradient(g));
+                } else {
+                    errors.push(ParseError::invalid_value(name, value, line, column));
+                }
             } else if let Some(url) = parse_url_value(v) {
-                style.mask_image = Some(url);
+                style.mask_image = Some(blinc_core::MaskImage::Url(url));
             } else {
                 errors.push(ParseError::invalid_value(name, value, line, column));
             }
@@ -4854,67 +4874,133 @@ fn parse_transform(value: &str) -> Option<Transform> {
     None
 }
 
-/// Parse a transform value that may contain 3D functions (rotateX, rotateY, perspective).
-/// 2D functions are stored in style.transform, 3D functions in dedicated fields.
+/// Parse a compound transform value (e.g. `rotate(45deg) scale(1.5)`).
+/// Handles both 2D and 3D functions. 2D functions are composed into a single
+/// Affine2D stored in style.transform; 3D functions go to dedicated fields.
 /// Returns true if at least one function was parsed.
 fn parse_transform_with_3d(value: &str, style: &mut ElementStyle) -> bool {
-    let trimmed = value.trim();
+    use blinc_core::Affine2D;
 
-    // Try rotateX(deg)
-    if let Some(deg) = parse_function_angle(trimmed, "rotateX") {
-        style.rotate_x = Some(deg);
-        return true;
+    // Split compound transform string into individual function calls.
+    // e.g. "rotate(45deg) scale(1.5)" → ["rotate(45deg)", "scale(1.5)"]
+    let functions = split_transform_functions(value.trim());
+    if functions.is_empty() {
+        return false;
     }
 
-    // Try rotateY(deg)
-    if let Some(deg) = parse_function_angle(trimmed, "rotateY") {
-        style.rotate_y = Some(deg);
-        return true;
-    }
+    let mut affine = Affine2D::IDENTITY;
+    let mut has_2d = false;
+    let mut parsed_any = false;
 
-    // Try skewX(deg)
-    if let Some(deg) = parse_function_angle(trimmed, "skewX") {
-        style.skew_x = Some(deg);
-        return true;
-    }
-
-    // Try skewY(deg)
-    if let Some(deg) = parse_function_angle(trimmed, "skewY") {
-        style.skew_y = Some(deg);
-        return true;
-    }
-
-    // Try skew(xdeg) or skew(xdeg, ydeg)
-    if let Some((sx, sy)) = parse_skew_function(trimmed) {
-        style.skew_x = Some(sx);
-        style.skew_y = Some(sy);
-        return true;
-    }
-
-    // Try perspective(px)
-    if let Some(px) = parse_function_px(trimmed, "perspective") {
-        style.perspective = Some(px);
-        return true;
-    }
-
-    // Fall back to 2D transform parsing.
-    // Also store decomposed values (rotate, scale) so that
-    // style_to_keyframe_properties can read them directly without
-    // lossy atan2 decomposition from the Affine2D matrix.
-    if let Some(transform) = parse_transform(trimmed) {
-        // Extract original rotate/scale values before they're baked into the matrix
-        if let Some(deg) = parse_function_angle(trimmed, "rotate") {
-            style.rotate = Some(deg);
-        }
-        if let Ok((_, (sx, sy))) = parse_scale_values::<nom::error::Error<&str>>(trimmed) {
+    for func in &functions {
+        // 3D: rotateX
+        if let Some(deg) = parse_function_angle(func, "rotateX") {
+            style.rotate_x = Some(deg);
+            parsed_any = true;
+        // 3D: rotateY
+        } else if let Some(deg) = parse_function_angle(func, "rotateY") {
+            style.rotate_y = Some(deg);
+            parsed_any = true;
+        // perspective
+        } else if let Some(px) = parse_function_px(func, "perspective") {
+            style.perspective = Some(px);
+            parsed_any = true;
+        // 2D: skewX
+        } else if let Some(deg) = parse_function_angle(func, "skewX") {
+            style.skew_x = Some(deg);
+            affine = affine.then(&Affine2D::skew_x(deg.to_radians()));
+            has_2d = true;
+            parsed_any = true;
+        // 2D: skewY
+        } else if let Some(deg) = parse_function_angle(func, "skewY") {
+            style.skew_y = Some(deg);
+            affine = affine.then(&Affine2D::skew_y(deg.to_radians()));
+            has_2d = true;
+            parsed_any = true;
+        // 2D: skew(x, y)
+        } else if let Some((sx, sy)) = parse_skew_function(func) {
+            style.skew_x = Some(sx);
+            style.skew_y = Some(sy);
+            affine = affine.then(&Affine2D::skew_x(sx.to_radians()));
+            affine = affine.then(&Affine2D::skew_y(sy.to_radians()));
+            has_2d = true;
+            parsed_any = true;
+        // 2D: scale
+        } else if let Ok((_, (sx, sy))) = parse_scale_values::<nom::error::Error<&str>>(func) {
             style.scale_x = Some(sx);
             style.scale_y = Some(sy);
+            affine = affine.then(&Affine2D::scale(sx, sy));
+            has_2d = true;
+            parsed_any = true;
+        // 2D: rotate
+        } else if let Ok((_, t)) = parse_rotate_transform::<nom::error::Error<&str>>(func) {
+            if let Transform::Affine2D(ref a) = t {
+                style.rotate = Some(a.elements[1].atan2(a.elements[0]).to_degrees());
+                affine = affine.then(a);
+            }
+            has_2d = true;
+            parsed_any = true;
+        // 2D: translate / translateX / translateY
+        } else if let Ok((_, t)) = parse_translate_transform::<nom::error::Error<&str>>(func) {
+            if let Transform::Affine2D(ref a) = t {
+                affine = affine.then(a);
+            }
+            has_2d = true;
+            parsed_any = true;
         }
-        style.transform = Some(transform);
-        return true;
     }
 
-    false
+    if has_2d {
+        style.transform = Some(Transform::Affine2D(affine));
+    }
+
+    parsed_any
+}
+
+/// Split a compound CSS transform string into individual function calls.
+/// e.g. `"rotate(45deg) scale(1.5)"` → `["rotate(45deg)", "scale(1.5)"]`
+fn split_transform_functions(input: &str) -> Vec<&str> {
+    let mut functions = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    let mut in_func = false;
+
+    for (i, ch) in input.char_indices() {
+        match ch {
+            '(' => {
+                if depth == 0 {
+                    // Find start of function name (skip leading whitespace)
+                    if !in_func {
+                        start = input[..i]
+                            .rfind(|c: char| c.is_whitespace())
+                            .map_or(0, |p| p + 1);
+                        in_func = true;
+                    }
+                }
+                depth += 1;
+            }
+            ')' => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+                if depth == 0 && in_func {
+                    let func = input[start..=i].trim();
+                    if !func.is_empty() {
+                        functions.push(func);
+                    }
+                    in_func = false;
+                    start = i + 1;
+                }
+            }
+            _ if !ch.is_whitespace() && depth == 0 && !in_func => {
+                start = i;
+                in_func = true;
+            }
+            _ => {}
+        }
+    }
+
+    functions
 }
 
 /// Parse `skew(Xdeg)` or `skew(Xdeg, Ydeg)`

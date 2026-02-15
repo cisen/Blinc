@@ -171,7 +171,7 @@ const STYLESHEET: &str = r#"
         border-color: rgba(245, 158, 11, 0.6);
     }
     #img-hover-rotate:hover {
-        transform: rotate(15deg) scale(1.1);
+        transform: rotate(15deg) scale(1.15);
         box-shadow: 0 8px 24px rgba(245, 158, 11, 0.5);
     }
 
@@ -237,6 +237,54 @@ const STYLESHEET: &str = r#"
         border-radius: 12px;
         filter: grayscale(50%) brightness(120%) contrast(110%);
     }
+
+    /* ================================================ */
+    /* 9. Mask Image (CSS Gradients)                     */
+    /* ================================================ */
+    #img-mask-fade-bottom {
+        border-radius: 12px;
+        mask-image: linear-gradient(to bottom, black, transparent);
+    }
+    #img-mask-fade-right {
+        border-radius: 12px;
+        mask-image: linear-gradient(to right, black, transparent);
+    }
+    #img-mask-radial {
+        border-radius: 12px;
+        mask-image: radial-gradient(circle, black, transparent);
+    }
+    #img-mask-diagonal {
+        border-radius: 12px;
+        mask-image: linear-gradient(135deg, black 0%, transparent 100%);
+    }
+
+    /* ================================================ */
+    /* 10. Mask Image Transitions (Hover)               */
+    /* ================================================ */
+    #img-mask-hover-reveal {
+        border-radius: 12px;
+        mask-image: linear-gradient(to bottom, black, transparent);
+        transition: mask-image 0.6s ease;
+    }
+    #img-mask-hover-reveal:hover {
+        mask-image: linear-gradient(to bottom, black, black);
+    }
+    #img-mask-hover-radial {
+        border-radius: 12px;
+        mask-image: radial-gradient(circle, black, transparent);
+        transition: mask-image 0.5s ease;
+    }
+    #img-mask-hover-radial:hover {
+        mask-image: radial-gradient(circle, black, black);
+    }
+    #img-mask-hover-fade {
+        border-radius: 12px;
+        mask-image: linear-gradient(to right, black, black);
+        transition: mask-image 0.5s ease;
+    }
+    #img-mask-hover-fade:hover {
+        mask-image: linear-gradient(to right, black, transparent);
+    }
 "#;
 
 // ============================================================================
@@ -276,6 +324,8 @@ fn build_ui(_ctx: &WindowedContext) -> impl ElementBuilder {
         .child(hover_section())
         .child(bg_image_section())
         .child(filter_section())
+        .child(mask_section())
+        .child(mask_transition_section())
 }
 
 // ============================================================================
@@ -424,5 +474,30 @@ fn bg_image_section() -> impl ElementBuilder {
                         .weight(FontWeight::SemiBold),
                 ),
         ),
+    )
+}
+
+fn mask_section() -> impl ElementBuilder {
+    section("9. Mask Image (CSS Gradients)").child(
+        div()
+            .flex_row()
+            .gap_px(20.0)
+            .items_end()
+            .child(img_card("img-mask-fade-bottom", "fade bottom"))
+            .child(img_card("img-mask-fade-right", "fade right"))
+            .child(img_card("img-mask-radial", "radial reveal"))
+            .child(img_card("img-mask-diagonal", "diagonal")),
+    )
+}
+
+fn mask_transition_section() -> impl ElementBuilder {
+    section("10. Mask Transitions (Hover)").child(
+        div()
+            .flex_row()
+            .gap_px(20.0)
+            .items_end()
+            .child(img_card("img-mask-hover-reveal", "reveal down"))
+            .child(img_card("img-mask-hover-radial", "radial in"))
+            .child(img_card("img-mask-hover-fade", "fade right")),
     )
 }

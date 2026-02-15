@@ -92,6 +92,11 @@ struct Primitive {
     filter_a: vec4<f32>,
     // CSS filter B (brightness, contrast, saturate, 0)
     filter_b: vec4<f32>,
+    // Mask gradient params: linear=(x1,y1,x2,y2), radial=(cx,cy,r,0) in OBB (0-1) space
+    mask_params: vec4<f32>,
+    // Mask info: (mask_type, start_alpha, end_alpha, 0)
+    // mask_type: 0=none, 1=linear, 2=radial
+    mask_info: vec4<f32>,
     // Type info (primitive_type, fill_type, clip_type, 0)
     type_info: vec4<u32>,
 }
@@ -1397,6 +1402,35 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // NOW apply outer edge anti-aliasing to the combined result
     // This gives smooth edges against the background without shadow bleed
     result.a *= fill_alpha;
+
+    // Apply mask gradient (mask-image: linear-gradient / radial-gradient)
+    // mask_info.x: 0=none, 1=linear, 2=radial
+    // mask_params are in OBB (0-1) space relative to element bounds
+    let mask_type = prim.mask_info.x;
+    if mask_type > 0.5 {
+        // Compute normalized UV relative to element bounds
+        let mask_uv = (sp - origin) / max(size, vec2<f32>(0.001));
+        var mask_t: f32;
+        if mask_type < 1.5 {
+            // Linear mask gradient
+            let m_start = prim.mask_params.xy;
+            let m_end = prim.mask_params.zw;
+            let m_dir = m_end - m_start;
+            let m_len_sq = dot(m_dir, m_dir);
+            if m_len_sq > 0.0001 {
+                mask_t = clamp(dot(mask_uv - m_start, m_dir) / m_len_sq, 0.0, 1.0);
+            } else {
+                mask_t = 0.0;
+            }
+        } else {
+            // Radial mask gradient
+            let m_center = prim.mask_params.xy;
+            let m_radius = prim.mask_params.z;
+            mask_t = clamp(length(mask_uv - m_center) / max(m_radius, 0.001), 0.0, 1.0);
+        }
+        let mask_alpha = mix(prim.mask_info.y, prim.mask_info.z, mask_t);
+        result = vec4<f32>(result.rgb * mask_alpha, result.a * mask_alpha);
+    }
 
     // Apply CSS filters (grayscale, invert, sepia, hue-rotate, brightness, contrast, saturate)
     // Skip if all identity (filter_a all zero, filter_b = (1,1,1,0))

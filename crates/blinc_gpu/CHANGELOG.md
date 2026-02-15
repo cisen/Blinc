@@ -4,6 +4,15 @@ All notable changes to `blinc_gpu` will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- `GpuImageInstance` params layout: `params[2..3]` changed from sin_rot/cos_rot to border_width/packed_border_color; rotation now uses the `transform` field
+- Image shader (`image.wgsl`) consolidated VertexOutput from 16 locations to 13 by passing combined `params` vec4
+
+### Removed
+
+- `GpuImageInstance::with_rotation_sincos()` — superseded by `with_transform()` for full 2x2 affine support
+
 ### Added
 
 #### 3D SDF Raymarching Pipeline

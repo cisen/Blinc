@@ -5793,7 +5793,7 @@ impl GpuRenderer {
                                 offset: 32,
                                 shader_location: 2,
                             },
-                            // params (border_radius, opacity, padding, padding)
+                            // params (border_radius, opacity, border_width, packed_border_color)
                             wgpu::VertexAttribute {
                                 format: wgpu::VertexFormat::Float32x4,
                                 offset: 48,
@@ -5834,6 +5834,18 @@ impl GpuRenderer {
                                 format: wgpu::VertexFormat::Float32x4,
                                 offset: 144,
                                 shader_location: 9,
+                            },
+                            // mask_params (gradient geometry)
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x4,
+                                offset: 160,
+                                shader_location: 10,
+                            },
+                            // mask_info (type, start_alpha, end_alpha, 0)
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x4,
+                                offset: 176,
+                                shader_location: 11,
                             },
                         ],
                     }],

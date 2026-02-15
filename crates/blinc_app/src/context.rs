@@ -153,13 +153,14 @@ struct ImageElement {
     filter_a: [f32; 4],
     /// CSS filter B (brightness, contrast, saturate, unused) — identity = [1,1,1,0]
     filter_b: [f32; 4],
-    /// Parent border overlay (renders ON TOP of image at parent's bounds).
-    /// [x, y, w, h, border_width, border_radius, r, g, b, a]
-    parent_border: Option<[f32; 10]>,
     /// Secondary clip (scroll container boundary) — sharp rect, no radius.
     /// Kept separate from primary clip_bounds so rounded corners don't morph
     /// when the primary clip rect shrinks at scroll boundaries.
     scroll_clip: Option<[f32; 4]>,
+    /// Mask gradient params: linear=(x1,y1,x2,y2), radial=(cx,cy,r,0) in OBB space
+    mask_params: [f32; 4],
+    /// Mask info: [mask_type, start_alpha, end_alpha, 0] (0=none, 1=linear, 2=radial)
+    mask_info: [f32; 4],
 }
 
 /// SVG element data for rendering
@@ -1001,6 +1002,42 @@ impl RenderContext {
 
     /// Convert a CssFilter into filter_a/filter_b arrays for the image shader.
     /// Returns (filter_a, filter_b) where identity = ([0,0,0,0], [1,1,1,0]).
+    /// Extract mask gradient params and info from a MaskImage gradient.
+    /// Returns ([mask_params], [mask_info]) or zero arrays if not a gradient.
+    fn mask_image_to_arrays(mask: Option<&blinc_core::MaskImage>) -> ([f32; 4], [f32; 4]) {
+        match mask {
+            Some(blinc_core::MaskImage::Gradient(gradient)) => match gradient {
+                blinc_core::Gradient::Linear {
+                    start, end, stops, ..
+                } => {
+                    let (sa, ea) = Self::extract_mask_alphas_from_stops(stops);
+                    ([start.x, start.y, end.x, end.y], [1.0, sa, ea, 0.0])
+                }
+                blinc_core::Gradient::Radial {
+                    center,
+                    radius,
+                    stops,
+                    ..
+                } => {
+                    let (sa, ea) = Self::extract_mask_alphas_from_stops(stops);
+                    ([center.x, center.y, *radius, 0.0], [2.0, sa, ea, 0.0])
+                }
+                blinc_core::Gradient::Conic { center, stops, .. } => {
+                    let (sa, ea) = Self::extract_mask_alphas_from_stops(stops);
+                    ([center.x, center.y, 0.5, 0.0], [2.0, sa, ea, 0.0])
+                }
+            },
+            _ => ([0.0; 4], [0.0; 4]),
+        }
+    }
+
+    fn extract_mask_alphas_from_stops(stops: &[blinc_core::GradientStop]) -> (f32, f32) {
+        if stops.is_empty() {
+            return (1.0, 0.0);
+        }
+        (stops[0].color.a, stops[stops.len() - 1].color.a)
+    }
+
     fn css_filter_to_arrays(
         filter: &blinc_layout::element_style::CssFilter,
     ) -> ([f32; 4], [f32; 4]) {
@@ -1205,6 +1242,23 @@ impl RenderContext {
                 .with_transform(ta, tb, tc, td)
                 .with_filter(image.filter_a, image.filter_b);
 
+            // Render border inside the image shader (same SDF, perfect transform alignment)
+            if image.border_width > 0.0 {
+                instance = instance.with_image_border(
+                    image.border_width,
+                    image.border_color.r,
+                    image.border_color.g,
+                    image.border_color.b,
+                    image.border_color.a,
+                );
+            }
+
+            // Apply mask gradient
+            if image.mask_info[0] > 0.5 {
+                instance.mask_params = image.mask_params;
+                instance.mask_info = image.mask_info;
+            }
+
             // Apply clip bounds (primary rounded clip)
             if let Some((clip, clip_r)) = effective_clip {
                 instance = instance.with_clip_rounded_rect_corners(
@@ -1219,42 +1273,6 @@ impl RenderContext {
             // Render the image
             self.renderer
                 .render_images(target, gpu_image.view(), &[instance]);
-
-            // Render border on top of image (own border or parent border overlay)
-            // Apply the same scroll/parent clip so borders don't escape the container
-            if image.border_width > 0.0 {
-                use blinc_gpu::primitives::GpuPrimitive;
-                let mut border_primitive = GpuPrimitive::rect(draw_x, draw_y, draw_w, draw_h)
-                    .with_color(0.0, 0.0, 0.0, 0.0)
-                    .with_corner_radius(image.border_radius)
-                    .with_border(
-                        image.border_width,
-                        image.border_color.r,
-                        image.border_color.g,
-                        image.border_color.b,
-                        image.border_color.a,
-                    );
-                if let Some((clip, clip_r)) = effective_clip {
-                    border_primitive.clip_bounds = clip;
-                    border_primitive.clip_radius = clip_r;
-                    border_primitive.type_info[2] = 1; // clip_type = rect
-                }
-                self.renderer
-                    .render_primitives_overlay(target, &[border_primitive]);
-            } else if let Some(pb) = &image.parent_border {
-                use blinc_gpu::primitives::GpuPrimitive;
-                let mut border_primitive = GpuPrimitive::rect(pb[0], pb[1], pb[2], pb[3])
-                    .with_color(0.0, 0.0, 0.0, 0.0)
-                    .with_corner_radius(pb[5])
-                    .with_border(pb[4], pb[6], pb[7], pb[8], pb[9]);
-                if let Some((clip, clip_r)) = effective_clip {
-                    border_primitive.clip_bounds = clip;
-                    border_primitive.clip_radius = clip_r;
-                    border_primitive.type_info[2] = 1; // clip_type = rect
-                }
-                self.renderer
-                    .render_primitives_overlay(target, &[border_primitive]);
-            }
         }
     }
 
@@ -1328,6 +1346,23 @@ impl RenderContext {
                 .with_transform(ta, tb, tc, td)
                 .with_filter(image.filter_a, image.filter_b);
 
+            // Render border inside the image shader (same SDF, perfect transform alignment)
+            if image.border_width > 0.0 {
+                instance = instance.with_image_border(
+                    image.border_width,
+                    image.border_color.r,
+                    image.border_color.g,
+                    image.border_color.b,
+                    image.border_color.a,
+                );
+            }
+
+            // Apply mask gradient
+            if image.mask_info[0] > 0.5 {
+                instance.mask_params = image.mask_params;
+                instance.mask_info = image.mask_info;
+            }
+
             // Apply clip bounds (primary rounded clip)
             if let Some((clip, clip_r)) = effective_clip {
                 instance = instance.with_clip_rounded_rect_corners(
@@ -1342,41 +1377,6 @@ impl RenderContext {
             // Render the image
             self.renderer
                 .render_images(target, gpu_image.view(), &[instance]);
-
-            // Render border on top of image (own border or parent border overlay)
-            if image.border_width > 0.0 {
-                use blinc_gpu::primitives::GpuPrimitive;
-                let mut border_primitive = GpuPrimitive::rect(draw_x, draw_y, draw_w, draw_h)
-                    .with_color(0.0, 0.0, 0.0, 0.0)
-                    .with_corner_radius(image.border_radius)
-                    .with_border(
-                        image.border_width,
-                        image.border_color.r,
-                        image.border_color.g,
-                        image.border_color.b,
-                        image.border_color.a,
-                    );
-                if let Some((clip, clip_r)) = effective_clip {
-                    border_primitive.clip_bounds = clip;
-                    border_primitive.clip_radius = clip_r;
-                    border_primitive.type_info[2] = 1;
-                }
-                self.renderer
-                    .render_primitives_overlay(target, &[border_primitive]);
-            } else if let Some(pb) = &image.parent_border {
-                use blinc_gpu::primitives::GpuPrimitive;
-                let mut border_primitive = GpuPrimitive::rect(pb[0], pb[1], pb[2], pb[3])
-                    .with_color(0.0, 0.0, 0.0, 0.0)
-                    .with_corner_radius(pb[5])
-                    .with_border(pb[4], pb[6], pb[7], pb[8], pb[9]);
-                if let Some((clip, clip_r)) = effective_clip {
-                    border_primitive.clip_bounds = clip;
-                    border_primitive.clip_radius = clip_r;
-                    border_primitive.type_info[2] = 1;
-                }
-                self.renderer
-                    .render_primitives_overlay(target, &[border_primitive]);
-            }
         }
     }
 
@@ -2749,33 +2749,11 @@ impl RenderContext {
                         .object_position
                         .unwrap_or(image_data.object_position);
 
-                    // Parent border overlay: when the clipping parent has a border,
-                    // render it ON TOP of the image to eliminate AA gap between the
-                    // SDF border (behind) and the image clip edge.
-                    let parent_border = parent_props.and_then(|pp| {
-                        if pp.clips_content && pp.border_width > 0.0 {
-                            let bc = pp.border_color.unwrap_or(blinc_core::Color::TRANSPARENT);
-                            // Get parent bounds for the overlay
-                            parent_node.and_then(|pid| {
-                                tree.get_render_bounds(pid, parent_offset).map(|pb| {
-                                    [
-                                        pb.x * scale,
-                                        pb.y * scale,
-                                        pb.width * scale,
-                                        pb.height * scale,
-                                        pp.border_width * scale,
-                                        pp.border_radius.top_left * scale,
-                                        bc.r,
-                                        bc.g,
-                                        bc.b,
-                                        bc.a,
-                                    ]
-                                })
-                            })
-                        } else {
-                            None
-                        }
-                    });
+                    // Mask: prefer own, fall back to parent
+                    let own_mask = render_node.props.mask_image.as_ref();
+                    let parent_mask = parent_props.and_then(|p| p.mask_image.as_ref());
+                    let effective_mask = own_mask.or(parent_mask);
+                    let (mask_params, mask_info) = Self::mask_image_to_arrays(effective_mask);
 
                     images.push(ImageElement {
                         source: image_data.source.clone(),
@@ -2801,8 +2779,9 @@ impl RenderContext {
                         shadow,
                         filter_a,
                         filter_b,
-                        parent_border,
                         scroll_clip: scaled_scroll_clip,
+                        mask_params,
+                        mask_info,
                     });
                 }
                 // Canvas elements are rendered inline during tree traversal (in render_layer)
@@ -2871,8 +2850,19 @@ impl RenderContext {
                                 .as_ref()
                                 .map(|f| Self::css_filter_to_arrays(f).1)
                                 .unwrap_or([1.0, 1.0, 1.0, 0.0]),
-                            parent_border: None,
                             scroll_clip: scaled_scroll_clip_bg,
+                            mask_params: {
+                                let (mp, _) = Self::mask_image_to_arrays(
+                                    render_node.props.mask_image.as_ref(),
+                                );
+                                mp
+                            },
+                            mask_info: {
+                                let (_, mi) = Self::mask_image_to_arrays(
+                                    render_node.props.mask_image.as_ref(),
+                                );
+                                mi
+                            },
                         });
                     }
                 }

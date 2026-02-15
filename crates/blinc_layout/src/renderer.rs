@@ -4588,8 +4588,8 @@ impl RenderTree {
                     .retain(|e| !matches!(e, LayerEffect::DropShadow { .. }));
             }
         }
-        // Mask image → LayerEffect
-        if let Some(ref url) = style.mask_image {
+        // Mask image → LayerEffect (URL only; gradients handled per-primitive)
+        if let Some(blinc_core::MaskImage::Url(ref url)) = style.mask_image {
             props
                 .layer_effects
                 .retain(|e| !matches!(e, LayerEffect::MaskImage { .. }));
@@ -4769,8 +4769,8 @@ impl RenderTree {
         if let Some(ws) = style.white_space {
             props.white_space = Some(ws);
         }
-        if let Some(ref url) = style.mask_image {
-            props.mask_image = Some(url.clone());
+        if let Some(ref mask) = style.mask_image {
+            props.mask_image = Some(mask.clone());
         }
         if let Some(ref mode) = style.mask_mode {
             props.mask_mode = Some(mode.clone());
@@ -5017,6 +5017,10 @@ impl RenderTree {
                 }
                 if cp.background_color.is_some() {
                     kp.background_color = cp.background_color;
+                }
+                // Mask gradient
+                if cp.mask_gradient.is_some() {
+                    kp.mask_gradient = cp.mask_gradient;
                 }
             }
             kp
@@ -6750,6 +6754,9 @@ impl RenderTree {
         check_transition!(skew_y, "transform", default 0.0);
         check_transition!(transform_origin, "transform-origin");
 
+        // Mask gradient
+        check_transition!(mask_gradient, "mask-image");
+
         // SVG properties
         check_transition!(svg_fill, "fill");
         check_transition!(svg_stroke, "stroke");
@@ -6800,6 +6807,15 @@ impl RenderTree {
     /// Check if there are no active CSS transitions
     pub fn css_transitions_empty(&self) -> bool {
         self.css_anim_store.lock().unwrap().transitions.is_empty()
+    }
+
+    /// Remove completed transitions from the store.
+    /// Must be called AFTER `apply_all_css_transition_props()`.
+    pub fn remove_completed_transitions(&mut self) {
+        self.css_anim_store
+            .lock()
+            .unwrap()
+            .remove_completed_transitions();
     }
 
     /// Rebuild gradient stops, interpolating the first and last stop colors
@@ -7225,6 +7241,50 @@ impl RenderTree {
             props.transform_origin = Some(to);
         }
 
+        // Mask gradient: reconstruct MaskImage::Gradient from combined [f32; 8]
+        if let Some(mg) = anim_props.mask_gradient {
+            let mask_type = mg[0];
+            let start_alpha = mg[1];
+            let end_alpha = mg[2];
+            let gradient = if mask_type < 1.5 {
+                blinc_core::Gradient::Linear {
+                    start: blinc_core::Point::new(mg[4], mg[5]),
+                    end: blinc_core::Point::new(mg[6], mg[7]),
+                    stops: vec![
+                        blinc_core::GradientStop::new(
+                            0.0,
+                            blinc_core::Color::rgba(0.0, 0.0, 0.0, start_alpha),
+                        ),
+                        blinc_core::GradientStop::new(
+                            1.0,
+                            blinc_core::Color::rgba(0.0, 0.0, 0.0, end_alpha),
+                        ),
+                    ],
+                    space: blinc_core::GradientSpace::ObjectBoundingBox,
+                    spread: blinc_core::GradientSpread::Pad,
+                }
+            } else {
+                blinc_core::Gradient::Radial {
+                    center: blinc_core::Point::new(mg[4], mg[5]),
+                    radius: mg[6],
+                    focal: None,
+                    stops: vec![
+                        blinc_core::GradientStop::new(
+                            0.0,
+                            blinc_core::Color::rgba(0.0, 0.0, 0.0, start_alpha),
+                        ),
+                        blinc_core::GradientStop::new(
+                            1.0,
+                            blinc_core::Color::rgba(0.0, 0.0, 0.0, end_alpha),
+                        ),
+                    ],
+                    space: blinc_core::GradientSpace::ObjectBoundingBox,
+                    spread: blinc_core::GradientSpread::Pad,
+                }
+            };
+            props.mask_image = Some(blinc_core::MaskImage::Gradient(gradient));
+        }
+
         // SVG properties
         if let Some([r, g, b, a]) = anim_props.svg_fill {
             props.fill = Some([r, g, b, a]);
@@ -7430,6 +7490,32 @@ impl RenderTree {
 
         // Transform origin
         kp.transform_origin = props.transform_origin;
+
+        // Mask gradient (combined [mask_type, start_alpha, end_alpha, 0, p0, p1, p2, p3])
+        if let Some(blinc_core::MaskImage::Gradient(ref gradient)) = props.mask_image {
+            let lum = matches!(props.mask_mode, Some(blinc_core::MaskMode::Luminance));
+            kp.mask_gradient = Some(match gradient {
+                blinc_core::Gradient::Linear {
+                    start, end, stops, ..
+                } => {
+                    let (sa, ea) = Self::extract_mask_alphas(stops, lum);
+                    [1.0, sa, ea, 0.0, start.x, start.y, end.x, end.y]
+                }
+                blinc_core::Gradient::Radial {
+                    center,
+                    radius,
+                    stops,
+                    ..
+                } => {
+                    let (sa, ea) = Self::extract_mask_alphas(stops, lum);
+                    [2.0, sa, ea, 0.0, center.x, center.y, *radius, 0.0]
+                }
+                blinc_core::Gradient::Conic { center, stops, .. } => {
+                    let (sa, ea) = Self::extract_mask_alphas(stops, lum);
+                    [2.0, sa, ea, 0.0, center.x, center.y, 0.5, 0.0]
+                }
+            });
+        }
 
         // SVG properties
         if let Some(fill) = &props.fill {
@@ -8108,8 +8194,12 @@ impl RenderTree {
             }
         }
 
-        // For glass elements, borders must render in the foreground layer (after glass)
-        if is_glass {
+        // Borders render in the foreground layer when the element clips content
+        // (e.g., images inside a bordered container). This ensures borders draw ON TOP
+        // of child images, matching CSS painting order (content → border → outline).
+        // For glass elements, borders also need foreground to avoid being hidden.
+        let border_in_foreground = is_glass || render_node.props.clips_content;
+        if border_in_foreground {
             ctx.set_foreground_layer(true);
         }
 
@@ -8288,8 +8378,8 @@ impl RenderTree {
             }
         }
 
-        // Restore foreground layer state after glass border rendering
-        if is_glass {
+        // Restore foreground layer state after border/outline rendering
+        if border_in_foreground {
             ctx.set_foreground_layer(false);
         }
 
@@ -8865,20 +8955,12 @@ impl RenderTree {
             }
         }
 
-        // Push clip if needed (either from element or from layout animation)
-        // Layout animations need clipping to hide content that exceeds animated bounds
-        // NOTE: This clip is for the element itself. Children get an INSET clip pushed later
-        // to prevent them from rendering over the border.
+        // Determine if this element clips its content (overflow:hidden, scroll, or layout animation).
+        // The actual clip push is deferred to after border/outline drawing so that the
+        // overflow clip doesn't double-AA with the border SDF at the same boundary.
+        // Per CSS spec, overflow clips the element's *content* (children), not its decoration
+        // (background/border), which are already SDF-constrained to the element bounds.
         let clips_content = render_node.props.clips_content || has_layout_animation;
-        if clips_content {
-            let clip_rect = Rect::new(0.0, 0.0, bounds.width, bounds.height);
-            let clip_shape = if radius.is_uniform() && radius.top_left > 0.0 {
-                ClipShape::rounded_rect(clip_rect, radius)
-            } else {
-                ClipShape::rect(clip_rect)
-            };
-            ctx.push_clip(clip_shape);
-        }
 
         // Push clip-path if set on this element
         let has_clip_path = render_node.props.clip_path.is_some();
@@ -8952,6 +9034,52 @@ impl RenderTree {
                     f.contrast,
                     f.saturate,
                 );
+            }
+        }
+
+        // Mask gradient setup (gradient masks are per-primitive, URL masks use LayerEffect)
+        let has_mask_gradient = matches!(
+            render_node.props.mask_image,
+            Some(blinc_core::MaskImage::Gradient(_))
+        );
+        if let Some(blinc_core::MaskImage::Gradient(ref gradient)) = render_node.props.mask_image {
+            let mask_mode_luminance = matches!(
+                render_node.props.mask_mode,
+                Some(blinc_core::MaskMode::Luminance)
+            );
+            match gradient {
+                blinc_core::Gradient::Linear {
+                    start, end, stops, ..
+                } => {
+                    let (start_alpha, end_alpha) =
+                        Self::extract_mask_alphas(stops, mask_mode_luminance);
+                    ctx.set_mask_gradient(
+                        [start.x, start.y, end.x, end.y],
+                        [1.0, start_alpha, end_alpha, 0.0],
+                    );
+                }
+                blinc_core::Gradient::Radial {
+                    center,
+                    radius,
+                    stops,
+                    ..
+                } => {
+                    let (start_alpha, end_alpha) =
+                        Self::extract_mask_alphas(stops, mask_mode_luminance);
+                    ctx.set_mask_gradient(
+                        [center.x, center.y, *radius, 0.0],
+                        [2.0, start_alpha, end_alpha, 0.0],
+                    );
+                }
+                blinc_core::Gradient::Conic { center, stops, .. } => {
+                    // Treat conic as radial for mask purposes
+                    let (start_alpha, end_alpha) =
+                        Self::extract_mask_alphas(stops, mask_mode_luminance);
+                    ctx.set_mask_gradient(
+                        [center.x, center.y, 0.5, 0.0],
+                        [2.0, start_alpha, end_alpha, 0.0],
+                    );
+                }
             }
         }
 
@@ -9062,9 +9190,12 @@ impl RenderTree {
                 }
             }
 
-            // For glass elements, borders must render in the foreground layer (after glass)
-            // Otherwise they'd go into the background batch and be hidden behind the glass.
-            if is_glass {
+            // Borders render in the foreground layer when the element clips content
+            // (e.g., images inside a bordered container). This ensures borders draw ON TOP
+            // of child images, matching CSS painting order (content → border → outline).
+            // For glass elements, borders also need foreground to avoid being hidden.
+            let border_in_foreground = is_glass || clips_content;
+            if border_in_foreground {
                 ctx.set_foreground_layer(true);
             }
 
@@ -9207,8 +9338,8 @@ impl RenderTree {
                 }
             }
 
-            // Restore foreground layer state after glass border rendering
-            if is_glass {
+            // Restore foreground layer state after border/outline rendering
+            if border_in_foreground {
                 ctx.set_foreground_layer(false);
             }
 
@@ -9229,6 +9360,19 @@ impl RenderTree {
                     ctx.pop_clip();
                 }
             }
+        }
+
+        // Push overflow clip for children. This is deferred from before the render block
+        // so that the border/outline SDF doesn't get double-AA'd by an overlapping clip.
+        // Background and borders are SDF-constrained; only children need the overflow clip.
+        if clips_content {
+            let clip_rect = Rect::new(0.0, 0.0, bounds.width, bounds.height);
+            let clip_shape = if radius.is_uniform() && radius.top_left > 0.0 {
+                ClipShape::rounded_rect(clip_rect, radius)
+            } else {
+                ClipShape::rect(clip_rect)
+            };
+            ctx.push_clip(clip_shape);
         }
 
         // Push inset clip for children if this element has borders.
@@ -9482,6 +9626,11 @@ impl RenderTree {
             ctx.clear_css_filter();
         }
 
+        // Clear mask gradient transient state
+        if has_mask_gradient {
+            ctx.clear_mask_gradient();
+        }
+
         // Restore z_layer after this subtree
         if has_z_index {
             ctx.set_z_layer(saved_z_layer);
@@ -9489,6 +9638,24 @@ impl RenderTree {
 
         // Pop position transform
         ctx.pop_transform();
+    }
+
+    /// Extract start and end alpha values from gradient stops for mask gradient
+    fn extract_mask_alphas(stops: &[blinc_core::GradientStop], luminance: bool) -> (f32, f32) {
+        if stops.is_empty() {
+            return (1.0, 0.0);
+        }
+        let first = &stops[0].color;
+        let last = &stops[stops.len() - 1].color;
+        if luminance {
+            // Luminance mode: use perceived luminance * alpha
+            let lum_first = (0.2126 * first.r + 0.7152 * first.g + 0.0722 * first.b) * first.a;
+            let lum_last = (0.2126 * last.r + 0.7152 * last.g + 0.0722 * last.b) * last.a;
+            (lum_first, lum_last)
+        } else {
+            // Alpha mode: use color's alpha channel directly
+            (first.a, last.a)
+        }
     }
 
     /// Render with layer separation and explicit context control
@@ -9721,8 +9888,9 @@ impl RenderTree {
                 }
             }
 
-            // For glass elements, borders must render in the foreground layer
-            if is_glass {
+            // Borders render in foreground when element clips content or is glass
+            let border_in_foreground = is_glass || render_node.props.clips_content;
+            if border_in_foreground {
                 ctx.set_foreground_layer(true);
             }
 
@@ -9841,8 +10009,8 @@ impl RenderTree {
                 }
             }
 
-            // Restore foreground layer state after glass border rendering
-            if is_glass {
+            // Restore foreground layer state after border/outline rendering
+            if border_in_foreground {
                 ctx.set_foreground_layer(false);
             }
 
@@ -10217,8 +10385,9 @@ impl RenderTree {
                         }
                     }
 
-                    // For glass elements, borders must render in the foreground layer
-                    if is_glass {
+                    // Borders render in foreground when element clips content or is glass
+                    let border_in_foreground = is_glass || render_node.props.clips_content;
+                    if border_in_foreground {
                         ctx.set_foreground_layer(true);
                     }
 
@@ -10324,8 +10493,8 @@ impl RenderTree {
                         }
                     }
 
-                    // Restore foreground layer state after glass border rendering
-                    if is_glass {
+                    // Restore foreground layer state after border/outline rendering
+                    if border_in_foreground {
                         ctx.set_foreground_layer(false);
                     }
                 }

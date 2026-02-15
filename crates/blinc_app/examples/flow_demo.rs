@@ -166,9 +166,5 @@ fn flow_card(id: &str, title: &str, desc: &str) -> impl ElementBuilder {
                 .weight(FontWeight::Bold)
                 .color(Color::WHITE),
         )
-        .child(
-            text(desc)
-                .size(12.0)
-                .color(Color::rgba(0.5, 0.5, 0.6, 1.0)),
-        )
+        .child(text(desc).size(12.0).color(Color::rgba(0.5, 0.5, 0.6, 1.0)))
 }

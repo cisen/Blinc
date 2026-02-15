@@ -32,8 +32,10 @@ pub struct FlowUniformData {
     pub element_bounds: [f32; 4],
     /// Pointer position (from pointer query system)
     pub pointer: [f32; 2],
+    /// Corner radius in pixels (for rounded-rect clipping)
+    pub corner_radius: f32,
     /// Padding to maintain 16-byte alignment
-    pub _padding: [f32; 2],
+    pub _padding: f32,
 }
 
 impl Default for FlowUniformData {
@@ -44,7 +46,8 @@ impl Default for FlowUniformData {
             frame_index: 0.0,
             element_bounds: [0.0; 4],
             pointer: [0.0; 2],
-            _padding: [0.0; 2],
+            corner_radius: 0.0,
+            _padding: 0.0,
         }
     }
 }

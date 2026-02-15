@@ -274,6 +274,7 @@ pub enum FlowFunc {
     Fract,
     Sqrt,
     Pow,
+    Atan2,
     Exp,
     Log,
     Sign,
@@ -348,6 +349,7 @@ impl FlowFunc {
             "fract" => Some(Self::Fract),
             "sqrt" => Some(Self::Sqrt),
             "pow" => Some(Self::Pow),
+            "atan2" => Some(Self::Atan2),
             "exp" => Some(Self::Exp),
             "log" => Some(Self::Log),
             "sign" => Some(Self::Sign),
@@ -420,6 +422,7 @@ impl FlowFunc {
 
             // 2-arg functions
             Self::Pow
+            | Self::Atan2
             | Self::Mod
             | Self::Min
             | Self::Max
@@ -486,7 +489,8 @@ impl FlowFunc {
             | Self::SdfSmoothUnion
             | Self::SdfSmoothIntersect
             | Self::SdfSmoothSubtract
-            | Self::Step => Some(FlowType::Float),
+            | Self::Step
+            | Self::Atan2 => Some(FlowType::Float),
 
             // Preserve input type
             Self::Pow
@@ -950,15 +954,13 @@ fn infer_expr_type(
 
         FlowExpr::Neg(a) => infer_expr_type(a, type_map),
 
-        FlowExpr::Swizzle(_expr, components) => {
-            match components.len() {
-                1 => Ok(FlowType::Float),
-                2 => Ok(FlowType::Vec2),
-                3 => Ok(FlowType::Vec3),
-                4 => Ok(FlowType::Vec4),
-                _ => Err(format!("invalid swizzle length: {}", components.len())),
-            }
-        }
+        FlowExpr::Swizzle(_expr, components) => match components.len() {
+            1 => Ok(FlowType::Float),
+            2 => Ok(FlowType::Vec2),
+            3 => Ok(FlowType::Vec3),
+            4 => Ok(FlowType::Vec4),
+            _ => Err(format!("invalid swizzle length: {}", components.len())),
+        },
 
         FlowExpr::Add(a, b) | FlowExpr::Sub(a, b) | FlowExpr::Mul(a, b) | FlowExpr::Div(a, b) => {
             let ta = infer_expr_type(a, type_map)?;

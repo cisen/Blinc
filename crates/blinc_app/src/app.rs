@@ -254,6 +254,11 @@ impl BlincApp {
         &mut self.ctx
     }
 
+    /// Update the current cursor position in physical pixels (for @flow pointer input)
+    pub fn set_cursor_position(&mut self, x: f32, y: f32) {
+        self.ctx.set_cursor_position(x, y);
+    }
+
     /// Set the current render target texture for blend mode two-pass compositing.
     pub fn set_blend_target(&mut self, texture: &wgpu::Texture) {
         self.ctx.set_blend_target(texture);

@@ -247,7 +247,8 @@ impl<'a> CodegenContext<'a> {
         let _ = writeln!(out, "    frame_index: f32,");
         let _ = writeln!(out, "    element_bounds: vec4<f32>,");
         let _ = writeln!(out, "    pointer: vec2<f32>,");
-        let _ = writeln!(out, "    _padding: vec2<f32>,");
+        let _ = writeln!(out, "    corner_radius: f32,");
+        let _ = writeln!(out, "    _padding: f32,");
 
         // Add CSS property inputs as uniforms
         for input in &self.graph.inputs {
@@ -767,25 +768,56 @@ impl<'a> CodegenContext<'a> {
             .iter()
             .find(|o| o.target == FlowOutputTarget::Color);
 
-        if let Some(co) = color_output {
+        // Get the color expression string
+        let color_expr = if let Some(co) = color_output {
             if let Some(expr) = &co.expr {
-                let expr_str = expr_to_wgsl(expr)?;
-                let _ = writeln!(out, "{}return {};", indent, expr_str);
+                expr_to_wgsl(expr)?
             } else {
-                // Bare name reference
-                let _ = writeln!(out, "{}return {};", indent, co.name);
+                co.name.clone()
             }
         } else if let Some(first) = self.graph.outputs.first() {
-            // Use the first output as color
             if let Some(expr) = &first.expr {
-                let expr_str = expr_to_wgsl(expr)?;
-                let _ = writeln!(out, "{}return {};", indent, expr_str);
+                expr_to_wgsl(expr)?
             } else {
-                let _ = writeln!(out, "{}return {};", indent, first.name);
+                first.name.clone()
             }
         } else {
-            let _ = writeln!(out, "{}return vec4<f32>(1.0, 0.0, 1.0, 1.0);", indent);
-        }
+            "vec4<f32>(1.0, 0.0, 1.0, 1.0)".to_string()
+        };
+
+        // Apply SDF rounded-rect clipping when corner_radius > 0
+        let _ = writeln!(out, "{}var flow_out = {};", indent, color_expr);
+        let _ = writeln!(out, "{}if (u.corner_radius > 0.0) {{", indent);
+        let _ = writeln!(out, "{}    let el_size = u.element_bounds.zw;", indent);
+        let _ = writeln!(out, "{}    let half = el_size * 0.5;", indent);
+        let _ = writeln!(
+            out,
+            "{}    let p = (in.uv - vec2<f32>(0.5, 0.5)) * el_size;",
+            indent
+        );
+        let _ = writeln!(
+            out,
+            "{}    let r = min(u.corner_radius, min(half.x, half.y));",
+            indent
+        );
+        let _ = writeln!(
+            out,
+            "{}    let q = abs(p) - half + vec2<f32>(r, r);",
+            indent
+        );
+        let _ = writeln!(
+            out,
+            "{}    let d = length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r;",
+            indent
+        );
+        let _ = writeln!(out, "{}    let aa = fwidth(d) * 0.75;", indent);
+        let _ = writeln!(
+            out,
+            "{}    flow_out.w = flow_out.w * smoothstep(aa, -aa, d);",
+            indent
+        );
+        let _ = writeln!(out, "{}}}", indent);
+        let _ = writeln!(out, "{}return flow_out;", indent);
 
         Ok(())
     }
@@ -909,6 +941,7 @@ fn func_to_wgsl(func: FlowFunc, args: &[String]) -> Result<String, FlowError> {
         FlowFunc::Normalize => format!("normalize({})", args[0]),
 
         FlowFunc::Pow => format!("pow({}, {})", args[0], args[1]),
+        FlowFunc::Atan2 => format!("atan2({}, {})", args[0], args[1]),
         FlowFunc::Mod => format!("({} % {})", args[0], args[1]),
         FlowFunc::Min => format!("min({}, {})", args[0], args[1]),
         FlowFunc::Max => format!("max({}, {})", args[0], args[1]),

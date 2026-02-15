@@ -3029,6 +3029,11 @@ impl WindowedApp {
                                 // Set blend target for mix-blend-mode support
                                 blinc_app.set_blend_target(&frame.texture);
 
+                                // Pass cursor position for @flow pointer input
+                                let (mx, my) = windowed_ctx.event_router.mouse_position();
+                                let sf = windowed_ctx.scale_factor as f32;
+                                blinc_app.set_cursor_position(mx * sf, my * sf);
+
                                 // Render with motion animations
                                 // Use physical pixel dimensions for the render surface
                                 let result = blinc_app.render_tree_with_motion(

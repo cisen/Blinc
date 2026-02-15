@@ -48,10 +48,7 @@ fn merge_scroll_clip(new_clip: [f32; 4], existing: Option<[f32; 4]>) -> Option<[
 
 /// Compute effective clip for elements that support only a single clip rect (text, SVG).
 /// Intersects primary clip and scroll clip so nested scroll containers are respected.
-fn effective_single_clip(
-    primary: Option<[f32; 4]>,
-    scroll: Option<[f32; 4]>,
-) -> Option<[f32; 4]> {
+fn effective_single_clip(primary: Option<[f32; 4]>, scroll: Option<[f32; 4]>) -> Option<[f32; 4]> {
     match (primary, scroll) {
         (Some(c), Some(s)) => Some(intersect_clip_rects(c, s)),
         (c, s) => c.or(s),
@@ -85,6 +82,8 @@ pub struct RenderContext {
     scratch_texts: Vec<TextElement>,
     scratch_svgs: Vec<SvgElement>,
     scratch_images: Vec<ImageElement>,
+    // Current cursor position in physical pixels (for @flow pointer input)
+    cursor_pos: [f32; 2],
 }
 
 struct CachedTexture {
@@ -260,6 +259,8 @@ struct FlowElement {
     height: f32,
     /// Z-layer for rendering order
     z_index: u32,
+    /// Corner radius in physical pixels
+    corner_radius: f32,
 }
 
 /// Debug bounds element for layout visualization
@@ -303,7 +304,13 @@ impl RenderContext {
             scratch_texts: Vec::with_capacity(64),    // Pre-allocate for text elements
             scratch_svgs: Vec::with_capacity(32),     // Pre-allocate for SVG elements
             scratch_images: Vec::with_capacity(32),   // Pre-allocate for image elements
+            cursor_pos: [0.0; 2],
         }
+    }
+
+    /// Update the current cursor position in physical pixels (for @flow pointer input)
+    pub fn set_cursor_position(&mut self, x: f32, y: f32) {
+        self.cursor_pos = [x, y];
     }
 
     /// Set the current render target texture for blend mode two-pass compositing.
@@ -2066,7 +2073,12 @@ impl RenderContext {
     fn collect_render_elements(
         &mut self,
         tree: &RenderTree,
-    ) -> (Vec<TextElement>, Vec<SvgElement>, Vec<ImageElement>, Vec<FlowElement>) {
+    ) -> (
+        Vec<TextElement>,
+        Vec<SvgElement>,
+        Vec<ImageElement>,
+        Vec<FlowElement>,
+    ) {
         self.collect_render_elements_with_state(tree, None)
     }
 
@@ -2075,7 +2087,12 @@ impl RenderContext {
         &mut self,
         tree: &RenderTree,
         render_state: Option<&blinc_layout::RenderState>,
-    ) -> (Vec<TextElement>, Vec<SvgElement>, Vec<ImageElement>, Vec<FlowElement>) {
+    ) -> (
+        Vec<TextElement>,
+        Vec<SvgElement>,
+        Vec<ImageElement>,
+        Vec<FlowElement>,
+    ) {
         // Reuse scratch buffers - take them, clear, populate, and return
         // On next call they'll be reallocated if not returned
         let mut texts = std::mem::take(&mut self.scratch_texts);
@@ -2349,12 +2366,20 @@ impl RenderContext {
                     // Keep them separate to avoid SDF radius clamping/morphing.
                     // Primary clip = this node's rounded clip (full card bounds).
                     // Scroll clip = parent's sharp clip intersected with any existing scroll clip.
-                    (Some(this_clip), this_clip_radius, merge_scroll_clip(parent_clip, current_scroll_clip))
+                    (
+                        Some(this_clip),
+                        this_clip_radius,
+                        merge_scroll_clip(parent_clip, current_scroll_clip),
+                    )
                 } else if !this_has_radius && parent_has_radius {
                     // This node is sharp (scroll), parent is rounded (card).
                     // Keep parent as primary rounded clip, this as scroll clip
                     // intersected with any existing scroll clip.
-                    (current_clip, current_clip_radius, merge_scroll_clip(this_clip, current_scroll_clip))
+                    (
+                        current_clip,
+                        current_clip_radius,
+                        merge_scroll_clip(this_clip, current_scroll_clip),
+                    )
                 } else {
                     // Both have same kind of radius — intersect normally.
                     let x1 = parent_clip[0].max(this_clip[0]);
@@ -3170,6 +3195,7 @@ impl RenderContext {
                     width: bounds.width * scale,
                     height: bounds.height * scale,
                     z_index: *z_layer,
+                    corner_radius: render_node.props.border_radius.top_left * scale,
                 });
             }
         }
@@ -3937,14 +3963,13 @@ impl RenderContext {
                             viewport_size: [width as f32, height as f32],
                             time: elapsed_secs,
                             frame_index: 0.0, // TODO: track frame counter
-                            element_bounds: [
-                                flow_el.x,
-                                flow_el.y,
-                                flow_el.width,
-                                flow_el.height,
+                            element_bounds: [flow_el.x, flow_el.y, flow_el.width, flow_el.height],
+                            pointer: [
+                                (self.cursor_pos[0] - flow_el.x) / flow_el.width.max(1.0),
+                                (self.cursor_pos[1] - flow_el.y) / flow_el.height.max(1.0),
                             ],
-                            pointer: [0.0, 0.0], // TODO: wire pointer from query system
-                            _padding: [0.0; 2],
+                            corner_radius: flow_el.corner_radius,
+                            _padding: 0.0,
                         };
 
                         let viewport = [flow_el.x, flow_el.y, flow_el.width, flow_el.height];

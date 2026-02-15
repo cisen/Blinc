@@ -211,6 +211,10 @@ pub enum FlowExpr {
     /// Negation: `-a`
     Neg(Box<FlowExpr>),
 
+    // Swizzle access
+    /// Component access: `expr.xy`, `expr.rgb`, etc.
+    Swizzle(Box<FlowExpr>, String),
+
     // Function calls (validated set — NOT arbitrary)
     /// Built-in function call
     Call { func: FlowFunc, args: Vec<FlowExpr> },
@@ -243,7 +247,7 @@ impl FlowExpr {
                 c.collect_refs(refs);
                 d.collect_refs(refs);
             }
-            Self::Neg(a) => a.collect_refs(refs),
+            Self::Neg(a) | Self::Swizzle(a, _) => a.collect_refs(refs),
             Self::Call { args, .. } => {
                 for arg in args {
                     arg.collect_refs(refs);
@@ -946,6 +950,16 @@ fn infer_expr_type(
 
         FlowExpr::Neg(a) => infer_expr_type(a, type_map),
 
+        FlowExpr::Swizzle(_expr, components) => {
+            match components.len() {
+                1 => Ok(FlowType::Float),
+                2 => Ok(FlowType::Vec2),
+                3 => Ok(FlowType::Vec3),
+                4 => Ok(FlowType::Vec4),
+                _ => Err(format!("invalid swizzle length: {}", components.len())),
+            }
+        }
+
         FlowExpr::Add(a, b) | FlowExpr::Sub(a, b) | FlowExpr::Mul(a, b) | FlowExpr::Div(a, b) => {
             let ta = infer_expr_type(a, type_map)?;
             let tb = infer_expr_type(b, type_map)?;
@@ -1000,7 +1014,7 @@ fn check_args_recursive(expr: &FlowExpr, node_name: &str, errors: &mut Vec<FlowE
             check_args_recursive(c, node_name, errors);
             check_args_recursive(d, node_name, errors);
         }
-        FlowExpr::Neg(a) => check_args_recursive(a, node_name, errors),
+        FlowExpr::Neg(a) | FlowExpr::Swizzle(a, _) => check_args_recursive(a, node_name, errors),
         _ => {}
     }
 }

@@ -248,6 +248,20 @@ struct SvgElement {
     transform_3d_layer: Option<Transform3DLayerInfo>,
 }
 
+/// Flow shader element — an element with `flow: <name>` that renders via a custom GPU pipeline
+#[derive(Clone)]
+struct FlowElement {
+    /// Name referencing a @flow DAG in the stylesheet
+    flow_name: String,
+    /// Bounds in physical pixels (DPI-scaled)
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    /// Z-layer for rendering order
+    z_index: u32,
+}
+
 /// Debug bounds element for layout visualization
 #[derive(Clone)]
 struct DebugBoundsElement {
@@ -343,8 +357,8 @@ impl RenderContext {
         // Take the batch from fg_ctx before reusing text_ctx for text elements
         let mut fg_batch = fg_ctx.take_batch();
 
-        // Collect text, SVG, and image elements
-        let (texts, svgs, images) = self.collect_render_elements(tree);
+        // Collect text, SVG, image, and flow elements
+        let (texts, svgs, images, _flows) = self.collect_render_elements(tree);
 
         // Pre-load all images into cache before rendering
         self.preload_images(&images, width as f32, height as f32);
@@ -2052,7 +2066,7 @@ impl RenderContext {
     fn collect_render_elements(
         &mut self,
         tree: &RenderTree,
-    ) -> (Vec<TextElement>, Vec<SvgElement>, Vec<ImageElement>) {
+    ) -> (Vec<TextElement>, Vec<SvgElement>, Vec<ImageElement>, Vec<FlowElement>) {
         self.collect_render_elements_with_state(tree, None)
     }
 
@@ -2061,12 +2075,13 @@ impl RenderContext {
         &mut self,
         tree: &RenderTree,
         render_state: Option<&blinc_layout::RenderState>,
-    ) -> (Vec<TextElement>, Vec<SvgElement>, Vec<ImageElement>) {
+    ) -> (Vec<TextElement>, Vec<SvgElement>, Vec<ImageElement>, Vec<FlowElement>) {
         // Reuse scratch buffers - take them, clear, populate, and return
         // On next call they'll be reallocated if not returned
         let mut texts = std::mem::take(&mut self.scratch_texts);
         let mut svgs = std::mem::take(&mut self.scratch_svgs);
         let mut images = std::mem::take(&mut self.scratch_images);
+        let mut flows = Vec::new();
         texts.clear();
         svgs.clear();
         images.clear();
@@ -2094,6 +2109,7 @@ impl RenderContext {
                 &mut texts,
                 &mut svgs,
                 &mut images,
+                &mut flows,
                 None, // No initial CSS transform
                 1.0,  // Initial inherited CSS opacity
                 None, // No parent node
@@ -2105,7 +2121,7 @@ impl RenderContext {
         // Sort texts by z_index (z_layer) to ensure correct rendering order with primitives
         texts.sort_by_key(|t| t.z_index);
 
-        (texts, svgs, images)
+        (texts, svgs, images, flows)
     }
 
     #[allow(clippy::too_many_arguments, clippy::only_used_in_recursion)]
@@ -2130,6 +2146,7 @@ impl RenderContext {
         texts: &mut Vec<TextElement>,
         svgs: &mut Vec<SvgElement>,
         images: &mut Vec<ImageElement>,
+        flows: &mut Vec<FlowElement>,
         // Accumulated CSS transform from ancestors as a 6-element affine [a,b,c,d,tx,ty]
         // in layout coordinates. Maps pre-transform coords to post-transform visual coords.
         inherited_css_affine: Option<[f32; 6]>,
@@ -3142,6 +3159,19 @@ impl RenderContext {
                     }
                 }
             }
+
+            // Collect flow element if this node has a @flow shader reference.
+            // Flow elements render via custom GPU pipelines instead of (or on top of) the SDF path.
+            if let Some(ref flow_name) = render_node.props.flow {
+                flows.push(FlowElement {
+                    flow_name: flow_name.clone(),
+                    x: abs_x * scale,
+                    y: abs_y * scale,
+                    width: bounds.width * scale,
+                    height: bounds.height * scale,
+                    z_index: *z_layer,
+                });
+            }
         }
 
         // Include scroll offset and motion offset when calculating child positions
@@ -3220,6 +3250,7 @@ impl RenderContext {
                 texts,
                 svgs,
                 images,
+                flows,
                 node_css_affine,
                 child_css_opacity,
                 Some(node), // pass current node as parent for children
@@ -3311,8 +3342,8 @@ impl RenderContext {
         // Take the batch (mutable so CSS-transformed text primitives can be added)
         let mut batch = ctx.take_batch();
 
-        // Collect text, SVG, and image elements WITH motion state
-        let (all_texts, all_svgs, all_images) =
+        // Collect text, SVG, image, and flow elements WITH motion state
+        let (all_texts, all_svgs, all_images, flow_elements) =
             self.collect_render_elements_with_state(tree, Some(render_state));
 
         // Partition elements into normal (no 3D ancestor) and 3D-layer groups.
@@ -3885,6 +3916,51 @@ impl RenderContext {
             }
         }
 
+        // Render @flow shader elements on top of their SDF base
+        if !flow_elements.is_empty() {
+            if let Some(stylesheet) = tree.stylesheet() {
+                // Use monotonic time for smooth animation
+                static START_TIME: std::sync::OnceLock<std::time::Instant> =
+                    std::sync::OnceLock::new();
+                let start = START_TIME.get_or_init(std::time::Instant::now);
+                let elapsed_secs = start.elapsed().as_secs_f32();
+
+                for flow_el in &flow_elements {
+                    if let Some(graph) = stylesheet.get_flow(&flow_el.flow_name) {
+                        // Compile on first use (no-op if already cached)
+                        if let Err(e) = self.renderer.flow_pipeline_cache().compile(graph) {
+                            tracing::warn!("@flow '{}' compile error: {}", flow_el.flow_name, e);
+                            continue;
+                        }
+
+                        let uniforms = blinc_gpu::FlowUniformData {
+                            viewport_size: [width as f32, height as f32],
+                            time: elapsed_secs,
+                            frame_index: 0.0, // TODO: track frame counter
+                            element_bounds: [
+                                flow_el.x,
+                                flow_el.y,
+                                flow_el.width,
+                                flow_el.height,
+                            ],
+                            pointer: [0.0, 0.0], // TODO: wire pointer from query system
+                            _padding: [0.0; 2],
+                        };
+
+                        let viewport = [flow_el.x, flow_el.y, flow_el.width, flow_el.height];
+                        if !self.renderer.render_flow(
+                            target,
+                            &flow_el.flow_name,
+                            &uniforms,
+                            Some(viewport),
+                        ) {
+                            tracing::warn!("@flow '{}' render failed", flow_el.flow_name);
+                        }
+                    }
+                }
+            }
+        }
+
         // Poll the device to free completed command buffers
         self.renderer.poll();
 
@@ -4096,8 +4172,8 @@ impl RenderContext {
         // Take the batch (mutable so CSS-transformed text primitives can be added)
         let mut batch = ctx.take_batch();
 
-        // Collect text, SVG, and image elements WITH motion state
-        let (texts, svgs, images) =
+        // Collect text, SVG, image, and flow elements WITH motion state
+        let (texts, svgs, images, _flows) =
             self.collect_render_elements_with_state(tree, Some(render_state));
 
         // Pre-load all images into cache before rendering

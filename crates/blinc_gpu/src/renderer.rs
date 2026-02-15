@@ -3141,12 +3141,14 @@ impl GpuRenderer {
     /// Render a @flow fragment shader into a target texture.
     ///
     /// Compiles the flow on first use, updates uniforms, and draws a fullscreen quad.
+    /// If `viewport` is Some([x, y, w, h]), the quad is scoped to that region in pixels.
     /// Returns false if the flow is not found or compilation failed.
     pub fn render_flow(
         &mut self,
         target: &wgpu::TextureView,
         flow_name: &str,
         uniforms: &crate::flow_pipeline::FlowUniformData,
+        viewport: Option<[f32; 4]>,
     ) -> bool {
         let bind_group =
             match self
@@ -3178,6 +3180,12 @@ impl GpuRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+
+            // Scope the flow quad to the element's bounds via viewport + scissor
+            if let Some([x, y, w, h]) = viewport {
+                pass.set_viewport(x, y, w, h, 0.0, 1.0);
+                pass.set_scissor_rect(x as u32, y as u32, w as u32, h as u32);
+            }
 
             self.flow_pipeline_cache
                 .render_fragment(&mut pass, flow_name, &bind_group);

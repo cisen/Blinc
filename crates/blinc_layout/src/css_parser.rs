@@ -2837,7 +2837,18 @@ fn parse_flow_input<'a>(
         let name = decl[..colon_pos].trim();
         let type_decl = decl[colon_pos + 1..].trim();
 
-        if type_decl.starts_with("buffer(") {
+        if type_decl.starts_with("builtin(") {
+            // builtin(var-name) — explicit builtin source
+            let inner = type_decl.strip_prefix("builtin(")?.strip_suffix(')')?;
+            if let Some(builtin) = blinc_core::flow::BuiltinVar::from_str(inner.trim()) {
+                let ty = builtin.output_type();
+                graph.inputs.push(FlowInput {
+                    name: name.to_string(),
+                    source: FlowInputSource::Builtin(builtin),
+                    ty: Some(ty),
+                });
+            }
+        } else if type_decl.starts_with("buffer(") {
             // buffer(name, type)
             let inner = type_decl.strip_prefix("buffer(")?.strip_suffix(')')?;
             let parts: Vec<&str> = inner.splitn(2, ',').collect();
@@ -2856,6 +2867,22 @@ fn parse_flow_input<'a>(
                     ty: Some(ty),
                 });
             }
+        } else if type_decl.starts_with("css(") {
+            // css(property-name)
+            let inner = type_decl.strip_prefix("css(")?.strip_suffix(')')?;
+            graph.inputs.push(FlowInput {
+                name: name.to_string(),
+                source: FlowInputSource::CssProperty(inner.trim().to_string()),
+                ty: Some(FlowType::Float),
+            });
+        } else if type_decl.starts_with("env(") {
+            // env(var-name)
+            let inner = type_decl.strip_prefix("env(")?.strip_suffix(')')?;
+            graph.inputs.push(FlowInput {
+                name: name.to_string(),
+                source: FlowInputSource::EnvVar(inner.trim().to_string()),
+                ty: Some(FlowType::Float),
+            });
         }
     } else {
         // Simple declaration: input name;
@@ -3112,6 +3139,40 @@ fn parse_flow_unary(input: &str) -> Result<(FlowExpr, &str), String> {
 
 /// Parse primary expressions: literals, refs, function calls, parens, vec constructors, colors
 fn parse_flow_primary(input: &str) -> Result<(FlowExpr, &str), String> {
+    let (expr, rest) = parse_flow_primary_inner(input)?;
+    // Check for swizzle access (.x, .xy, .rgb, etc.)
+    Ok(try_parse_flow_swizzle(expr, rest))
+}
+
+/// Check for and consume a swizzle suffix like `.x`, `.xy`, `.rgb`
+fn try_parse_flow_swizzle<'a>(expr: FlowExpr, rest: &'a str) -> (FlowExpr, &'a str) {
+    if !rest.starts_with('.') {
+        return (expr, rest);
+    }
+    let after_dot = &rest[1..];
+    let swizzle_end = after_dot
+        .find(|c: char| !matches!(c, 'x' | 'y' | 'z' | 'w' | 'r' | 'g' | 'b' | 'a'))
+        .unwrap_or(after_dot.len());
+    if swizzle_end == 0 || swizzle_end > 4 {
+        return (expr, rest);
+    }
+    // Make sure we're not accidentally consuming an identifier that starts with x/y/z/w
+    // e.g. "uv.xyz_thing" — 'xyz' is valid swizzle but '_thing' shouldn't be left
+    // Check that the character after the swizzle is not alphanumeric/underscore
+    if swizzle_end < after_dot.len() {
+        let next = after_dot.as_bytes()[swizzle_end];
+        if next.is_ascii_alphanumeric() || next == b'_' {
+            return (expr, rest);
+        }
+    }
+    let components = &after_dot[..swizzle_end];
+    (
+        FlowExpr::Swizzle(Box::new(expr), components.to_string()),
+        &after_dot[swizzle_end..],
+    )
+}
+
+fn parse_flow_primary_inner(input: &str) -> Result<(FlowExpr, &str), String> {
     let trimmed = input.trim_start();
 
     if trimmed.is_empty() {

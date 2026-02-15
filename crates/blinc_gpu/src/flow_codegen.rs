@@ -148,7 +148,7 @@ impl<'a> CodegenContext<'a> {
                 self.scan_expr_helpers(c);
                 self.scan_expr_helpers(d);
             }
-            FlowExpr::Neg(a) => self.scan_expr_helpers(a),
+            FlowExpr::Neg(a) | FlowExpr::Swizzle(a, _) => self.scan_expr_helpers(a),
             _ => {}
         }
     }
@@ -849,6 +849,11 @@ fn expr_to_wgsl(expr: &FlowExpr) -> Result<String, FlowError> {
         )),
 
         FlowExpr::Ref(name) => Ok(name.clone()),
+
+        FlowExpr::Swizzle(inner, components) => {
+            let inner_wgsl = expr_to_wgsl(inner)?;
+            Ok(format!("{}.{}", inner_wgsl, components))
+        }
 
         FlowExpr::Add(a, b) => {
             let a = expr_to_wgsl(a)?;

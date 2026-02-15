@@ -61,7 +61,9 @@ Rust code defines **structure**. CSS defines **style**.
 - [Form Styling](#form-styling)
 - [Length Units](#length-units)
 - [Error Handling](#error-handling)
+- [Scoped Style Macros](#scoped-style-macros)
 - [How It Works](#how-it-works)
+- [Property Comparison](#property-comparison)
 
 ---
 
@@ -1128,6 +1130,479 @@ for error in &result.errors {
 
 ---
 
+## Scoped Style Macros
+
+Blinc provides two compile-time macros — `css!` and `style!` — for building `ElementStyle` values directly in Rust. These are ideal for programmatic, scoped styling where you need dynamic values, conditional logic, or simply don't want a global stylesheet.
+
+Both macros produce the same `ElementStyle` type and support all the same properties. The difference is syntax:
+
+| | `css!` | `style!` |
+|---|---|---|
+| **Naming** | CSS hyphens (`border-radius`) | Rust underscores (`rounded`) |
+| **Separator** | Semicolons | Commas |
+| **Enum values** | Literal keywords (`position: absolute;`) | Rust expressions (`position: StylePosition::Absolute`) |
+| **Best for** | Developers from CSS/web | Rust-native code |
+
+### Quick Example
+
+```rust
+use blinc_layout::prelude::*;
+use blinc_core::Color;
+
+// CSS-style syntax
+let card = css! {
+    background: Color::WHITE;
+    border-radius: 12.0;
+    box-shadow: lg;
+    opacity: 0.95;
+    padding: 24.0;
+};
+
+// Equivalent Rust-style syntax
+let card = style! {
+    bg: Color::WHITE,
+    rounded: 12.0,
+    shadow_lg,
+    opacity: 0.95,
+    p: 24.0,
+};
+```
+
+Apply a macro style to a `Div` with `.style()`:
+
+```rust
+div().style(css! {
+    background: Color::rgb(0.1, 0.1, 0.15);
+    border-radius: 16.0;
+    padding: 20.0;
+})
+```
+
+### Visual Properties
+
+```rust
+// css! macro
+let s = css! {
+    background: Color::BLUE;
+    border-radius: 8.0;
+    box-shadow: md;                    // Presets: sm, md, lg, xl, none
+    box-shadow: my_shadow;             // Or a Shadow value
+    opacity: 0.8;
+    clip-path: my_clip_path;           // ClipPath value
+    filter: my_filter;                 // CssFilter value
+    mask-image: my_mask;               // MaskImage value
+    mask-mode: blinc_core::MaskMode::Alpha;
+    mix-blend-mode: blinc_core::BlendMode::Overlay;
+};
+
+// style! macro
+let s = style! {
+    bg: Color::BLUE,
+    rounded: 8.0,
+    shadow_md,                         // Presets as bare keywords
+    opacity: 0.8,
+    clip_path: my_clip_path,
+    filter: my_filter,
+    mask_image: my_mask,
+    mask_gradient: my_gradient,        // Gradient mask shorthand
+    mask_mode: blinc_core::MaskMode::Alpha,
+    mix_blend_mode: blinc_core::BlendMode::Overlay,
+};
+```
+
+#### Corner Radius Presets (style! only)
+
+```rust
+let s = style! {
+    rounded_sm,     // 2.0
+    rounded_md,     // 6.0
+    rounded_lg,     // 8.0
+    rounded_xl,     // 12.0
+    rounded_2xl,    // 16.0
+    rounded_full,   // 9999.0 (pill shape)
+    rounded_none,   // 0.0
+};
+
+// Per-corner control
+let s = style! {
+    rounded_corners: (12.0, 12.0, 0.0, 0.0),  // top-left, top-right, bottom-right, bottom-left
+};
+```
+
+#### Shadow Presets (style! only)
+
+```rust
+let s = style! { shadow_sm };   // Small, subtle shadow
+let s = style! { shadow_md };   // Medium (default card shadow)
+let s = style! { shadow_lg };   // Large, elevated
+let s = style! { shadow_xl };   // Extra large, floating
+let s = style! { shadow_none }; // Remove shadow
+```
+
+#### Opacity Presets (style! only)
+
+```rust
+let s = style! { opaque };      // 1.0
+let s = style! { translucent }; // 0.5
+let s = style! { transparent }; // 0.0
+```
+
+### Text Properties
+
+```rust
+// css! macro
+let s = css! {
+    color: Color::WHITE;
+    font-size: 16.0;
+    font-weight: FontWeight::Bold;
+    text-decoration: TextDecoration::Underline;
+    text-decoration-color: Color::RED;
+    text-decoration-thickness: 2.0;
+    line-height: 1.5;
+    text-align: center;                // Keywords: left, center, right
+    letter-spacing: 0.5;
+    text-shadow: my_shadow;
+    text-overflow: ellipsis;           // Keywords: clip, ellipsis
+    white-space: nowrap;               // Keywords: normal, nowrap, pre
+};
+
+// style! macro
+let s = style! {
+    text_color: Color::WHITE,
+    font_size: 16.0,
+    font_weight: FontWeight::Bold,
+    text_decoration: TextDecoration::Underline,
+    text_decoration_color: Color::RED,
+    text_decoration_thickness: 2.0,
+    line_height: 1.5,
+    text_align: TextAlign::Center,
+    letter_spacing: 0.5,
+    text_shadow: my_shadow,
+    text_overflow: TextOverflow::Ellipsis,
+    white_space: WhiteSpace::Nowrap,
+};
+```
+
+### Transforms
+
+```rust
+// css! macro — function syntax
+let s = css! {
+    transform: scale(1.05);
+    transform: scale(1.5, 0.8);       // Non-uniform
+    transform: translate(10.0, 20.0);
+    transform: rotate(45.0);
+    transform: skewX(15.0);
+    transform: skewY(10.0);
+    transform-origin: (50.0, 50.0);   // Percentages
+};
+
+// css! macro — expression syntax
+let s = css! {
+    transform: my_transform;          // A Transform value
+};
+
+// style! macro — dedicated properties
+let s = style! {
+    scale: 1.05,
+    scale_xy: (1.5, 0.8),
+    translate: (10.0, 20.0),
+    rotate_deg: 45.0,
+    skew_x: 15.0,
+    skew_y: 10.0,
+    transform_origin: (50.0, 50.0),
+};
+```
+
+### 3D Properties
+
+```rust
+// css! macro
+let s = css! {
+    rotate-x: 30.0;
+    rotate-y: 45.0;
+    perspective: 800.0;
+    translate-z: 20.0;
+    shape-3d: "sphere";
+    depth: 120.0;
+    light-direction: (0.0, -1.0, 0.5);
+    light-intensity: 1.5;
+    ambient: 0.3;
+    specular: 64.0;
+    3d-op: "subtract";
+    3d-blend: 30.0;
+};
+
+// style! macro
+let s = style! {
+    rotate_x: 30.0,
+    rotate_y: 45.0,
+    perspective: 800.0,
+    translate_z: 20.0,
+    shape_3d: "sphere",
+    depth: 120.0,
+    light_direction: (0.0, -1.0, 0.5),
+    light_intensity: 1.5,
+    ambient: 0.3,
+    specular: 64.0,
+    op_3d: "subtract",
+    blend_3d: 30.0,
+};
+```
+
+### Layout Properties
+
+```rust
+// css! macro
+let s = css! {
+    width: 300.0;
+    height: 200.0;
+    min-width: 100.0;
+    max-width: 600.0;
+    padding: 24.0;
+    margin: 16.0;
+    gap: 12.0;
+    display: flex;                     // flex | block | none
+    flex-direction: column;            // row | column | row-reverse | column-reverse
+    flex-wrap: wrap;
+    flex-grow: 1.0;
+    flex-shrink: 0.0;
+    align-items: center;              // center | start | end | stretch | baseline
+    justify-content: space-between;   // center | start | end | space-between | space-around | space-evenly
+    align-self: end;                  // center | start | end | stretch | baseline
+    overflow: clip;                    // clip | hidden | visible | scroll
+    overflow-x: scroll;
+    overflow-y: hidden;
+};
+
+// style! macro
+let s = style! {
+    w: 300.0,
+    h: 200.0,
+    min_w: 100.0,
+    max_w: 600.0,
+    p: 24.0,
+    p_xy: (16.0, 24.0),               // Horizontal, vertical
+    m: 16.0,
+    m_xy: (8.0, 16.0),
+    gap: 12.0,
+    flex_col,                          // Bare keyword presets
+    flex_wrap,
+    flex_grow,                         // Default = 1.0
+    flex_grow_value: 2.0,              // Specific value
+    flex_shrink_0,                     // flex-shrink: 0
+    flex_shrink: 0.5,                  // Specific value
+    items_center,
+    justify_between,
+    self_end,
+    overflow_clip,
+    overflow_x: StyleOverflow::Scroll,
+    overflow_y: StyleOverflow::Clip,
+    display_none,
+    display_block,
+};
+```
+
+### Position & Inset
+
+```rust
+// css! macro — keyword values
+let s = css! {
+    position: absolute;               // static | relative | absolute | fixed | sticky
+    top: 10.0;
+    right: 0.0;
+    bottom: 0.0;
+    left: 10.0;
+    inset: 0.0;                       // Sets all four sides
+    z-index: 5;
+    visibility: hidden;               // visible | hidden
+};
+
+// style! macro — expression values
+let s = style! {
+    position: StylePosition::Absolute,
+    top: 10.0,
+    inset: 0.0,
+    z_index: 5,
+    visibility: StyleVisibility::Hidden,
+};
+```
+
+### Border & Outline
+
+```rust
+// css! macro
+let s = css! {
+    border: (2.0, Color::RED);        // Shorthand (width, color)
+    border-width: 2.0;
+    border-color: Color::RED;
+    outline: (3.0, Color::BLUE);
+    outline-width: 3.0;
+    outline-color: Color::BLUE;
+    outline-offset: 4.0;
+};
+
+// style! macro
+let s = style! {
+    border: (2.0, Color::RED),
+    border_width: 2.0,
+    border_color: Color::RED,
+    outline: (3.0, Color::BLUE),
+    outline_width: 3.0,
+    outline_color: Color::BLUE,
+    outline_offset: 4.0,
+};
+```
+
+### Materials & Layers
+
+```rust
+// css! macro — keyword presets
+let s = css! {
+    backdrop-filter: glass;           // glass | metallic | chrome | gold | wood
+    render-layer: foreground;         // foreground | background
+};
+
+// style! macro — bare keyword presets
+let s = style! {
+    glass,                            // Also: metallic, chrome, gold, wood
+    foreground,
+};
+
+// Custom material via expression
+let s = style! {
+    material: my_material,
+    layer: my_layer,
+};
+```
+
+### Animation & Transition
+
+```rust
+// css! macro
+let s = css! {
+    animation: my_animation;           // CssAnimation value
+    animation-name: "pulse";
+    animation-duration: 2000;          // milliseconds
+    animation-delay: 100;
+    animation-timing-function: AnimationTiming::EaseInOut;
+    animation-iteration-count: 0;      // 0 = infinite
+    animation-direction: AnimationDirection::Alternate;
+    animation-fill-mode: AnimationFillMode::Forwards;
+    transition: my_transition;         // CssTransitionSet value
+};
+
+// style! macro
+let s = style! {
+    animation: my_animation,
+    animation_name: "pulse",
+    animation_duration: 2000,
+    transition: my_transition,
+};
+```
+
+### SVG Properties
+
+```rust
+// css! macro
+let s = css! {
+    fill: Color::RED;
+    stroke: Color::BLUE;
+    stroke-width: 2.0;
+    stroke-dasharray: vec![5.0, 3.0];
+    stroke-dashoffset: 10.0;
+};
+
+// style! macro
+let s = style! {
+    fill: Color::RED,
+    stroke: Color::BLUE,
+    stroke_width: 2.0,
+    stroke_dasharray: vec![5.0, 3.0],
+    stroke_dashoffset: 10.0,
+    svg_path_data: "M10,80 L50,20 L90,80",
+};
+```
+
+### Form & Interaction Properties
+
+```rust
+// css! macro
+let s = css! {
+    caret-color: Color::rgb(0.4, 0.6, 1.0);
+    selection-color: Color::BLUE;
+    placeholder-color: Color::rgba(1.0, 1.0, 1.0, 0.5);
+    accent-color: Color::GREEN;
+    scrollbar-color: (Color::rgb(0.5, 0.5, 0.5), Color::rgb(0.2, 0.2, 0.2));
+    scrollbar-width: thin;            // auto | thin | none
+    pointer-events: none;             // auto | none
+    cursor: CursorStyle::Pointer;
+};
+
+// style! macro
+let s = style! {
+    caret_color: Color::rgb(0.4, 0.6, 1.0),
+    accent_color: Color::GREEN,
+    scrollbar_color: (Color::rgb(0.5, 0.5, 0.5), Color::rgb(0.2, 0.2, 0.2)),
+    scrollbar_width: ScrollbarWidth::Thin,
+    pointer_events_none,              // Preset keyword
+    cursor: CursorStyle::Pointer,
+};
+```
+
+### Image Properties
+
+```rust
+// css! macro (0=cover, 1=contain, 2=fill, 3=scale-down, 4=none)
+let s = css! {
+    object-fit: 1;
+    object-position: (0.5, 0.0);     // x, y in 0.0-1.0 range
+};
+
+// style! macro
+let s = style! {
+    object_fit: 1,
+    object_position: (0.5, 0.0),
+};
+```
+
+### Conditional & Dynamic Styling
+
+The macros shine when combined with Rust control flow:
+
+```rust
+fn card_style(is_selected: bool, scale: f32) -> ElementStyle {
+    let mut s = css! {
+        background: Color::WHITE;
+        border-radius: 12.0;
+        padding: 16.0;
+    };
+
+    if is_selected {
+        s = s.merge(&css! {
+            border: (2.0, Color::BLUE);
+            box-shadow: lg;
+        });
+    }
+
+    // Dynamic transform
+    s = s.scale(scale);
+    s
+}
+```
+
+### When to Use Each Approach
+
+| Approach | Best For |
+|----------|----------|
+| **Global CSS** (`ctx.add_css()`) | Shared styles, hover/focus states, animations, selectors |
+| **`css!` / `style!` macros** | Scoped styles, dynamic values, conditional logic |
+| **Builder API** (`.w()`, `.bg()`) | One-off overrides, inline on `Div` builders |
+
+The three approaches compose naturally — CSS provides base styles, macros add scoped overrides, and builder methods fine-tune individual elements.
+
+---
+
 ## How It Works
 
 Understanding the CSS pipeline helps debug styling issues.
@@ -1182,17 +1657,24 @@ Rules follow CSS specificity, applied in order:
 
 ---
 
-## Comparison with Builder API
+## Property Comparison
 
-| CSS | Builder API |
-|-----|-------------|
-| `background: #3498db;` | `.bg(Color::hex("#3498db"))` |
-| `border-radius: 8px;` | `.rounded(8.0)` |
-| `transform: scale(1.02);` | `.scale(1.02)` |
-| `opacity: 0.8;` | `.opacity(0.8)` |
-| `width: 200px;` | `.w(200.0)` |
-| `padding: 16px;` | `.p(16.0)` |
-| `gap: 12px;` | `.gap(12.0)` |
-| `flex-direction: column;` | `.flex_col()` |
+The same property expressed across all three approaches:
 
-Both approaches can be combined — use CSS for base styles and the builder API for dynamic values.
+| Global CSS | `css!` macro | `style!` macro | Builder API |
+| --- | --- | --- | --- |
+| `background: #3498db;` | `background: Color::hex(0x3498db);` | `bg: Color::hex(0x3498db),` | `.bg(Color::hex(0x3498db))` |
+| `border-radius: 8px;` | `border-radius: 8.0;` | `rounded: 8.0,` | `.rounded(8.0)` |
+| `transform: scale(1.02);` | `transform: scale(1.02);` | `scale: 1.02,` | `.scale(1.02)` |
+| `opacity: 0.8;` | `opacity: 0.8;` | `opacity: 0.8,` | `.opacity(0.8)` |
+| `width: 200px;` | `width: 200.0;` | `w: 200.0,` | `.w(200.0)` |
+| `padding: 16px;` | `padding: 16.0;` | `p: 16.0,` | `.p(16.0)` |
+| `gap: 12px;` | `gap: 12.0;` | `gap: 12.0,` | `.gap(12.0)` |
+| `flex-direction: column;` | `flex-direction: column;` | `flex_col,` | `.flex_col()` |
+| `color: #fff;` | `color: Color::WHITE;` | `text_color: Color::WHITE,` | `.text_color(Color::WHITE)` |
+| `font-size: 16px;` | `font-size: 16.0;` | `font_size: 16.0,` | `.font_size(16.0)` |
+| `position: absolute;` | `position: absolute;` | `position: StylePosition::Absolute,` | `.position(StylePosition::Absolute)` |
+| `fill: red;` | `fill: Color::RED;` | `fill: Color::RED,` | `.fill(Color::RED)` |
+| `pointer-events: none;` | `pointer-events: none;` | `pointer_events_none,` | `.pointer_events_none()` |
+
+All three approaches can be combined — CSS provides base styles, macros add scoped overrides, and builder methods fine-tune individual elements.

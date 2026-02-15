@@ -7863,6 +7863,111 @@ impl RenderTree {
         any_applied
     }
 
+    /// Evaluate dynamic `calc(env(...))` properties for pointer-tracked elements.
+    ///
+    /// Called per-frame after `apply_stylesheet_state_styles()` and before rendering.
+    /// For each element in the pointer query, collects dynamic properties from the
+    /// active stylesheet entries (base + hover/active/focus) and evaluates them with
+    /// the current pointer state, writing results directly to RenderProps.
+    pub fn apply_pointer_styles(
+        &mut self,
+        pointer_query: &crate::pointer_query::PointerQueryState,
+        router: &crate::event_router::EventRouter,
+    ) {
+        let stylesheet = match &self.stylesheet {
+            Some(s) => s.clone(),
+            None => return,
+        };
+
+        for (element_id, pointer_state) in pointer_query.iter() {
+            let node_id = match self.element_registry.get(element_id) {
+                Some(id) => id,
+                None => continue,
+            };
+
+            // Build CalcContext with pointer env vars
+            let mut ctx = crate::calc::CalcContext::default();
+            for name in &[
+                "pointer-x",
+                "pointer-y",
+                "pointer-vx",
+                "pointer-vy",
+                "pointer-speed",
+                "pointer-distance",
+                "pointer-angle",
+                "pointer-inside",
+                "pointer-active",
+                "pointer-hover-duration",
+            ] {
+                if let Some(val) = pointer_state.resolve_env(name) {
+                    ctx.env_vars.insert(name.to_string(), val);
+                }
+            }
+
+            // Collect dynamic properties from applicable stylesheet entries
+            // (base first, then state overrides in precedence order)
+            let mut dynamic_props: Vec<&crate::element_style::DynamicProperty> = Vec::new();
+
+            // Base style
+            if let Some(base) = stylesheet.get(element_id) {
+                if let Some(ref dps) = base.dynamic_properties {
+                    dynamic_props.extend(dps.iter());
+                }
+            }
+
+            // Hover state (overrides base)
+            if router.is_hovered(node_id) {
+                if let Some(hover) = stylesheet.get_with_state(element_id, ElementState::Hover) {
+                    if let Some(ref dps) = hover.dynamic_properties {
+                        dynamic_props.extend(dps.iter());
+                    }
+                }
+            }
+
+            // Active/pressed state (overrides hover)
+            if router.is_pressed(node_id) {
+                if let Some(active) = stylesheet.get_with_state(element_id, ElementState::Active) {
+                    if let Some(ref dps) = active.dynamic_properties {
+                        dynamic_props.extend(dps.iter());
+                    }
+                }
+            }
+
+            // Focus state
+            if router.is_focused(node_id) {
+                if let Some(focus) = stylesheet.get_with_state(element_id, ElementState::Focus) {
+                    if let Some(ref dps) = focus.dynamic_properties {
+                        dynamic_props.extend(dps.iter());
+                    }
+                }
+            }
+
+            if dynamic_props.is_empty() {
+                continue;
+            }
+
+            // Evaluate and apply to RenderProps
+            if let Some(render_node) = self.render_nodes.get_mut(&node_id) {
+                // If any dynamic properties are transform-related (SkewX, SkewY, Rotate, etc.),
+                // reset props.transform to its base value first to prevent frame-compounding.
+                // Without this, compose_affine() would accumulate onto the previous frame's
+                // dynamic transform, causing exponential growth.
+                let has_transform_dynamics = dynamic_props.iter().any(|dp| dp.is_transform());
+                if has_transform_dynamics {
+                    let base_transform = self
+                        .base_styles
+                        .get(&node_id)
+                        .and_then(|base| base.transform.clone());
+                    render_node.props.transform = base_transform;
+                }
+
+                for dp in &dynamic_props {
+                    dp.apply(&mut render_node.props, &ctx);
+                }
+            }
+        }
+    }
+
     /// Rebuild only the children of a specific node
     ///
     /// This is used for incremental updates when a stateful element's
@@ -8876,9 +8981,12 @@ impl RenderTree {
             render_node.props.layer
         };
 
-        // Push layer if this node has partial opacity OR layer effects
-        // Children inside the layer automatically inherit the opacity via GPU composition
-        // Layer effects (blur, drop shadow, glow, color matrix) are applied when layer is composited
+        // Push layer if this node has partial opacity OR layer effects OR 3D CSS transform.
+        // Children inside the layer automatically inherit the opacity via GPU composition.
+        // Layer effects (blur, drop shadow, glow, color matrix) are applied when layer is composited.
+        // 3D CSS transforms (rotate-x/rotate-y) use layer-based compositing: the entire subtree
+        // (including text) renders flat to a texture, then the texture is composited with perspective
+        // distortion. This ensures ALL children visually transform with the parent.
         // IMPORTANT: Only push layer when element's layer matches current target to avoid duplicate
         // layer commands across multiple render passes
         let has_layer_effects = !render_node.props.layer_effects.is_empty();
@@ -8887,7 +8995,14 @@ impl RenderTree {
             .mix_blend_mode
             .unwrap_or(BlendMode::Normal);
         let has_blend_mode = node_blend_mode != BlendMode::Normal;
-        let has_opacity_layer = node_motion_opacity < 1.0 || has_layer_effects || has_blend_mode;
+        // Detect 3D CSS transform (rotate-x/rotate-y on a FLAT container, not a 3D SDF shape)
+        let has_3d_css_transform =
+            render_node.props.rotate_x.is_some() || render_node.props.rotate_y.is_some();
+        let has_3d_shape =
+            render_node.props.depth.unwrap_or(0.0) > 0.0 || render_node.props.shape_3d.is_some();
+        let use_3d_layer = has_3d_css_transform && !has_3d_shape;
+        let has_opacity_layer =
+            node_motion_opacity < 1.0 || has_layer_effects || has_blend_mode || use_3d_layer;
         let should_push_layer = has_opacity_layer && effective_layer == target_layer;
         if should_push_layer {
             // Scale layer effect radii by DPI factor (CSS px → physical px)
@@ -8916,6 +9031,21 @@ impl RenderTree {
                     other => other.clone(),
                 })
                 .collect();
+            // Build 3D transform params for layer compositing
+            let transform_3d = if use_3d_layer {
+                let rx = render_node.props.rotate_x.unwrap_or(0.0).to_radians();
+                let ry = render_node.props.rotate_y.unwrap_or(0.0).to_radians();
+                let d = render_node.props.perspective.unwrap_or(800.0);
+                Some(blinc_core::Transform3DParams {
+                    sin_rx: rx.sin(),
+                    cos_rx: rx.cos(),
+                    sin_ry: ry.sin(),
+                    cos_ry: ry.cos(),
+                    perspective_d: d * self.scale_factor,
+                })
+            } else {
+                None
+            };
             ctx.push_layer(LayerConfig {
                 id: None,
                 position: Some(blinc_core::Point::new(bounds.x, bounds.y)),
@@ -8924,6 +9054,7 @@ impl RenderTree {
                 opacity: node_motion_opacity,
                 depth: false,
                 effects: scaled_effects,
+                transform_3d,
             });
         }
 
@@ -8985,7 +9116,9 @@ impl RenderTree {
             //     eprintln!("  >>> Canvas layer MATCHES - will invoke callback");
             // }
         }
-        // Set up 3D transform params on the paint context if this element has any
+        // Set up 3D transform params on the paint context if this element has any.
+        // When use_3d_layer is true, 3D CSS rotation is handled by layer compositing
+        // (perspective distortion applied to the blit quad), NOT per-primitive.
         let has_3d = render_node.props.rotate_x.is_some()
             || render_node.props.rotate_y.is_some()
             || render_node.props.perspective.is_some()
@@ -8993,7 +9126,7 @@ impl RenderTree {
             || render_node.props.translate_z.is_some()
             || render_node.props.shape_3d.is_some();
 
-        if has_3d {
+        if has_3d && !use_3d_layer {
             let rx = render_node.props.rotate_x.unwrap_or(0.0).to_radians();
             let ry = render_node.props.rotate_y.unwrap_or(0.0).to_radians();
             let d = render_node.props.perspective.unwrap_or(800.0);
@@ -10127,11 +10260,17 @@ impl RenderTree {
         self.layout_tree.get_bounds(node, (0.0, 0.0))
     }
 
-    /// Get absolute bounds for a node (traversing up the tree)
+    /// Get absolute bounds for a node (traversing up the tree, accounting for scroll)
     pub fn get_absolute_bounds(&self, node: LayoutNodeId) -> Option<ElementBounds> {
-        // For now, just return bounds from root (0,0)
-        // A more complete implementation would track parent offsets
-        self.layout_tree.get_bounds(node, (0.0, 0.0))
+        let mut bounds = self.layout_tree.get_absolute_bounds(node)?;
+        // Walk up ancestors and apply scroll offsets from scroll containers
+        for ancestor in self.layout_tree.ancestors(node) {
+            if let Some(&(sx, sy)) = self.scroll_offsets.get(&ancestor) {
+                bounds.x += sx;
+                bounds.y += sy;
+            }
+        }
+        Some(bounds)
     }
 
     /// Get render node data

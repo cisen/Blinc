@@ -904,6 +904,20 @@ impl LayerEffect {
 // Layer Configuration
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// 3D perspective transform parameters for layer-based compositing.
+/// When a container has CSS rotate-x/rotate-y, its entire subtree (including text)
+/// is rendered flat to a layer texture, then the layer is composited with perspective
+/// distortion applied to the blit quad.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Transform3DParams {
+    pub sin_rx: f32,
+    pub cos_rx: f32,
+    pub sin_ry: f32,
+    pub cos_ry: f32,
+    /// Perspective distance in physical pixels (already DPI-scaled)
+    pub perspective_d: f32,
+}
+
 /// Configuration for offscreen layers
 #[derive(Clone, Debug, Default)]
 pub struct LayerConfig {
@@ -921,6 +935,8 @@ pub struct LayerConfig {
     pub depth: bool,
     /// Post-processing effects to apply when layer is composited
     pub effects: Vec<LayerEffect>,
+    /// 3D perspective transform for layer compositing (rotate-x/rotate-y on containers)
+    pub transform_3d: Option<Transform3DParams>,
 }
 
 impl LayerConfig {

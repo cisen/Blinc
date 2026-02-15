@@ -2974,8 +2974,14 @@ struct LayerUniforms {
     clip_radius: vec4<f32>,
     // Clip type: 0=none, 1=rect with optional rounded corners
     clip_type: u32,
+    // 3D perspective transform (0 = disabled)
+    perspective_d: f32,
+    sin_rx: f32,
+    cos_rx: f32,
+    sin_ry: f32,
+    cos_ry: f32,
     // Padding
-    _pad: vec3<f32>,
+    _pad: vec2<f32>,
 }
 
 @group(0) @binding(0) var<uniform> uniforms: LayerUniforms;
@@ -3036,19 +3042,56 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 
     let local_pos = positions[vertex_index];
 
-    // Map to destination rectangle in viewport space
-    let dest_pos = uniforms.dest_rect.xy + local_pos * uniforms.dest_rect.zw;
-
-    // Convert to normalized device coordinates (-1 to 1)
-    let ndc = (dest_pos / uniforms.viewport_size) * 2.0 - 1.0;
-
     // Map to source rectangle UV
     let uv = uniforms.source_rect.xy + local_pos * uniforms.source_rect.zw;
 
     var out: VertexOutput;
-    out.position = vec4<f32>(ndc.x, -ndc.y, 0.0, 1.0);  // Flip Y for wgpu
+
+    if (uniforms.perspective_d > 0.0) {
+        // 3D perspective compositing: distort quad with perspective projection.
+        // The layer was rendered flat; we now apply rotate-x/rotate-y to the composite.
+        let center = uniforms.dest_rect.xy + uniforms.dest_rect.zw * 0.5;
+        let half = uniforms.dest_rect.zw * 0.5;
+
+        // Local position relative to center (in pixels)
+        var p = vec3<f32>(
+            (local_pos.x - 0.5) * 2.0 * half.x,
+            (local_pos.y - 0.5) * 2.0 * half.y,
+            0.0
+        );
+
+        // Rotate around Y axis
+        let ry_x = p.x * uniforms.cos_ry - p.z * uniforms.sin_ry;
+        let ry_z = p.x * uniforms.sin_ry + p.z * uniforms.cos_ry;
+        p.x = ry_x;
+        p.z = ry_z;
+
+        // Rotate around X axis
+        let rx_y = p.y * uniforms.cos_rx - p.z * uniforms.sin_rx;
+        let rx_z = p.y * uniforms.sin_rx + p.z * uniforms.cos_rx;
+        p.y = rx_y;
+        p.z = rx_z;
+
+        // Perspective projection
+        let d = uniforms.perspective_d;
+        let w = (d + p.z) / d;
+        let screen = center + p.xy / w;
+
+        // Convert to NDC
+        let ndc = (screen / uniforms.viewport_size) * 2.0 - 1.0;
+
+        // Output with perspective w for correct UV interpolation
+        out.position = vec4<f32>(ndc.x * w, -ndc.y * w, 0.0, w);
+        out.frag_pos = screen;
+    } else {
+        // Standard flat compositing (no perspective)
+        let dest_pos = uniforms.dest_rect.xy + local_pos * uniforms.dest_rect.zw;
+        let ndc = (dest_pos / uniforms.viewport_size) * 2.0 - 1.0;
+        out.position = vec4<f32>(ndc.x, -ndc.y, 0.0, 1.0);
+        out.frag_pos = dest_pos;
+    }
+
     out.uv = uv;
-    out.frag_pos = dest_pos;  // Pass fragment position in viewport pixels
     return out;
 }
 

@@ -238,6 +238,47 @@ impl LayoutTree {
             .map(|layout| ElementBounds::from_layout(layout, parent_offset))
     }
 
+    /// Get absolute bounds by walking up the taffy parent chain to accumulate offsets.
+    pub fn get_absolute_bounds(&self, id: LayoutNodeId) -> Option<ElementBounds> {
+        let &taffy_node = self.node_map.get(id)?;
+        let layout = self.taffy.layout(taffy_node).ok()?;
+
+        // Walk up parent chain to accumulate absolute offset
+        let mut offset_x = 0.0f32;
+        let mut offset_y = 0.0f32;
+        let mut current = taffy_node;
+        while let Some(parent) = self.taffy.parent(current) {
+            if let Ok(parent_layout) = self.taffy.layout(parent) {
+                offset_x += parent_layout.location.x;
+                offset_y += parent_layout.location.y;
+            }
+            current = parent;
+        }
+
+        Some(ElementBounds {
+            x: offset_x + layout.location.x,
+            y: offset_y + layout.location.y,
+            width: layout.size.width,
+            height: layout.size.height,
+        })
+    }
+
+    /// Iterate over ancestors of a node (parent, grandparent, ...) as LayoutNodeIds.
+    pub fn ancestors(&self, id: LayoutNodeId) -> Vec<LayoutNodeId> {
+        let mut result = Vec::new();
+        let Some(&taffy_node) = self.node_map.get(id) else {
+            return result;
+        };
+        let mut current = taffy_node;
+        while let Some(parent) = self.taffy.parent(current) {
+            if let Some(&layout_id) = self.reverse_map.get(&parent) {
+                result.push(layout_id);
+            }
+            current = parent;
+        }
+        result
+    }
+
     /// Get the content size for a scrollable node
     ///
     /// Returns (content_width, content_height) representing the total size of all content

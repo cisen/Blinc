@@ -806,6 +806,8 @@ pub struct GpuRenderer {
     bind_group_layouts: BindGroupLayouts,
     /// Current viewport size
     viewport_size: (u32, u32),
+    /// Saved viewport size during offscreen rendering (for restore_viewport)
+    saved_viewport_size: Option<(u32, u32)>,
     /// Renderer configuration
     config: RendererConfig,
     /// Current frame time (for animations)
@@ -1412,6 +1414,7 @@ impl GpuRenderer {
             bind_groups,
             bind_group_layouts,
             viewport_size,
+            saved_viewport_size: None,
             config,
             time: 0.0,
             texture_format,
@@ -3164,10 +3167,12 @@ impl GpuRenderer {
         // This prevents memory bloat from accumulated large textures
         self.layer_texture_cache.evict_oversized();
 
-        // Check if we have layer commands with effects or blend modes that need processing
+        // Check if we have layer commands with effects, blend modes, or 3D transforms
         let has_layer_effects = batch.layer_commands.iter().any(|entry| {
             if let crate::primitives::LayerCommand::Push { config } = &entry.command {
-                !config.effects.is_empty() || config.blend_mode != blinc_core::BlendMode::Normal
+                !config.effects.is_empty()
+                    || config.blend_mode != blinc_core::BlendMode::Normal
+                    || config.transform_3d.is_some()
             } else {
                 false
             }
@@ -3328,6 +3333,7 @@ impl GpuRenderer {
                     if let Some((start_idx, config)) = layer_stack.pop() {
                         if !config.effects.is_empty()
                             || config.blend_mode != blinc_core::BlendMode::Normal
+                            || config.transform_3d.is_some()
                         {
                             effect_layers.push((start_idx, entry.primitive_index, config));
                         }
@@ -3455,6 +3461,7 @@ impl GpuRenderer {
                     config.opacity,
                     config.blend_mode,
                     layer_clip,
+                    config.transform_3d,
                 );
                 self.layer_texture_cache.release(layer_texture);
             } else {
@@ -3473,6 +3480,7 @@ impl GpuRenderer {
                     config.opacity,
                     config.blend_mode,
                     layer_clip,
+                    config.transform_3d,
                 );
                 self.layer_texture_cache.release(effected);
             }
@@ -4675,6 +4683,7 @@ impl GpuRenderer {
                     if let Some((start_idx, config)) = layer_stack.pop() {
                         if !config.effects.is_empty()
                             || config.blend_mode != blinc_core::BlendMode::Normal
+                            || config.transform_3d.is_some()
                         {
                             effect_layers.push((start_idx, entry.primitive_index, config));
                         }
@@ -4784,6 +4793,7 @@ impl GpuRenderer {
                     config.opacity,
                     config.blend_mode,
                     layer_clip,
+                    config.transform_3d,
                 );
                 self.layer_texture_cache.release(layer_texture);
             } else {
@@ -4800,6 +4810,7 @@ impl GpuRenderer {
                     config.opacity,
                     config.blend_mode,
                     layer_clip,
+                    config.transform_3d,
                 );
                 self.layer_texture_cache.release(effected);
             }
@@ -7393,7 +7404,7 @@ impl GpuRenderer {
 
     /// Blit a tight texture to the target at the correct position
     #[allow(clippy::too_many_arguments)]
-    fn blit_tight_texture_to_target(
+    pub fn blit_tight_texture_to_target(
         &mut self,
         source: &wgpu::TextureView,
         source_size: (u32, u32),
@@ -7403,18 +7414,53 @@ impl GpuRenderer {
         opacity: f32,
         blend_mode: blinc_core::BlendMode,
         clip: Option<([f32; 4], [f32; 4])>, // (clip_bounds, clip_radius)
+        transform_3d: Option<blinc_core::Transform3DParams>,
     ) {
         use crate::primitives::LayerCompositeUniforms;
 
         let vp_w = self.viewport_size.0 as f32;
         let vp_h = self.viewport_size.1 as f32;
 
+        // For 3D perspective transforms, compute the expanded bounding box of the
+        // perspective-distorted quad corners so the scissor rect is large enough.
+        let (effective_dest_pos, effective_dest_size) = if let Some(ref t3d) = transform_3d {
+            let cx = dest_pos.0 + dest_size.0 * 0.5;
+            let cy = dest_pos.1 + dest_size.1 * 0.5;
+            let hw = dest_size.0 * 0.5;
+            let hh = dest_size.1 * 0.5;
+            // Project all 4 corners through perspective and find AABB
+            let corners = [(-hw, -hh), (hw, -hh), (-hw, hh), (hw, hh)];
+            let mut min_x = f32::MAX;
+            let mut min_y = f32::MAX;
+            let mut max_x = f32::MIN;
+            let mut max_y = f32::MIN;
+            for (lx, ly) in corners {
+                // Rotate Y
+                let ry_x = lx * t3d.cos_ry;
+                let ry_z = lx * t3d.sin_ry;
+                // Rotate X
+                let rx_y = ly * t3d.cos_rx - ry_z * t3d.sin_rx;
+                let rx_z = ly * t3d.sin_rx + ry_z * t3d.cos_rx;
+                // Perspective
+                let w = (t3d.perspective_d + rx_z) / t3d.perspective_d;
+                let sx = cx + ry_x / w;
+                let sy = cy + rx_y / w;
+                min_x = min_x.min(sx);
+                min_y = min_y.min(sy);
+                max_x = max_x.max(sx);
+                max_y = max_y.max(sy);
+            }
+            ((min_x, min_y), (max_x - min_x, max_y - min_y))
+        } else {
+            (dest_pos, dest_size)
+        };
+
         // Calculate the visible region by intersecting dest rect with viewport and clip bounds
-        // Start with destination rect
-        let mut vis_x0 = dest_pos.0;
-        let mut vis_y0 = dest_pos.1;
-        let mut vis_x1 = dest_pos.0 + dest_size.0;
-        let mut vis_y1 = dest_pos.1 + dest_size.1;
+        // Start with destination rect (possibly expanded for 3D)
+        let mut vis_x0 = effective_dest_pos.0;
+        let mut vis_y0 = effective_dest_pos.1;
+        let mut vis_x1 = effective_dest_pos.0 + effective_dest_size.0;
+        let mut vis_y1 = effective_dest_pos.1 + effective_dest_size.1;
 
         // Intersect with viewport
         vis_x0 = vis_x0.max(0.0);
@@ -7442,30 +7488,54 @@ impl GpuRenderer {
             return; // Nothing visible, skip rendering
         }
 
-        // Calculate source rect based on what portion is visible
-        // Map visible region back to source texture coordinates
-        let src_total_w = dest_size.0 / source_size.0 as f32;
-        let src_total_h = dest_size.1 / source_size.1 as f32;
+        // For 3D perspective, the shader handles UV mapping via the full dest_rect/source_rect;
+        // we just need the scissor to be large enough. Use the full source rect.
+        let (source_rect, dest_rect) = if transform_3d.is_some() {
+            // Full source rect, original dest rect (shader applies perspective)
+            let src_total_w = dest_size.0 / source_size.0 as f32;
+            let src_total_h = dest_size.1 / source_size.1 as f32;
+            (
+                [0.0, 0.0, src_total_w.min(1.0), src_total_h.min(1.0)],
+                [dest_pos.0, dest_pos.1, dest_size.0, dest_size.1],
+            )
+        } else {
+            // Calculate source rect based on what portion is visible
+            // Map visible region back to source texture coordinates
+            let src_total_w = dest_size.0 / source_size.0 as f32;
+            let src_total_h = dest_size.1 / source_size.1 as f32;
 
-        // Calculate what portion of the dest rect is visible
-        let vis_offset_x = vis_x0 - dest_pos.0;
-        let vis_offset_y = vis_y0 - dest_pos.1;
+            // Calculate what portion of the dest rect is visible
+            let vis_offset_x = vis_x0 - dest_pos.0;
+            let vis_offset_y = vis_y0 - dest_pos.1;
 
-        // Map to source texture coordinates
-        let src_x0 = (vis_offset_x / dest_size.0) * src_total_w;
-        let src_y0 = (vis_offset_y / dest_size.1) * src_total_h;
-        let src_w = (vis_w / dest_size.0) * src_total_w;
-        let src_h = (vis_h / dest_size.1) * src_total_h;
+            // Map to source texture coordinates
+            let src_x0 = (vis_offset_x / dest_size.0) * src_total_w;
+            let src_y0 = (vis_offset_y / dest_size.1) * src_total_h;
+            let src_w = (vis_w / dest_size.0) * src_total_w;
+            let src_h = (vis_h / dest_size.1) * src_total_h;
 
-        let source_rect = [
-            src_x0.min(1.0),
-            src_y0.min(1.0),
-            src_w.min(1.0),
-            src_h.min(1.0),
-        ];
+            (
+                [
+                    src_x0.min(1.0),
+                    src_y0.min(1.0),
+                    src_w.min(1.0),
+                    src_h.min(1.0),
+                ],
+                [vis_x0, vis_y0, vis_w, vis_h],
+            )
+        };
 
-        // Dest rect is now the visible region
-        let dest_rect = [vis_x0, vis_y0, vis_w, vis_h];
+        let (perspective_d, sin_rx, cos_rx, sin_ry, cos_ry) = if let Some(ref t3d) = transform_3d {
+            (
+                t3d.perspective_d,
+                t3d.sin_rx,
+                t3d.cos_rx,
+                t3d.sin_ry,
+                t3d.cos_ry,
+            )
+        } else {
+            (0.0, 0.0, 1.0, 0.0, 1.0)
+        };
 
         let uniforms = LayerCompositeUniforms {
             source_rect,
@@ -7476,7 +7546,12 @@ impl GpuRenderer {
             clip_bounds,
             clip_radius,
             clip_type,
-            _pad: [0.0; 7],
+            perspective_d,
+            sin_rx,
+            cos_rx,
+            sin_ry,
+            cos_ry,
+            _pad: [0.0; 2],
         };
 
         let uniform_buffer = self
@@ -7587,6 +7662,21 @@ impl GpuRenderer {
         }
     }
 
+    /// Override viewport size for offscreen rendering to a smaller texture.
+    /// This swaps `self.viewport_size` so all render functions (text, images, SDF)
+    /// use the offscreen size for NDC conversion. Must call `restore_viewport()` after.
+    pub fn set_viewport_override(&mut self, size: (u32, u32)) {
+        self.saved_viewport_size = Some(self.viewport_size);
+        self.viewport_size = size;
+    }
+
+    /// Restore viewport size after offscreen rendering.
+    pub fn restore_viewport(&mut self) {
+        if let Some(saved) = self.saved_viewport_size.take() {
+            self.viewport_size = saved;
+        }
+    }
+
     /// Blit a texture to the target with blending
     ///
     /// For non-Normal blend modes, copies the target to a temp texture first
@@ -7663,7 +7753,12 @@ impl GpuRenderer {
             clip_bounds: [0.0, 0.0, vp_w, vp_h], // No clipping
             clip_radius: [0.0, 0.0, 0.0, 0.0],
             clip_type: 0,
-            _pad: [0.0; 7],
+            perspective_d: 0.0,
+            sin_rx: 0.0,
+            cos_rx: 1.0,
+            sin_ry: 0.0,
+            cos_ry: 1.0,
+            _pad: [0.0; 2],
         };
 
         let uniform_buffer = self
@@ -7782,7 +7877,12 @@ impl GpuRenderer {
             clip_bounds: [0.0, 0.0, vp_w, vp_h],
             clip_radius: [0.0, 0.0, 0.0, 0.0],
             clip_type: 0,
-            _pad: [0.0; 7],
+            perspective_d: 0.0,
+            sin_rx: 0.0,
+            cos_rx: 1.0,
+            sin_ry: 0.0,
+            cos_ry: 1.0,
+            _pad: [0.0; 2],
         };
 
         if let Some((bounds, radii)) = clip {

@@ -27,10 +27,139 @@
 //!     .pressed(ElementStyle::new().bg(Color::DARK_BLUE).scale(0.98));
 //! ```
 
+use crate::calc::CalcExpr;
 use crate::element::CursorStyle;
 use blinc_core::{
     BlendMode, Brush, ClipPath, Color, CornerRadius, PointerEvents, Shadow, Transform,
 };
+
+/// A CSS property whose value is a dynamic `calc()` expression containing `env()` references.
+/// These are evaluated per-frame with the current pointer query state.
+#[derive(Clone, Debug)]
+pub enum DynamicProperty {
+    Opacity(CalcExpr),
+    RotateX(CalcExpr),
+    RotateY(CalcExpr),
+    Perspective(CalcExpr),
+    CornerRadius(CalcExpr),
+    TranslateZ(CalcExpr),
+    Depth(CalcExpr),
+    BorderWidth(CalcExpr),
+    /// 2D skew-x (in degrees) — composited into props.transform (Affine2D)
+    SkewX(CalcExpr),
+    /// 2D skew-y (in degrees) — composited into props.transform (Affine2D)
+    SkewY(CalcExpr),
+    /// 2D rotate (in degrees) — composited into props.transform (Affine2D)
+    Rotate(CalcExpr),
+    /// 2D scale-x — composited into props.transform (Affine2D)
+    ScaleX(CalcExpr),
+    /// 2D scale-y — composited into props.transform (Affine2D)
+    ScaleY(CalcExpr),
+}
+
+impl DynamicProperty {
+    /// Evaluate this dynamic property and apply the result to RenderProps.
+    pub fn apply(&self, props: &mut crate::element::RenderProps, ctx: &crate::calc::CalcContext) {
+        match self {
+            DynamicProperty::Opacity(expr) => {
+                let v = expr.eval(ctx).clamp(0.0, 1.0);
+                props.opacity = v;
+            }
+            DynamicProperty::RotateX(expr) => {
+                let v = expr.eval(ctx);
+                props.rotate_x = Some(v);
+            }
+            DynamicProperty::RotateY(expr) => {
+                let v = expr.eval(ctx);
+                props.rotate_y = Some(v);
+            }
+            DynamicProperty::Perspective(expr) => {
+                props.perspective = Some(expr.eval(ctx));
+            }
+            DynamicProperty::CornerRadius(expr) => {
+                let r = expr.eval(ctx).max(0.0);
+                props.border_radius = blinc_core::CornerRadius::uniform(r);
+            }
+            DynamicProperty::TranslateZ(expr) => {
+                props.translate_z = Some(expr.eval(ctx));
+            }
+            DynamicProperty::Depth(expr) => {
+                props.depth = Some(expr.eval(ctx));
+            }
+            DynamicProperty::BorderWidth(expr) => {
+                let v = expr.eval(ctx).max(0.0);
+                props.border_width = v;
+            }
+            DynamicProperty::SkewX(expr) => {
+                let deg = expr.eval(ctx);
+                let skew = blinc_core::Affine2D::skew_x(deg.to_radians());
+                compose_affine(props, skew);
+            }
+            DynamicProperty::SkewY(expr) => {
+                let deg = expr.eval(ctx);
+                let skew = blinc_core::Affine2D::skew_y(deg.to_radians());
+                compose_affine(props, skew);
+            }
+            DynamicProperty::Rotate(expr) => {
+                let deg = expr.eval(ctx);
+                let rot = blinc_core::Affine2D::rotation(deg.to_radians());
+                compose_affine(props, rot);
+            }
+            DynamicProperty::ScaleX(expr) => {
+                let sx = expr.eval(ctx);
+                let s = blinc_core::Affine2D::scale(sx, 1.0);
+                compose_affine(props, s);
+            }
+            DynamicProperty::ScaleY(expr) => {
+                let sy = expr.eval(ctx);
+                let s = blinc_core::Affine2D::scale(1.0, sy);
+                compose_affine(props, s);
+            }
+        }
+    }
+
+    /// Returns true if this dynamic property modifies `props.transform` (Affine2D).
+    pub fn is_transform(&self) -> bool {
+        matches!(
+            self,
+            DynamicProperty::SkewX(_)
+                | DynamicProperty::SkewY(_)
+                | DynamicProperty::Rotate(_)
+                | DynamicProperty::ScaleX(_)
+                | DynamicProperty::ScaleY(_)
+        )
+    }
+
+    /// Get the CalcExpr from this dynamic property.
+    pub fn expr(&self) -> &CalcExpr {
+        match self {
+            DynamicProperty::Opacity(e)
+            | DynamicProperty::RotateX(e)
+            | DynamicProperty::RotateY(e)
+            | DynamicProperty::Perspective(e)
+            | DynamicProperty::CornerRadius(e)
+            | DynamicProperty::TranslateZ(e)
+            | DynamicProperty::Depth(e)
+            | DynamicProperty::BorderWidth(e)
+            | DynamicProperty::SkewX(e)
+            | DynamicProperty::SkewY(e)
+            | DynamicProperty::Rotate(e)
+            | DynamicProperty::ScaleX(e)
+            | DynamicProperty::ScaleY(e) => e,
+        }
+    }
+}
+
+/// Compose a new 2D affine transform onto the existing `props.transform`.
+/// If no transform exists, sets it directly. Otherwise multiplies.
+fn compose_affine(props: &mut crate::element::RenderProps, new_affine: blinc_core::Affine2D) {
+    use blinc_core::Transform;
+    let composed = match &props.transform {
+        Some(Transform::Affine2D(existing)) => existing.then(&new_affine),
+        _ => new_affine,
+    };
+    props.transform = Some(Transform::Affine2D(composed));
+}
 
 /// CSS filter functions applied to an element
 ///
@@ -502,6 +631,25 @@ pub struct ElementStyle {
     pub mask_image: Option<blinc_core::MaskImage>,
     /// CSS mask-mode (alpha or luminance)
     pub mask_mode: Option<blinc_core::MaskMode>,
+
+    // =========================================================================
+    // Flow DAG Reference
+    // =========================================================================
+    /// Name of a @flow DAG to apply to this element
+    pub flow: Option<String>,
+
+    // =========================================================================
+    // Pointer Query
+    // =========================================================================
+    /// Pointer tracking configuration (enables continuous pointer data on this element)
+    pub pointer_space: Option<crate::pointer_query::PointerSpaceConfig>,
+
+    // =========================================================================
+    // Dynamic Properties (calc with env vars — evaluated per-frame)
+    // =========================================================================
+    /// Properties whose values are `calc()` expressions containing `env()` references.
+    /// These are evaluated per-frame by `apply_pointer_styles()` with live pointer data.
+    pub dynamic_properties: Option<Vec<DynamicProperty>>,
 }
 
 impl ElementStyle {
@@ -1621,6 +1769,24 @@ impl ElementStyle {
                 .or(self.mask_image.as_ref())
                 .cloned(),
             mask_mode: other.mask_mode.clone().or(self.mask_mode.clone()),
+            // Flow DAG
+            flow: other.flow.clone().or_else(|| self.flow.clone()),
+            // Pointer query
+            pointer_space: other
+                .pointer_space
+                .clone()
+                .or_else(|| self.pointer_space.clone()),
+            // Dynamic properties (merge: other's override self's for same property type)
+            dynamic_properties: match (&self.dynamic_properties, &other.dynamic_properties) {
+                (None, None) => None,
+                (Some(a), None) => Some(a.clone()),
+                (None, Some(b)) => Some(b.clone()),
+                (Some(a), Some(b)) => {
+                    let mut merged = a.clone();
+                    merged.extend(b.iter().cloned());
+                    Some(merged)
+                }
+            },
         }
     }
 

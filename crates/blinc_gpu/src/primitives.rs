@@ -896,7 +896,12 @@ pub struct CompositeUniforms {
 /// - clip_bounds: `vec4<f32>` (16 bytes) - Clip region (x, y, width, height)
 /// - clip_radius: `vec4<f32>` (16 bytes) - Corner radii (tl, tr, br, bl)
 /// - clip_type: u32 (4 bytes) - 0=none, 1=rect
-/// - _pad: 28 bytes (12 bytes alignment + 16 bytes for vec3 stored as vec4)
+/// - perspective_d: f32 (4 bytes) - Perspective distance (0 = no 3D)
+/// - sin_rx: f32 (4 bytes) - sin(rotate-x angle)
+/// - cos_rx: f32 (4 bytes) - cos(rotate-x angle)
+/// - sin_ry: f32 (4 bytes) - sin(rotate-y angle)
+/// - cos_ry: f32 (4 bytes) - cos(rotate-y angle)
+/// - _pad: 8 bytes alignment
 ///   Total: 112 bytes
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -917,8 +922,18 @@ pub struct LayerCompositeUniforms {
     pub clip_radius: [f32; 4],
     /// Clip type: 0=none, 1=rect with optional rounded corners
     pub clip_type: u32,
-    /// Padding (12 bytes to align vec3 to 16, then 16 bytes for vec3 stored as vec4)
-    pub _pad: [f32; 7],
+    /// Perspective distance in physical pixels (0 = no 3D transform)
+    pub perspective_d: f32,
+    /// sin(rotate-x angle)
+    pub sin_rx: f32,
+    /// cos(rotate-x angle)
+    pub cos_rx: f32,
+    /// sin(rotate-y angle)
+    pub sin_ry: f32,
+    /// cos(rotate-y angle)
+    pub cos_ry: f32,
+    /// Padding for alignment
+    pub _pad: [f32; 2],
 }
 
 impl LayerCompositeUniforms {
@@ -940,7 +955,12 @@ impl LayerCompositeUniforms {
             clip_bounds: [0.0, 0.0, viewport_size.0, viewport_size.1], // No clipping
             clip_radius: [0.0, 0.0, 0.0, 0.0],
             clip_type: 0, // No clip
-            _pad: [0.0; 7],
+            perspective_d: 0.0,
+            sin_rx: 0.0,
+            cos_rx: 1.0,
+            sin_ry: 0.0,
+            cos_ry: 1.0,
+            _pad: [0.0; 2],
         }
     }
 
@@ -961,7 +981,12 @@ impl LayerCompositeUniforms {
             clip_bounds: [0.0, 0.0, viewport_size.0, viewport_size.1], // No clipping
             clip_radius: [0.0, 0.0, 0.0, 0.0],
             clip_type: 0, // No clip
-            _pad: [0.0; 7],
+            perspective_d: 0.0,
+            sin_rx: 0.0,
+            cos_rx: 1.0,
+            sin_ry: 0.0,
+            cos_ry: 1.0,
+            _pad: [0.0; 2],
         }
     }
 

@@ -112,6 +112,8 @@ pub struct WindowedContext {
     /// CSS stylesheet for automatic style application (hover, animations, base styles)
     /// Multiple stylesheets cascade — later rules override earlier ones.
     pub stylesheet: Option<Arc<blinc_layout::css_parser::Stylesheet>>,
+    /// Continuous pointer query state (per-element pointer tracking)
+    pub pointer_query: blinc_layout::pointer_query::PointerQueryState,
 }
 
 impl WindowedContext {
@@ -155,6 +157,7 @@ impl WindowedContext {
             element_registry,
             ready_callbacks,
             stylesheet: None,
+            pointer_query: blinc_layout::pointer_query::PointerQueryState::new(),
         }
     }
 
@@ -195,6 +198,7 @@ impl WindowedContext {
             element_registry,
             ready_callbacks,
             stylesheet: None,
+            pointer_query: blinc_layout::pointer_query::PointerQueryState::new(),
         }
     }
 
@@ -235,6 +239,7 @@ impl WindowedContext {
             element_registry,
             ready_callbacks,
             stylesheet: None,
+            pointer_query: blinc_layout::pointer_query::PointerQueryState::new(),
         }
     }
 
@@ -275,6 +280,7 @@ impl WindowedContext {
             element_registry,
             ready_callbacks,
             stylesheet: None,
+            pointer_query: blinc_layout::pointer_query::PointerQueryState::new(),
         }
     }
 
@@ -2758,6 +2764,11 @@ impl WindowedApp {
                                         // Apply stylesheet layout overrides before layout computation
                                         tree.apply_stylesheet_layout_overrides();
 
+                                        // Register pointer-space elements from stylesheet
+                                        if let Some(ref stylesheet) = windowed_ctx.stylesheet {
+                                            windowed_ctx.pointer_query.register_from_stylesheet(stylesheet);
+                                        }
+
                                         // Compute layout with new viewport dimensions
                                         tree.compute_layout(windowed_ctx.width, windowed_ctx.height);
 
@@ -2808,6 +2819,11 @@ impl WindowedApp {
                                                 existing_tree.apply_stylesheet_layout_overrides();
                                                 existing_tree.compute_layout(windowed_ctx.width, windowed_ctx.height);
 
+                                                // Re-register pointer-space elements (new elements may have pointer-space)
+                                                if let Some(ref stylesheet) = windowed_ctx.stylesheet {
+                                                    windowed_ctx.pointer_query.register_from_stylesheet(stylesheet);
+                                                }
+
                                                 // Initialize motion animations for any new nodes wrapped in motion() containers
                                                 existing_tree.initialize_motion_animations(rs);
                                                 // End motion frame to detect unmounted motions and trigger exit animations
@@ -2845,6 +2861,11 @@ impl WindowedApp {
                                     tree.apply_stylesheet_base_styles();
                                     // Apply stylesheet layout overrides before layout computation
                                     tree.apply_stylesheet_layout_overrides();
+
+                                    // Register pointer-space elements from stylesheet
+                                    if let Some(ref stylesheet) = windowed_ctx.stylesheet {
+                                        windowed_ctx.pointer_query.register_from_stylesheet(stylesheet);
+                                    }
 
                                     // Compute layout in logical pixels
                                     tree.compute_layout(windowed_ctx.width, windowed_ctx.height);
@@ -2975,6 +2996,35 @@ impl WindowedApp {
                                 }
                             }
 
+                            // Update continuous pointer query state
+                            if !windowed_ctx.pointer_query.is_empty() {
+                                let (mx, my) = windowed_ctx.event_router.mouse_position();
+                                let is_pressed = windowed_ctx.event_router.pressed_target().is_some();
+                                let dt_sec = dt_ms / 1000.0;
+                                let time_sec = current_time as f64 / 1000.0;
+                                // Use event router's hit test results for hover detection.
+                                // The router already handles scroll offsets, transforms, and occlusion
+                                // correctly, so bounds from get_node_bounds match the rendering pipeline.
+                                windowed_ctx.pointer_query.update(
+                                    mx, my, is_pressed, dt_sec, time_sec,
+                                    |id| {
+                                        let node = element_registry.get(id)?;
+                                        if windowed_ctx.event_router.is_hovered(node) {
+                                            windowed_ctx.event_router.get_node_bounds(node)
+                                        } else {
+                                            None
+                                        }
+                                    },
+                                );
+                                // Evaluate dynamic calc(env(...)) properties with current pointer state
+                                if let Some(ref mut tree) = render_tree {
+                                    tree.apply_pointer_styles(
+                                        &windowed_ctx.pointer_query,
+                                        &windowed_ctx.event_router,
+                                    );
+                                }
+                            }
+
                             if let Some(ref tree) = render_tree {
                                 // Set blend target for mix-blend-mode support
                                 blinc_app.set_blend_target(&frame.texture);
@@ -3052,7 +3102,10 @@ impl WindowedApp {
                                     .as_ref()
                                     .map_or(true, |t| t.css_transitions_empty());
 
-                            if needs_animation_redraw || needs_cursor_redraw || needs_motion_redraw || scroll_animating || needs_overlay_redraw || theme_animating || css_needs_redraw {
+                            // Check if pointer query elements need continuous redraws
+                            let pointer_query_active = !windowed_ctx.pointer_query.is_empty();
+
+                            if needs_animation_redraw || needs_cursor_redraw || needs_motion_redraw || scroll_animating || needs_overlay_redraw || theme_animating || css_needs_redraw || pointer_query_active {
                                 // Request another frame to render updated animation values
                                 // For cursor blink, also re-request continuous redraw for next frame
                                 if needs_cursor_redraw {

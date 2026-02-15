@@ -38,6 +38,7 @@ pub mod context;
 pub mod context_state;
 pub mod draw;
 pub mod events;
+pub mod flow;
 pub mod fsm;
 pub mod layer;
 pub mod native_bridge;
@@ -50,7 +51,7 @@ pub use draw::{
     BlurQuality, DrawCommand, DrawContext, DrawContextExt, FontWeight, ImageId, ImageOptions,
     LayerConfig, LayerEffect, LineCap, LineJoin, MaskImage, MaskMode, MaterialId, MeshId,
     MeshInstance, Path, PathCommand, RecordingContext, SdfBuilder, ShapeId, Stroke, TextAlign,
-    TextBaseline, TextStyle, Transform,
+    TextBaseline, TextStyle, Transform, Transform3DParams,
 };
 pub use events::{Event, EventData, EventDispatcher, EventType, KeyCode, Modifiers};
 pub use fsm::{FsmId, FsmRuntime, StateId, StateMachine, Transition};
@@ -81,6 +82,12 @@ pub use context_state::{
     MotionStateCallback, QueryCallback, RecordedEventAny, RecorderEventCallback,
     RecorderSnapshotCallback, RecorderUpdateCallback, ScrollCallback, SharedHookState, StateKey,
     TreeSnapshotAny, UpdateCategory,
+};
+
+// Re-export flow DAG types
+pub use flow::{
+    BuiltinVar, FlowError, FlowExpr, FlowFunc, FlowGraph, FlowInput, FlowInputSource, FlowNode,
+    FlowOutput, FlowOutputTarget, FlowTarget, FlowType,
 };
 
 // Re-export store types

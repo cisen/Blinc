@@ -52,8 +52,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use blinc_core::{
-    Brush, ClipLength, ClipPath, Color, CornerRadius, Gradient, GradientSpace, GradientStop,
-    ImageBrush, Point, Shadow, Transform,
+    Brush, ClipLength, ClipPath, Color, CornerRadius, FlowError, FlowExpr, FlowFunc, FlowGraph,
+    FlowInput, FlowInputSource, FlowNode, FlowOutput, FlowOutputTarget, FlowTarget, FlowType,
+    Gradient, GradientSpace, GradientStop, ImageBrush, Point, Shadow, Transform,
 };
 use blinc_theme::{ColorToken, ThemeState};
 use nom::{
@@ -1301,6 +1302,8 @@ pub struct Stylesheet {
     variables: HashMap<String, String>,
     /// Keyframe animations defined with @keyframes
     keyframes: HashMap<String, CssKeyframes>,
+    /// Flow DAGs defined with @flow
+    flows: HashMap<String, FlowGraph>,
 }
 
 impl Stylesheet {
@@ -1359,6 +1362,9 @@ impl Stylesheet {
                     stylesheet
                         .keyframes
                         .insert(keyframes.name.clone(), keyframes);
+                }
+                for flow in parsed.flows {
+                    stylesheet.flows.insert(flow.name.clone(), flow);
                 }
 
                 CssParseResult { stylesheet, errors }
@@ -1432,6 +1438,9 @@ impl Stylesheet {
                     stylesheet
                         .keyframes
                         .insert(keyframes.name.clone(), keyframes);
+                }
+                for flow in parsed.flows {
+                    stylesheet.flows.insert(flow.name.clone(), flow);
                 }
 
                 CssParseResult { stylesheet, errors }
@@ -1802,6 +1811,35 @@ impl Stylesheet {
     /// Add a keyframe animation to the stylesheet
     pub fn add_keyframes(&mut self, keyframes: CssKeyframes) {
         self.keyframes.insert(keyframes.name.clone(), keyframes);
+    }
+
+    // =========================================================================
+    // Flow DAGs (@flow)
+    // =========================================================================
+
+    /// Look up a flow DAG by name
+    pub fn get_flow(&self, name: &str) -> Option<&FlowGraph> {
+        self.flows.get(name)
+    }
+
+    /// Check if a flow exists with the given name
+    pub fn contains_flow(&self, name: &str) -> bool {
+        self.flows.contains_key(name)
+    }
+
+    /// Get all flow names
+    pub fn flow_names(&self) -> impl Iterator<Item = &str> {
+        self.flows.keys().map(|s| s.as_str())
+    }
+
+    /// Get the number of flows defined
+    pub fn flow_count(&self) -> usize {
+        self.flows.len()
+    }
+
+    /// Add a flow DAG to the stylesheet
+    pub fn add_flow(&mut self, flow: FlowGraph) {
+        self.flows.insert(flow.name.clone(), flow);
     }
 
     // =========================================================================
@@ -2638,11 +2676,725 @@ where
 }
 
 /// Result of parsing a stylesheet - rules, variables, and keyframes
+// ===========================================================================
+// @flow DAG parser
+// ===========================================================================
+
+/// Parse a `@flow` block into a validated FlowGraph DAG.
+///
+/// # Syntax
+///
+/// ```css
+/// @flow ripple-effect {
+///   target: fragment;
+///   input uv;
+///   input time;
+///   node dist = distance(uv, vec2(0.5, 0.5));
+///   node wave = sin(dist * 20.0 - time * 4.0);
+///   output color = vec4(wave, wave, wave, 1.0);
+/// }
+/// ```
+fn flow_block<'a>(css: &'a str, errors: &mut Vec<ParseError>) -> ParseResult<'a, FlowGraph> {
+    let (input, _) = ws(css)?;
+    let (input, _) = tag("@flow")(input)?;
+    let (input, _) = ws(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = ws(input)?;
+    let (input, _) = char('{')(input)?;
+    let (input, _) = ws(input)?;
+
+    let mut graph = FlowGraph::new(name);
+    let mut remaining = input;
+
+    loop {
+        let trimmed = remaining.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('}') {
+            break;
+        }
+
+        // Skip comments inside @flow blocks
+        if trimmed.starts_with("/*") {
+            if let Some(end) = trimmed.find("*/") {
+                remaining = &trimmed[end + 2..];
+                continue;
+            } else {
+                break;
+            }
+        }
+
+        // Try to parse a flow declaration
+        if let Some(rest) = parse_flow_declaration(trimmed, &mut graph, errors) {
+            remaining = rest;
+        } else {
+            // Skip to next semicolon or closing brace to recover
+            if let Some(semi) = trimmed.find(';') {
+                remaining = &trimmed[semi + 1..];
+            } else {
+                break;
+            }
+        }
+    }
+
+    let (input, _) = ws(remaining)?;
+    let (input, _) = char('}')(input)?;
+
+    // Validate the DAG (cycle detection, type inference)
+    if let Err(flow_errors) = graph.validate() {
+        for err in flow_errors {
+            errors.push(ParseError {
+                severity: Severity::Error,
+                message: format!("@flow '{}': {}", graph.name, err),
+                line: 0,
+                column: 0,
+                fragment: String::new(),
+                contexts: vec![],
+                property: None,
+                value: None,
+            });
+        }
+    }
+
+    Ok((input, graph))
+}
+
+/// Parse a single declaration inside a @flow block.
+/// Returns the remaining input, or None if parsing failed.
+fn parse_flow_declaration<'a>(
+    input: &'a str,
+    graph: &mut FlowGraph,
+    errors: &mut Vec<ParseError>,
+) -> Option<&'a str> {
+    let trimmed = input.trim_start();
+
+    // target: fragment | compute;
+    if trimmed.starts_with("target") {
+        return parse_flow_target(trimmed, graph);
+    }
+
+    // workgroup: N;
+    if trimmed.starts_with("workgroup") {
+        return parse_flow_workgroup(trimmed, graph);
+    }
+
+    // input <name> [: buffer(name, type)];
+    if trimmed.starts_with("input ") {
+        return parse_flow_input(trimmed, graph, errors);
+    }
+
+    // node <name> = <expr>;
+    if trimmed.starts_with("node ") {
+        return parse_flow_node(trimmed, graph, errors);
+    }
+
+    // output <target> [= <expr>];
+    if trimmed.starts_with("output ") {
+        return parse_flow_output(trimmed, graph, errors);
+    }
+
+    None
+}
+
+fn parse_flow_target<'a>(input: &'a str, graph: &mut FlowGraph) -> Option<&'a str> {
+    let rest = input.strip_prefix("target")?;
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix(':')?;
+    let rest = rest.trim_start();
+
+    let semi = rest.find(';')?;
+    let value = rest[..semi].trim();
+    match value {
+        "fragment" => graph.target = FlowTarget::Fragment,
+        "compute" => graph.target = FlowTarget::Compute,
+        _ => return None,
+    }
+    Some(&rest[semi + 1..])
+}
+
+fn parse_flow_workgroup<'a>(input: &'a str, graph: &mut FlowGraph) -> Option<&'a str> {
+    let rest = input.strip_prefix("workgroup")?;
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix(':')?;
+    let rest = rest.trim_start();
+
+    let semi = rest.find(';')?;
+    let value = rest[..semi].trim();
+    graph.workgroup_size = value.parse::<u32>().ok();
+    Some(&rest[semi + 1..])
+}
+
+fn parse_flow_input<'a>(
+    input: &'a str,
+    graph: &mut FlowGraph,
+    _errors: &mut Vec<ParseError>,
+) -> Option<&'a str> {
+    let rest = input.strip_prefix("input")?.trim_start();
+
+    let semi = rest.find(';')?;
+    let decl = rest[..semi].trim();
+
+    // Check for typed declaration: input name: buffer(buf-name, type);
+    if let Some(colon_pos) = decl.find(':') {
+        let name = decl[..colon_pos].trim();
+        let type_decl = decl[colon_pos + 1..].trim();
+
+        if type_decl.starts_with("buffer(") {
+            // buffer(name, type)
+            let inner = type_decl.strip_prefix("buffer(")?.strip_suffix(')')?;
+            let parts: Vec<&str> = inner.splitn(2, ',').collect();
+            if parts.len() == 2 {
+                let buf_name = parts[0].trim().to_string();
+                let ty = match parts[1].trim() {
+                    "float" | "f32" => FlowType::Float,
+                    "vec2" => FlowType::Vec2,
+                    "vec3" => FlowType::Vec3,
+                    "vec4" => FlowType::Vec4,
+                    _ => FlowType::Vec4,
+                };
+                graph.inputs.push(FlowInput {
+                    name: name.to_string(),
+                    source: FlowInputSource::Buffer { name: buf_name, ty },
+                    ty: Some(ty),
+                });
+            }
+        }
+    } else {
+        // Simple declaration: input name;
+        let name = decl;
+        let source = if let Some(builtin) = blinc_core::flow::BuiltinVar::from_str(name) {
+            let ty = builtin.output_type();
+            graph.inputs.push(FlowInput {
+                name: name.to_string(),
+                source: FlowInputSource::Builtin(builtin),
+                ty: Some(ty),
+            });
+            return Some(&rest[semi + 1..]);
+        } else if name.starts_with("env(") {
+            let env_name = name.strip_prefix("env(")?.strip_suffix(')')?;
+            FlowInputSource::EnvVar(env_name.to_string())
+        } else {
+            FlowInputSource::Auto
+        };
+        graph.inputs.push(FlowInput {
+            name: name.to_string(),
+            source,
+            ty: None,
+        });
+    }
+
+    Some(&rest[semi + 1..])
+}
+
+fn parse_flow_node<'a>(
+    input: &'a str,
+    graph: &mut FlowGraph,
+    errors: &mut Vec<ParseError>,
+) -> Option<&'a str> {
+    let rest = input.strip_prefix("node")?.trim_start();
+
+    // Find the '=' separating name from expression
+    let eq_pos = rest.find('=')?;
+    let name = rest[..eq_pos].trim();
+
+    // Find the semicolon that ends this declaration
+    // Need to handle nested parens — can't just find first ';'
+    let expr_start = &rest[eq_pos + 1..];
+    let semi_pos = find_statement_end(expr_start)?;
+    let expr_str = expr_start[..semi_pos].trim();
+
+    match parse_flow_expr(expr_str) {
+        Ok(expr) => {
+            graph.nodes.push(FlowNode {
+                name: name.to_string(),
+                expr,
+                inferred_type: None,
+            });
+        }
+        Err(msg) => {
+            errors.push(ParseError {
+                severity: Severity::Error,
+                message: format!("@flow node '{}': {}", name, msg),
+                line: 0,
+                column: 0,
+                fragment: expr_str.to_string(),
+                contexts: vec![],
+                property: Some(format!("node {}", name)),
+                value: Some(expr_str.to_string()),
+            });
+        }
+    }
+
+    Some(&expr_start[semi_pos + 1..])
+}
+
+fn parse_flow_output<'a>(
+    input: &'a str,
+    graph: &mut FlowGraph,
+    errors: &mut Vec<ParseError>,
+) -> Option<&'a str> {
+    let rest = input.strip_prefix("output")?.trim_start();
+    let semi_pos = find_statement_end(rest)?;
+    let decl = rest[..semi_pos].trim();
+
+    // Detect output target and optional expression
+    let (target, name, expr_str) = if decl.starts_with("buffer(") {
+        // output buffer(name) = expr;
+        let close_paren = decl.find(')')?;
+        let buf_inner = decl[7..close_paren].trim();
+        let after = decl[close_paren + 1..].trim();
+        let expr_str = after.strip_prefix('=').map(|s| s.trim());
+        (
+            FlowOutputTarget::Buffer {
+                name: buf_inner.to_string(),
+            },
+            buf_inner.to_string(),
+            expr_str,
+        )
+    } else if let Some(eq_pos) = decl.find('=') {
+        // output <name> = <expr>;
+        let name = decl[..eq_pos].trim();
+        let expr_s = decl[eq_pos + 1..].trim();
+        let target = match name {
+            "color" => FlowOutputTarget::Color,
+            "alpha" => FlowOutputTarget::Alpha,
+            "displacement" => FlowOutputTarget::Displacement,
+            _ => FlowOutputTarget::Color,
+        };
+        (target, name.to_string(), Some(expr_s))
+    } else {
+        // Bare output: output color;
+        let name = decl.trim();
+        let target = match name {
+            "color" => FlowOutputTarget::Color,
+            "alpha" => FlowOutputTarget::Alpha,
+            "displacement" => FlowOutputTarget::Displacement,
+            _ => FlowOutputTarget::Color,
+        };
+        (target, name.to_string(), None)
+    };
+
+    let parsed_expr = if let Some(es) = expr_str {
+        match parse_flow_expr(es) {
+            Ok(expr) => Some(expr),
+            Err(msg) => {
+                errors.push(ParseError {
+                    severity: Severity::Error,
+                    message: format!("@flow output '{}': {}", name, msg),
+                    line: 0,
+                    column: 0,
+                    fragment: es.to_string(),
+                    contexts: vec![],
+                    property: Some(format!("output {}", name)),
+                    value: Some(es.to_string()),
+                });
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    graph.outputs.push(FlowOutput {
+        name,
+        target,
+        expr: parsed_expr,
+    });
+
+    Some(&rest[semi_pos + 1..])
+}
+
+/// Find the end of a flow statement (semicolon), respecting parentheses nesting.
+fn find_statement_end(input: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, c) in input.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ';' if depth == 0 => return Some(i),
+            '}' if depth == 0 => return Some(i),
+            _ => {}
+        }
+    }
+    None
+}
+
+// ===========================================================================
+// Flow expression parser (recursive descent)
+// ===========================================================================
+
+/// Parse a flow expression string into a FlowExpr AST.
+///
+/// Operator precedence (low → high):
+/// 1. `+`, `-` (additive)
+/// 2. `*`, `/` (multiplicative)
+/// 3. Unary `-` (negation)
+/// 4. Function calls, constructors, literals, references, parens
+fn parse_flow_expr(input: &str) -> Result<FlowExpr, String> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Err("empty expression".to_string());
+    }
+    let (expr, rest) = parse_flow_additive(input)?;
+    let rest = rest.trim();
+    if !rest.is_empty() {
+        return Err(format!("unexpected trailing content: '{}'", rest));
+    }
+    Ok(expr)
+}
+
+/// Parse additive expressions: `a + b`, `a - b`
+fn parse_flow_additive(input: &str) -> Result<(FlowExpr, &str), String> {
+    let (mut left, mut rest) = parse_flow_multiplicative(input)?;
+
+    loop {
+        let trimmed = rest.trim_start();
+        if trimmed.starts_with('+') {
+            let (right, r) = parse_flow_multiplicative(&trimmed[1..])?;
+            left = FlowExpr::Add(Box::new(left), Box::new(right));
+            rest = r;
+        } else if trimmed.starts_with('-') {
+            // Distinguish binary minus from unary minus / negative literal
+            // If '-' is followed by a digit and we're after an operator position, it's unary
+            // Binary minus: appears after a complete expression
+            let after = trimmed[1..].trim_start();
+            // Check if the character after '-' starts what could be a token
+            // This is binary minus because left already parsed successfully
+            let (right, r) = parse_flow_multiplicative(&trimmed[1..])?;
+            left = FlowExpr::Sub(Box::new(left), Box::new(right));
+            rest = r;
+        } else {
+            break;
+        }
+    }
+
+    Ok((left, rest))
+}
+
+/// Parse multiplicative expressions: `a * b`, `a / b`
+fn parse_flow_multiplicative(input: &str) -> Result<(FlowExpr, &str), String> {
+    let (mut left, mut rest) = parse_flow_unary(input)?;
+
+    loop {
+        let trimmed = rest.trim_start();
+        if trimmed.starts_with('*') {
+            let (right, r) = parse_flow_unary(&trimmed[1..])?;
+            left = FlowExpr::Mul(Box::new(left), Box::new(right));
+            rest = r;
+        } else if trimmed.starts_with('/') {
+            let (right, r) = parse_flow_unary(&trimmed[1..])?;
+            left = FlowExpr::Div(Box::new(left), Box::new(right));
+            rest = r;
+        } else {
+            break;
+        }
+    }
+
+    Ok((left, rest))
+}
+
+/// Parse unary expressions: `-a`
+fn parse_flow_unary(input: &str) -> Result<(FlowExpr, &str), String> {
+    let trimmed = input.trim_start();
+    if trimmed.starts_with('-') {
+        // Check it's not just a negative number (handled in primary)
+        let after = trimmed[1..].trim_start();
+        if after.starts_with(|c: char| c.is_ascii_digit() || c == '.') {
+            // Could be a negative literal — try primary first
+            if let Ok(result) = parse_flow_primary(trimmed) {
+                return Ok(result);
+            }
+        }
+        let (expr, rest) = parse_flow_unary(&trimmed[1..])?;
+        Ok((FlowExpr::Neg(Box::new(expr)), rest))
+    } else {
+        parse_flow_primary(trimmed)
+    }
+}
+
+/// Parse primary expressions: literals, refs, function calls, parens, vec constructors, colors
+fn parse_flow_primary(input: &str) -> Result<(FlowExpr, &str), String> {
+    let trimmed = input.trim_start();
+
+    if trimmed.is_empty() {
+        return Err("unexpected end of expression".to_string());
+    }
+
+    // Color literal: #RRGGBB or #RRGGBBAA
+    if trimmed.starts_with('#') {
+        return parse_flow_color(trimmed);
+    }
+
+    // Parenthesized expression
+    if trimmed.starts_with('(') {
+        let inner_start = &trimmed[1..];
+        let close = find_flow_close_paren(inner_start)
+            .ok_or_else(|| "unmatched parenthesis".to_string())?;
+        let inner = inner_start[..close].trim();
+        let (expr, inner_rest) = parse_flow_additive(inner)?;
+        let inner_rest = inner_rest.trim();
+        if !inner_rest.is_empty() {
+            return Err(format!(
+                "unexpected content in parenthesized expression: '{}'",
+                inner_rest
+            ));
+        }
+        return Ok((expr, &inner_start[close + 1..]));
+    }
+
+    // Number literal (including negative)
+    if trimmed.starts_with(|c: char| c.is_ascii_digit() || c == '.')
+        || (trimmed.starts_with('-')
+            && trimmed[1..]
+                .trim_start()
+                .starts_with(|c: char| c.is_ascii_digit() || c == '.'))
+    {
+        return parse_flow_number(trimmed);
+    }
+
+    // Identifier: could be function call, vec constructor, or reference
+    if trimmed.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
+        let name_end = trimmed
+            .find(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-')
+            .unwrap_or(trimmed.len());
+        let name = &trimmed[..name_end];
+        let after = trimmed[name_end..].trim_start();
+
+        // Function call or vector constructor
+        if after.starts_with('(') {
+            let args_start = &after[1..];
+            let close = find_flow_close_paren(args_start)
+                .ok_or_else(|| format!("unmatched parenthesis in call to '{}'", name))?;
+            let args_str = &args_start[..close];
+            let rest = &args_start[close + 1..];
+
+            let args = parse_flow_arg_list(args_str)?;
+
+            // Vec constructors
+            match name {
+                "vec2" => {
+                    if args.len() != 2 {
+                        return Err(format!("vec2 requires 2 arguments, got {}", args.len()));
+                    }
+                    let mut it = args.into_iter();
+                    return Ok((
+                        FlowExpr::Vec2(Box::new(it.next().unwrap()), Box::new(it.next().unwrap())),
+                        rest,
+                    ));
+                }
+                "vec3" => {
+                    if args.len() != 3 {
+                        return Err(format!("vec3 requires 3 arguments, got {}", args.len()));
+                    }
+                    let mut it = args.into_iter();
+                    return Ok((
+                        FlowExpr::Vec3(
+                            Box::new(it.next().unwrap()),
+                            Box::new(it.next().unwrap()),
+                            Box::new(it.next().unwrap()),
+                        ),
+                        rest,
+                    ));
+                }
+                "vec4" => {
+                    if args.len() != 4 {
+                        return Err(format!("vec4 requires 4 arguments, got {}", args.len()));
+                    }
+                    let mut it = args.into_iter();
+                    return Ok((
+                        FlowExpr::Vec4(
+                            Box::new(it.next().unwrap()),
+                            Box::new(it.next().unwrap()),
+                            Box::new(it.next().unwrap()),
+                            Box::new(it.next().unwrap()),
+                        ),
+                        rest,
+                    ));
+                }
+                _ => {
+                    // Look up as built-in function
+                    if let Some(func) = FlowFunc::from_str(name) {
+                        return Ok((FlowExpr::Call { func, args }, rest));
+                    } else {
+                        return Err(format!("unknown function '{}'", name));
+                    }
+                }
+            }
+        }
+
+        // Plain reference
+        return Ok((FlowExpr::Ref(name.to_string()), &trimmed[name_end..]));
+    }
+
+    Err(format!("unexpected character: '{}'", &trimmed[..1]))
+}
+
+/// Parse a comma-separated argument list (within already-matched parens)
+fn parse_flow_arg_list(input: &str) -> Result<Vec<FlowExpr>, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut args = Vec::new();
+    let mut remaining = trimmed;
+
+    loop {
+        let remaining_trimmed = remaining.trim();
+        if remaining_trimmed.is_empty() {
+            break;
+        }
+
+        // Split at top-level commas (not nested in parens)
+        let split_pos = find_top_level_comma(remaining_trimmed);
+
+        let arg_str = if let Some(pos) = split_pos {
+            let s = remaining_trimmed[..pos].trim();
+            remaining = &remaining_trimmed[pos + 1..];
+            s
+        } else {
+            remaining = "";
+            remaining_trimmed
+        };
+
+        if arg_str.is_empty() {
+            break;
+        }
+
+        let (expr, rest) = parse_flow_additive(arg_str)?;
+        let rest = rest.trim();
+        if !rest.is_empty() {
+            return Err(format!("unexpected content in argument: '{}'", rest));
+        }
+        args.push(expr);
+
+        if split_pos.is_none() {
+            break;
+        }
+    }
+
+    Ok(args)
+}
+
+/// Find the position of the next top-level comma (not nested in parens)
+fn find_top_level_comma(input: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, c) in input.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => return Some(i),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Find the matching close paren for a flow expression.
+/// Input starts AFTER the opening '(' — starts at depth=1.
+fn find_flow_close_paren(input: &str) -> Option<usize> {
+    let mut depth = 1i32;
+    for (i, c) in input.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Parse a numeric literal (float or integer)
+fn parse_flow_number(input: &str) -> Result<(FlowExpr, &str), String> {
+    let trimmed = input.trim_start();
+    let mut end = 0;
+    let mut has_dot = false;
+    let chars: Vec<char> = trimmed.chars().collect();
+
+    // Optional leading minus
+    if end < chars.len() && chars[end] == '-' {
+        end += 1;
+    }
+
+    // Digits before decimal point
+    while end < chars.len() && chars[end].is_ascii_digit() {
+        end += 1;
+    }
+
+    // Optional decimal point and fractional digits
+    if end < chars.len() && chars[end] == '.' {
+        has_dot = true;
+        end += 1;
+        while end < chars.len() && chars[end].is_ascii_digit() {
+            end += 1;
+        }
+    }
+
+    if end == 0 || (end == 1 && chars[0] == '-') {
+        return Err("expected number".to_string());
+    }
+
+    let num_str = &trimmed[..end];
+    let value: f32 = num_str
+        .parse()
+        .map_err(|_| format!("invalid number: '{}'", num_str))?;
+
+    Ok((FlowExpr::Float(value), &trimmed[end..]))
+}
+
+/// Parse a color literal: #RGB, #RRGGBB, or #RRGGBBAA
+fn parse_flow_color(input: &str) -> Result<(FlowExpr, &str), String> {
+    let trimmed = input.trim_start();
+    if !trimmed.starts_with('#') {
+        return Err("expected '#' for color literal".to_string());
+    }
+
+    let hex_start = &trimmed[1..];
+    let hex_end = hex_start
+        .find(|c: char| !c.is_ascii_hexdigit())
+        .unwrap_or(hex_start.len());
+    let hex = &hex_start[..hex_end];
+
+    let (r, g, b, a) = match hex.len() {
+        3 => {
+            let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).unwrap_or(0);
+            let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).unwrap_or(0);
+            let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).unwrap_or(0);
+            (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0)
+        }
+        6 => {
+            let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0);
+            let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0);
+            let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);
+            (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0)
+        }
+        8 => {
+            let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0);
+            let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0);
+            let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);
+            let a = u8::from_str_radix(&hex[6..8], 16).unwrap_or(255);
+            (
+                r as f32 / 255.0,
+                g as f32 / 255.0,
+                b as f32 / 255.0,
+                a as f32 / 255.0,
+            )
+        }
+        _ => return Err(format!("invalid color hex length: {}", hex.len())),
+    };
+
+    Ok((FlowExpr::Color(r, g, b, a), &hex_start[hex_end..]))
+}
+
 struct ParsedStylesheet {
     rules: Vec<(String, ElementStyle)>,
     complex_rules: Vec<(ComplexSelector, ElementStyle)>,
     variables: HashMap<String, String>,
     keyframes: Vec<CssKeyframes>,
+    flows: Vec<FlowGraph>,
 }
 
 /// Parse an entire stylesheet with error collection
@@ -2658,6 +3410,7 @@ fn parse_stylesheet_with_errors<'a>(
     let mut complex_rules = Vec::new();
     let mut parsed_variables = variables.clone();
     let mut parsed_keyframes = Vec::new();
+    let mut parsed_flows = Vec::new();
     let mut remaining = input;
 
     loop {
@@ -2706,6 +3459,20 @@ fn parse_stylesheet_with_errors<'a>(
             }
         }
 
+        // Try to parse @flow block
+        if trimmed.starts_with("@flow") {
+            match flow_block(trimmed, errors) {
+                Ok((rest, flow)) => {
+                    parsed_flows.push(flow);
+                    remaining = rest;
+                    continue;
+                }
+                Err(_) => {
+                    // Not a valid @flow block, try as a rule
+                }
+            }
+        }
+
         // Try to parse a rule (complex selector or simple #id selector)
         // Supports comma-separated selector lists: #a, #b { ... }
         match css_rule_complex_or_simple(css, errors, &parsed_variables)(trimmed) {
@@ -2738,6 +3505,7 @@ fn parse_stylesheet_with_errors<'a>(
             complex_rules,
             variables: parsed_variables,
             keyframes: parsed_keyframes,
+            flows: parsed_flows,
         },
     ))
 }
@@ -3094,11 +3862,22 @@ fn apply_property(style: &mut ElementStyle, name: &str, value: &str) {
             "none" => style.scrollbar_width = Some(crate::element_style::ScrollbarWidth::None),
             _ => {}
         },
-        "border-radius" => {
-            if let Some(radius) = parse_radius(value) {
-                style.corner_radius = Some(radius);
+        "border-radius" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::CornerRadius(expr));
             }
-        }
+            CalcParseResult::Static(val) => {
+                style.corner_radius = Some(CornerRadius::uniform(val.max(0.0)));
+            }
+            CalcParseResult::NotCalc => {
+                if let Some(radius) = parse_radius(value) {
+                    style.corner_radius = Some(radius);
+                }
+            }
+        },
         "box-shadow" => {
             if let Some(shadow) = parse_shadow(value) {
                 style.shadow = Some(shadow);
@@ -3117,11 +3896,22 @@ fn apply_property(style: &mut ElementStyle, name: &str, value: &str) {
                 style.transform_origin = Some(origin);
             }
         }
-        "opacity" => {
-            if let Ok((_, opacity)) = parse_opacity::<nom::error::Error<&str>>(value) {
-                style.opacity = Some(opacity.clamp(0.0, 1.0));
+        "opacity" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::Opacity(expr));
             }
-        }
+            CalcParseResult::Static(val) => {
+                style.opacity = Some(val.clamp(0.0, 1.0));
+            }
+            CalcParseResult::NotCalc => {
+                if let Ok((_, opacity)) = parse_opacity::<nom::error::Error<&str>>(value) {
+                    style.opacity = Some(opacity.clamp(0.0, 1.0));
+                }
+            }
+        },
         "render-layer" => {
             if let Ok((_, layer)) = parse_render_layer::<nom::error::Error<&str>>(value) {
                 style.render_layer = Some(layer);
@@ -3135,32 +3925,125 @@ fn apply_property(style: &mut ElementStyle, name: &str, value: &str) {
             }
         }
         // 3D transform properties
-        "rotate-x" => {
-            if let Some(deg) = parse_angle_value(value) {
-                style.rotate_x = Some(deg);
+        "rotate-x" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::RotateX(expr));
             }
-        }
-        "rotate-y" => {
-            if let Some(deg) = parse_angle_value(value) {
-                style.rotate_y = Some(deg);
+            CalcParseResult::Static(val) => {
+                style.rotate_x = Some(val);
             }
-        }
-        "perspective" => {
-            if let Some(px) = parse_css_px(value) {
-                style.perspective = Some(px);
+            CalcParseResult::NotCalc => {
+                if let Some(deg) = parse_angle_value(value) {
+                    style.rotate_x = Some(deg);
+                }
             }
-        }
-        "shape-3d" => {
+        },
+        "rotate-y" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::RotateY(expr));
+            }
+            CalcParseResult::Static(val) => {
+                style.rotate_y = Some(val);
+            }
+            CalcParseResult::NotCalc => {
+                if let Some(deg) = parse_angle_value(value) {
+                    style.rotate_y = Some(deg);
+                }
+            }
+        },
+        "perspective" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::Perspective(expr));
+            }
+            CalcParseResult::Static(val) => {
+                style.perspective = Some(val);
+            }
+            CalcParseResult::NotCalc => {
+                if let Some(px) = parse_css_px(value) {
+                    style.perspective = Some(px);
+                }
+            }
+        },
+        // 2D transform properties (standalone, work with text inheritance)
+        "rotate" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::Rotate(expr));
+            }
+            CalcParseResult::Static(val) => {
+                style.rotate = Some(val);
+            }
+            CalcParseResult::NotCalc => {
+                if let Some(deg) = parse_angle_value(value) {
+                    style.rotate = Some(deg);
+                }
+            }
+        },
+        "skew-x" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::SkewX(expr));
+            }
+            CalcParseResult::Static(val) => {
+                style.skew_x = Some(val);
+            }
+            CalcParseResult::NotCalc => {
+                if let Some(deg) = parse_angle_value(value) {
+                    style.skew_x = Some(deg);
+                }
+            }
+        },
+        "skew-y" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::SkewY(expr));
+            }
+            CalcParseResult::Static(val) => {
+                style.skew_y = Some(val);
+            }
+            CalcParseResult::NotCalc => {
+                if let Some(deg) = parse_angle_value(value) {
+                    style.skew_y = Some(deg);
+                }
+            }
+        },
+        "shape-3d" | "shape" => {
             if is_valid_shape_3d(value) {
                 style.shape_3d = Some(value.trim().to_lowercase());
             }
         }
-        "depth" => {
-            if let Some(px) = parse_css_px(value) {
-                style.depth = Some(px);
+        "depth" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::Depth(expr));
             }
-        }
-        "light-direction" => {
+            CalcParseResult::Static(val) => {
+                style.depth = Some(val);
+            }
+            CalcParseResult::NotCalc => {
+                if let Some(px) = parse_css_px(value) {
+                    style.depth = Some(px);
+                }
+            }
+        },
+        "light-direction" | "light" => {
             if let Some(dir) = parse_vec3_value(value) {
                 style.light_direction = Some(dir);
             }
@@ -3169,6 +4052,10 @@ fn apply_property(style: &mut ElementStyle, name: &str, value: &str) {
             if let Ok(v) = value.trim().parse::<f32>() {
                 style.light_intensity = Some(v);
             }
+        }
+        "light-color" => {
+            // Stub: light color modulation (Phase 5)
+            // Currently ignored — light color is always white
         }
         "ambient" => {
             if let Ok(v) = value.trim().parse::<f32>() {
@@ -3180,20 +4067,55 @@ fn apply_property(style: &mut ElementStyle, name: &str, value: &str) {
                 style.specular = Some(v);
             }
         }
-        "translate-z" => {
-            if let Some(px) = parse_css_px(value) {
-                style.translate_z = Some(px);
+        "translate-z" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::TranslateZ(expr));
             }
-        }
-        "3d-op" => {
+            CalcParseResult::Static(val) => {
+                style.translate_z = Some(val);
+            }
+            CalcParseResult::NotCalc => {
+                if let Some(px) = parse_css_px(value) {
+                    style.translate_z = Some(px);
+                }
+            }
+        },
+        "3d-op" | "shape-combine" => {
             if is_valid_op_3d(value) {
                 style.op_3d = Some(value.trim().to_lowercase());
             }
         }
-        "3d-blend" => {
+        "3d-blend" | "shape-blend" => {
             if let Some(px) = parse_css_px(value) {
                 style.blend_3d = Some(px);
             }
+        }
+        "surface" => {
+            // Map surface names to existing material system
+            match value.trim() {
+                "flat" | "solid" | "none" => {
+                    // No material (default solid rendering)
+                }
+                "glossy" | "glass" => {
+                    style.material = Some(Material::Glass(GlassMaterial::default()));
+                }
+                "metallic" | "chrome" => {
+                    style.material = Some(Material::Metallic(MetallicMaterial::new()));
+                }
+                "gold" => {
+                    style.material = Some(Material::Metallic(MetallicMaterial::gold()));
+                }
+                "wood" => {
+                    style.material = Some(Material::Wood(WoodMaterial::default()));
+                }
+                _ => {}
+            }
+        }
+        "surface-roughness" | "surface-fresnel" | "surface-color" | "surface-normal" => {
+            // Stubs for Phase 5 surface model extensions
         }
         "animation" => {
             if let Some(animation) = parse_animation(value) {
@@ -3515,11 +4437,22 @@ fn apply_property(style: &mut ElementStyle, name: &str, value: &str) {
                 }
             }
         }
-        "border-width" => {
-            if let Some(px) = parse_css_px(value) {
-                style.border_width = Some(px);
+        "border-width" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::BorderWidth(expr));
             }
-        }
+            CalcParseResult::Static(val) => {
+                style.border_width = Some(val.max(0.0));
+            }
+            CalcParseResult::NotCalc => {
+                if let Some(px) = parse_css_px(value) {
+                    style.border_width = Some(px);
+                }
+            }
+        },
         "border-color" => {
             if let Some(color) = parse_color(value) {
                 style.border_color = Some(color);
@@ -3688,6 +4621,70 @@ fn apply_property(style: &mut ElementStyle, name: &str, value: &str) {
             "luminance" => style.mask_mode = Some(blinc_core::MaskMode::Luminance),
             _ => {}
         },
+        "flow" => {
+            let v = value.trim();
+            if v == "none" {
+                style.flow = None;
+            } else {
+                style.flow = Some(v.to_string());
+            }
+        }
+        "pointer-space" => {
+            use crate::pointer_query::{PointerSpace, PointerSpaceConfig};
+            let v = value.trim();
+            let space = match v {
+                "self" => PointerSpace::SelfSpace,
+                "parent" => PointerSpace::Parent,
+                "viewport" => PointerSpace::Viewport,
+                "none" => {
+                    style.pointer_space = None;
+                    return;
+                }
+                _ => PointerSpace::SelfSpace,
+            };
+            let config = style
+                .pointer_space
+                .get_or_insert(PointerSpaceConfig::default());
+            config.space = space;
+        }
+        "pointer-origin" => {
+            use crate::pointer_query::{PointerOrigin, PointerSpaceConfig};
+            let v = value.trim();
+            let origin = match v {
+                "center" => PointerOrigin::Center,
+                "top-left" => PointerOrigin::TopLeft,
+                "bottom-left" => PointerOrigin::BottomLeft,
+                _ => return,
+            };
+            let config = style
+                .pointer_space
+                .get_or_insert(PointerSpaceConfig::default());
+            config.origin = origin;
+        }
+        "pointer-range" => {
+            use crate::pointer_query::PointerSpaceConfig;
+            let v = value.trim();
+            let parts: Vec<&str> = v.split_whitespace().collect();
+            if parts.len() == 2 {
+                if let (Ok(min), Ok(max)) = (parts[0].parse::<f32>(), parts[1].parse::<f32>()) {
+                    let config = style
+                        .pointer_space
+                        .get_or_insert(PointerSpaceConfig::default());
+                    config.range = (min, max);
+                }
+            }
+        }
+        "pointer-smoothing" => {
+            use crate::pointer_query::PointerSpaceConfig;
+            let v = value.trim();
+            let v = v.strip_suffix('s').unwrap_or(v); // strip optional 's' suffix
+            if let Ok(dur) = v.parse::<f32>() {
+                let config = style
+                    .pointer_space
+                    .get_or_insert(PointerSpaceConfig::default());
+                config.smoothing = dur;
+            }
+        }
         _ => {
             // Unknown property - log at debug level for forward compatibility
             debug!(
@@ -3859,13 +4856,24 @@ fn apply_property_with_errors(
             "none" => style.scrollbar_width = Some(crate::element_style::ScrollbarWidth::None),
             _ => errors.push(ParseError::invalid_value(name, value, line, column)),
         },
-        "border-radius" => {
-            if let Some(radius) = parse_radius(value) {
-                style.corner_radius = Some(radius);
-            } else {
-                errors.push(ParseError::invalid_value(name, value, line, column));
+        "border-radius" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::CornerRadius(expr));
             }
-        }
+            CalcParseResult::Static(val) => {
+                style.corner_radius = Some(CornerRadius::uniform(val.max(0.0)));
+            }
+            CalcParseResult::NotCalc => {
+                if let Some(radius) = parse_radius(value) {
+                    style.corner_radius = Some(radius);
+                } else {
+                    errors.push(ParseError::invalid_value(name, value, line, column));
+                }
+            }
+        },
         "box-shadow" => {
             if let Some(shadow) = parse_shadow(value) {
                 style.shadow = Some(shadow);
@@ -3892,13 +4900,24 @@ fn apply_property_with_errors(
                 errors.push(ParseError::invalid_value(name, value, line, column));
             }
         }
-        "opacity" => {
-            if let Ok((_, opacity)) = parse_opacity::<nom::error::Error<&str>>(value) {
-                style.opacity = Some(opacity.clamp(0.0, 1.0));
-            } else {
-                errors.push(ParseError::invalid_value(name, value, line, column));
+        "opacity" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::Opacity(expr));
             }
-        }
+            CalcParseResult::Static(val) => {
+                style.opacity = Some(val.clamp(0.0, 1.0));
+            }
+            CalcParseResult::NotCalc => {
+                if let Ok((_, opacity)) = parse_opacity::<nom::error::Error<&str>>(value) {
+                    style.opacity = Some(opacity.clamp(0.0, 1.0));
+                } else {
+                    errors.push(ParseError::invalid_value(name, value, line, column));
+                }
+            }
+        },
         "render-layer" => {
             if let Ok((_, layer)) = parse_render_layer::<nom::error::Error<&str>>(value) {
                 style.render_layer = Some(layer);
@@ -3916,42 +4935,141 @@ fn apply_property_with_errors(
             }
         }
         // 3D transform properties
-        "rotate-x" => {
-            if let Some(deg) = parse_angle_value(value) {
-                style.rotate_x = Some(deg);
-            } else {
-                errors.push(ParseError::invalid_value(name, value, line, column));
+        "rotate-x" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::RotateX(expr));
             }
-        }
-        "rotate-y" => {
-            if let Some(deg) = parse_angle_value(value) {
-                style.rotate_y = Some(deg);
-            } else {
-                errors.push(ParseError::invalid_value(name, value, line, column));
+            CalcParseResult::Static(val) => {
+                style.rotate_x = Some(val);
             }
-        }
-        "perspective" => {
-            if let Some(px) = parse_css_px(value) {
-                style.perspective = Some(px);
-            } else {
-                errors.push(ParseError::invalid_value(name, value, line, column));
+            CalcParseResult::NotCalc => {
+                if let Some(deg) = parse_angle_value(value) {
+                    style.rotate_x = Some(deg);
+                } else {
+                    errors.push(ParseError::invalid_value(name, value, line, column));
+                }
             }
-        }
-        "shape-3d" => {
+        },
+        "rotate-y" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::RotateY(expr));
+            }
+            CalcParseResult::Static(val) => {
+                style.rotate_y = Some(val);
+            }
+            CalcParseResult::NotCalc => {
+                if let Some(deg) = parse_angle_value(value) {
+                    style.rotate_y = Some(deg);
+                } else {
+                    errors.push(ParseError::invalid_value(name, value, line, column));
+                }
+            }
+        },
+        "perspective" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::Perspective(expr));
+            }
+            CalcParseResult::Static(val) => {
+                style.perspective = Some(val);
+            }
+            CalcParseResult::NotCalc => {
+                if let Some(px) = parse_css_px(value) {
+                    style.perspective = Some(px);
+                } else {
+                    errors.push(ParseError::invalid_value(name, value, line, column));
+                }
+            }
+        },
+        // 2D transform properties (standalone, work with text inheritance)
+        "rotate" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::Rotate(expr));
+            }
+            CalcParseResult::Static(val) => {
+                style.rotate = Some(val);
+            }
+            CalcParseResult::NotCalc => {
+                if let Some(deg) = parse_angle_value(value) {
+                    style.rotate = Some(deg);
+                } else {
+                    errors.push(ParseError::invalid_value(name, value, line, column));
+                }
+            }
+        },
+        "skew-x" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::SkewX(expr));
+            }
+            CalcParseResult::Static(val) => {
+                style.skew_x = Some(val);
+            }
+            CalcParseResult::NotCalc => {
+                if let Some(deg) = parse_angle_value(value) {
+                    style.skew_x = Some(deg);
+                } else {
+                    errors.push(ParseError::invalid_value(name, value, line, column));
+                }
+            }
+        },
+        "skew-y" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::SkewY(expr));
+            }
+            CalcParseResult::Static(val) => {
+                style.skew_y = Some(val);
+            }
+            CalcParseResult::NotCalc => {
+                if let Some(deg) = parse_angle_value(value) {
+                    style.skew_y = Some(deg);
+                } else {
+                    errors.push(ParseError::invalid_value(name, value, line, column));
+                }
+            }
+        },
+        "shape-3d" | "shape" => {
             if is_valid_shape_3d(value) {
                 style.shape_3d = Some(value.trim().to_lowercase());
             } else {
                 errors.push(ParseError::invalid_value(name, value, line, column));
             }
         }
-        "depth" => {
-            if let Some(px) = parse_css_px(value) {
-                style.depth = Some(px);
-            } else {
-                errors.push(ParseError::invalid_value(name, value, line, column));
+        "depth" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::Depth(expr));
             }
-        }
-        "light-direction" => {
+            CalcParseResult::Static(val) => {
+                style.depth = Some(val);
+            }
+            CalcParseResult::NotCalc => {
+                if let Some(px) = parse_css_px(value) {
+                    style.depth = Some(px);
+                } else {
+                    errors.push(ParseError::invalid_value(name, value, line, column));
+                }
+            }
+        },
+        "light-direction" | "light" => {
             if let Some(dir) = parse_vec3_value(value) {
                 style.light_direction = Some(dir);
             } else {
@@ -3964,6 +5082,9 @@ fn apply_property_with_errors(
             } else {
                 errors.push(ParseError::invalid_value(name, value, line, column));
             }
+        }
+        "light-color" => {
+            // Stub: light color modulation (Phase 5)
         }
         "ambient" => {
             if let Ok(v) = value.trim().parse::<f32>() {
@@ -3979,26 +5100,58 @@ fn apply_property_with_errors(
                 errors.push(ParseError::invalid_value(name, value, line, column));
             }
         }
-        "translate-z" => {
-            if let Some(px) = parse_css_px(value) {
-                style.translate_z = Some(px);
-            } else {
-                errors.push(ParseError::invalid_value(name, value, line, column));
+        "translate-z" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::TranslateZ(expr));
             }
-        }
-        "3d-op" => {
+            CalcParseResult::Static(val) => {
+                style.translate_z = Some(val);
+            }
+            CalcParseResult::NotCalc => {
+                if let Some(px) = parse_css_px(value) {
+                    style.translate_z = Some(px);
+                } else {
+                    errors.push(ParseError::invalid_value(name, value, line, column));
+                }
+            }
+        },
+        "3d-op" | "shape-combine" => {
             if is_valid_op_3d(value) {
                 style.op_3d = Some(value.trim().to_lowercase());
             } else {
                 errors.push(ParseError::invalid_value(name, value, line, column));
             }
         }
-        "3d-blend" => {
+        "3d-blend" | "shape-blend" => {
             if let Some(px) = parse_css_px(value) {
                 style.blend_3d = Some(px);
             } else {
                 errors.push(ParseError::invalid_value(name, value, line, column));
             }
+        }
+        "surface" => match value.trim() {
+            "flat" | "solid" | "none" => {}
+            "glossy" | "glass" => {
+                style.material = Some(Material::Glass(GlassMaterial::default()));
+            }
+            "metallic" | "chrome" => {
+                style.material = Some(Material::Metallic(MetallicMaterial::new()));
+            }
+            "gold" => {
+                style.material = Some(Material::Metallic(MetallicMaterial::gold()));
+            }
+            "wood" => {
+                style.material = Some(Material::Wood(WoodMaterial::default()));
+            }
+            _ => {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        },
+        "surface-roughness" | "surface-fresnel" | "surface-color" | "surface-normal" => {
+            // Stubs for Phase 5 surface model extensions
         }
         "animation" => {
             if let Some(animation) = parse_animation(value) {
@@ -4369,13 +5522,24 @@ fn apply_property_with_errors(
                 }
             }
         }
-        "border-width" => {
-            if let Some(px) = parse_css_px(value) {
-                style.border_width = Some(px);
-            } else {
-                errors.push(ParseError::invalid_value(name, value, line, column));
+        "border-width" => match try_parse_calc(value) {
+            CalcParseResult::Dynamic(expr) => {
+                style
+                    .dynamic_properties
+                    .get_or_insert_with(Vec::new)
+                    .push(crate::element_style::DynamicProperty::BorderWidth(expr));
             }
-        }
+            CalcParseResult::Static(val) => {
+                style.border_width = Some(val.max(0.0));
+            }
+            CalcParseResult::NotCalc => {
+                if let Some(px) = parse_css_px(value) {
+                    style.border_width = Some(px);
+                } else {
+                    errors.push(ParseError::invalid_value(name, value, line, column));
+                }
+            }
+        },
         "border-color" => {
             if let Some(color) = parse_color(value) {
                 style.border_color = Some(color);
@@ -4584,6 +5748,82 @@ fn apply_property_with_errors(
             "luminance" => style.mask_mode = Some(blinc_core::MaskMode::Luminance),
             _ => errors.push(ParseError::invalid_value(name, value, line, column)),
         },
+        "flow" => {
+            let v = value.trim();
+            if v == "none" {
+                style.flow = None;
+            } else {
+                style.flow = Some(v.to_string());
+            }
+        }
+        "pointer-space" => {
+            use crate::pointer_query::{PointerSpace, PointerSpaceConfig};
+            let v = value.trim();
+            let space = match v {
+                "self" => PointerSpace::SelfSpace,
+                "parent" => PointerSpace::Parent,
+                "viewport" => PointerSpace::Viewport,
+                "none" => {
+                    style.pointer_space = None;
+                    return;
+                }
+                _ => {
+                    errors.push(ParseError::invalid_value(name, value, line, column));
+                    return;
+                }
+            };
+            let config = style
+                .pointer_space
+                .get_or_insert(PointerSpaceConfig::default());
+            config.space = space;
+        }
+        "pointer-origin" => {
+            use crate::pointer_query::{PointerOrigin, PointerSpaceConfig};
+            let v = value.trim();
+            let origin = match v {
+                "center" => PointerOrigin::Center,
+                "top-left" => PointerOrigin::TopLeft,
+                "bottom-left" => PointerOrigin::BottomLeft,
+                _ => {
+                    errors.push(ParseError::invalid_value(name, value, line, column));
+                    return;
+                }
+            };
+            let config = style
+                .pointer_space
+                .get_or_insert(PointerSpaceConfig::default());
+            config.origin = origin;
+        }
+        "pointer-range" => {
+            use crate::pointer_query::PointerSpaceConfig;
+            let v = value.trim();
+            let parts: Vec<&str> = v.split_whitespace().collect();
+            if parts.len() == 2 {
+                if let (Ok(min), Ok(max)) = (parts[0].parse::<f32>(), parts[1].parse::<f32>()) {
+                    let config = style
+                        .pointer_space
+                        .get_or_insert(PointerSpaceConfig::default());
+                    config.range = (min, max);
+                } else {
+                    errors.push(ParseError::invalid_value(name, value, line, column));
+                }
+            } else {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        }
+        "pointer-smoothing" => {
+            use crate::pointer_query::PointerSpaceConfig;
+            let v = value.trim();
+            let v = v.strip_suffix('s').unwrap_or(v);
+            if let Ok(dur) = v.parse::<f32>() {
+                let config = style
+                    .pointer_space
+                    .get_or_insert(PointerSpaceConfig::default());
+                config.smoothing = dur;
+            } else {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        }
         _ => {
             // Unknown property - collect as warning
             errors.push(ParseError::unknown_property(name, line, column));
@@ -5904,6 +7144,17 @@ fn parse_time_value(input: &str) -> Option<u32> {
 /// Parse a CSS length value in pixels (e.g. "100px", "50", "10.5px")
 fn parse_css_px(input: &str) -> Option<f32> {
     let trimmed = input.trim();
+
+    // Support calc() expressions — evaluate static calcs immediately
+    if trimmed.starts_with("calc(") {
+        if let Some(expr) = crate::calc::parse_calc(trimmed) {
+            if !expr.is_dynamic() {
+                return Some(expr.eval(&crate::calc::CalcContext::default()));
+            }
+        }
+        return None;
+    }
+
     if let Some(px_str) = trimmed.strip_suffix("px") {
         return px_str.trim().parse::<f32>().ok();
     }
@@ -5954,10 +7205,25 @@ fn parse_object_position(input: &str) -> Option<[f32; 2]> {
     }
 }
 
-/// Parse a CSS dimension value: `Npx`, `N%`, `auto`, `fit-content`, `max-content`
+/// Parse a CSS dimension value: `Npx`, `N%`, `auto`, `fit-content`, `max-content`, or `calc(...)`
 fn parse_css_dimension(input: &str) -> Option<crate::element_style::StyleDimension> {
     use crate::element_style::StyleDimension;
     let trimmed = input.trim();
+
+    // Support calc() expressions
+    if trimmed.starts_with("calc(") {
+        if let Some(expr) = crate::calc::parse_calc(trimmed) {
+            if !expr.is_dynamic() {
+                // Static calc — check if it contains a percentage
+                // For now, evaluate as px value
+                return Some(StyleDimension::Length(
+                    expr.eval(&crate::calc::CalcContext::default()),
+                ));
+            }
+        }
+        return None;
+    }
+
     match trimmed.to_lowercase().as_str() {
         "auto" | "fit-content" | "max-content" => Some(StyleDimension::Auto),
         _ => {
@@ -5973,8 +7239,16 @@ fn parse_css_dimension(input: &str) -> Option<crate::element_style::StyleDimensi
 
 /// Parse a CSS spacing value (uniform or per-side)
 /// Supports: "10px", "10px 20px" (vert horiz), "10px 20px 30px 40px" (top right bottom left)
+/// Also supports `calc(...)` as a single uniform value.
 fn parse_css_spacing(input: &str) -> Option<SpacingRect> {
     let trimmed = input.trim();
+
+    // Handle calc() as a single uniform value (don't split on whitespace inside calc)
+    if trimmed.starts_with("calc(") {
+        let v = parse_css_px(trimmed)?;
+        return Some(SpacingRect::uniform(v));
+    }
+
     let parts: Vec<&str> = trimmed.split_whitespace().collect();
     match parts.len() {
         1 => {
@@ -6471,6 +7745,34 @@ fn parse_gradient_direction(first_part: &str) -> (f32, usize) {
 }
 
 /// Parse angle value (e.g., "45deg", "0.5turn", "100grad")
+/// Result of attempting to parse a CSS value as a calc() expression.
+enum CalcParseResult {
+    /// Contains env() — needs per-frame evaluation
+    Dynamic(crate::calc::CalcExpr),
+    /// Pure calc() with no env() — evaluate once to a fixed value
+    Static(f32),
+    /// Not a calc expression — fall through to normal parsing
+    NotCalc,
+}
+
+/// Try to parse a CSS property value as a calc() expression.
+/// Returns Dynamic if it contains env() references (needs per-frame eval),
+/// Static if it's a pure calc, or NotCalc to fall through.
+fn try_parse_calc(value: &str) -> CalcParseResult {
+    let v = value.trim();
+    if v.starts_with("calc(") || v.contains("env(") {
+        if let Some(expr) = crate::calc::parse_calc(v) {
+            if expr.is_dynamic() {
+                return CalcParseResult::Dynamic(expr);
+            } else {
+                let ctx = crate::calc::CalcContext::default();
+                return CalcParseResult::Static(expr.eval(&ctx));
+            }
+        }
+    }
+    CalcParseResult::NotCalc
+}
+
 fn parse_angle_value(input: &str) -> Option<f32> {
     let input = input.trim();
 
@@ -9457,5 +10759,347 @@ mod tests {
         let result = Stylesheet::parse_with_errors(css_finite);
         let style = result.stylesheet.get("b").unwrap();
         assert_eq!(style.animation.as_ref().unwrap().iteration_count, 3);
+    }
+
+    // ====================================================================
+    // Property Aliases
+    // ====================================================================
+
+    #[test]
+    fn test_shape_alias() {
+        let css = "#a { shape: sphere; }";
+        let result = Stylesheet::parse_with_errors(css);
+        let style = result.stylesheet.get("a").unwrap();
+        assert_eq!(style.shape_3d.as_deref(), Some("sphere"));
+    }
+
+    #[test]
+    fn test_shape_3d_still_works() {
+        let css = "#a { shape-3d: box; }";
+        let result = Stylesheet::parse_with_errors(css);
+        let style = result.stylesheet.get("a").unwrap();
+        assert_eq!(style.shape_3d.as_deref(), Some("box"));
+    }
+
+    #[test]
+    fn test_shape_combine_alias() {
+        let css = "#a { shape-combine: smooth-union; }";
+        let result = Stylesheet::parse_with_errors(css);
+        let style = result.stylesheet.get("a").unwrap();
+        assert_eq!(style.op_3d.as_deref(), Some("smooth-union"));
+    }
+
+    #[test]
+    fn test_shape_blend_alias() {
+        let css = "#a { shape-blend: 8; }";
+        let result = Stylesheet::parse_with_errors(css);
+        let style = result.stylesheet.get("a").unwrap();
+        assert_eq!(style.blend_3d, Some(8.0));
+    }
+
+    #[test]
+    fn test_light_alias() {
+        let css = "#a { light: 0.3 -0.8 0.5; }";
+        let result = Stylesheet::parse_with_errors(css);
+        let style = result.stylesheet.get("a").unwrap();
+        let dir = style.light_direction.unwrap();
+        assert!((dir[0] - 0.3).abs() < 0.01);
+        assert!((dir[1] - (-0.8)).abs() < 0.01);
+        assert!((dir[2] - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_surface_glass_alias() {
+        let css = "#a { surface: glossy; }";
+        let result = Stylesheet::parse_with_errors(css);
+        let style = result.stylesheet.get("a").unwrap();
+        assert!(matches!(
+            style.material,
+            Some(crate::element::Material::Glass(_))
+        ));
+    }
+
+    #[test]
+    fn test_surface_metallic_alias() {
+        let css = "#a { surface: chrome; }";
+        let result = Stylesheet::parse_with_errors(css);
+        let style = result.stylesheet.get("a").unwrap();
+        assert!(matches!(
+            style.material,
+            Some(crate::element::Material::Metallic(_))
+        ));
+    }
+
+    #[test]
+    fn test_surface_gold_alias() {
+        let css = "#a { surface: gold; }";
+        let result = Stylesheet::parse_with_errors(css);
+        let style = result.stylesheet.get("a").unwrap();
+        assert!(matches!(
+            style.material,
+            Some(crate::element::Material::Metallic(_))
+        ));
+    }
+
+    // ====================================================================
+    // calc() in CSS values
+    // ====================================================================
+
+    #[test]
+    fn test_calc_in_width() {
+        let css = "#a { width: calc(100 - 20); }";
+        let result = Stylesheet::parse_with_errors(css);
+        let style = result.stylesheet.get("a").unwrap();
+        assert_eq!(
+            style.width,
+            Some(crate::element_style::StyleDimension::Length(80.0))
+        );
+    }
+
+    #[test]
+    fn test_calc_in_padding() {
+        let css = "#a { padding: calc(8 * 2); }";
+        let result = Stylesheet::parse_with_errors(css);
+        let style = result.stylesheet.get("a").unwrap();
+        assert_eq!(
+            style.padding,
+            Some(crate::element_style::SpacingRect::uniform(16.0))
+        );
+    }
+
+    #[test]
+    fn test_calc_in_border_width() {
+        let css = "#a { border-width: calc(1 + 1); }";
+        let result = Stylesheet::parse_with_errors(css);
+        let style = result.stylesheet.get("a").unwrap();
+        assert_eq!(style.border_width, Some(2.0));
+    }
+
+    #[test]
+    fn test_calc_in_gap() {
+        let css = "#a { gap: calc(4 * 3); }";
+        let result = Stylesheet::parse_with_errors(css);
+        let style = result.stylesheet.get("a").unwrap();
+        assert_eq!(style.gap, Some(12.0));
+    }
+
+    // =====================================================================
+    // @flow parser tests
+    // =====================================================================
+
+    #[test]
+    fn test_flow_basic_fragment() {
+        let css = r#"
+            @flow ripple {
+                target: fragment;
+                input uv;
+                input time;
+                node dist = distance(uv, vec2(0.5, 0.5));
+                node wave = sin(dist * 20.0 - time * 4.0);
+                output color = vec4(wave, wave, wave, 1.0);
+            }
+        "#;
+        let result = Stylesheet::parse_with_errors(css);
+        assert!(result.stylesheet.contains_flow("ripple"));
+        let flow = result.stylesheet.get_flow("ripple").unwrap();
+        assert_eq!(flow.target, FlowTarget::Fragment);
+        assert_eq!(flow.inputs.len(), 2);
+        assert_eq!(flow.nodes.len(), 2);
+        assert_eq!(flow.outputs.len(), 1);
+    }
+
+    #[test]
+    fn test_flow_compute_target() {
+        let css = r#"
+            @flow sim {
+                target: compute;
+                workgroup: 64;
+                input pos: buffer(positions, vec4);
+                node new_pos = pos + 1.0;
+                output buffer(positions) = new_pos;
+            }
+        "#;
+        let result = Stylesheet::parse_with_errors(css);
+        let flow = result.stylesheet.get_flow("sim").unwrap();
+        assert_eq!(flow.target, FlowTarget::Compute);
+        assert_eq!(flow.workgroup_size, Some(64));
+        assert_eq!(flow.inputs.len(), 1);
+    }
+
+    #[test]
+    fn test_flow_expr_arithmetic() {
+        let expr = parse_flow_expr("a * 2.0 + b").unwrap();
+        // Should parse as (a * 2.0) + b due to precedence
+        match &expr {
+            FlowExpr::Add(left, right) => {
+                assert!(matches!(left.as_ref(), FlowExpr::Mul(_, _)));
+                assert!(matches!(right.as_ref(), FlowExpr::Ref(_)));
+            }
+            _ => panic!("expected Add, got {:?}", expr),
+        }
+    }
+
+    #[test]
+    fn test_flow_expr_function_call() {
+        let expr = parse_flow_expr("sin(x * 3.14)").unwrap();
+        match &expr {
+            FlowExpr::Call { func, args } => {
+                assert_eq!(*func, FlowFunc::Sin);
+                assert_eq!(args.len(), 1);
+            }
+            _ => panic!("expected Call, got {:?}", expr),
+        }
+    }
+
+    #[test]
+    fn test_flow_expr_nested_functions() {
+        let expr = parse_flow_expr("smoothstep(0.0, 1.0, distance(uv, vec2(0.5, 0.5)))").unwrap();
+        match &expr {
+            FlowExpr::Call { func, args } => {
+                assert_eq!(*func, FlowFunc::Smoothstep);
+                assert_eq!(args.len(), 3);
+                // Third arg should be a distance() call
+                assert!(matches!(
+                    &args[2],
+                    FlowExpr::Call {
+                        func: FlowFunc::Distance,
+                        ..
+                    }
+                ));
+            }
+            _ => panic!("expected Call, got {:?}", expr),
+        }
+    }
+
+    #[test]
+    fn test_flow_expr_color_literal() {
+        let expr = parse_flow_expr("#ff0000").unwrap();
+        match &expr {
+            FlowExpr::Color(r, _g, _b, _a) => {
+                assert!((r - 1.0).abs() < 0.01);
+            }
+            _ => panic!("expected Color, got {:?}", expr),
+        }
+    }
+
+    #[test]
+    fn test_flow_expr_negative_number() {
+        let expr = parse_flow_expr("-1.5").unwrap();
+        match &expr {
+            FlowExpr::Float(v) => assert!((*v - (-1.5)).abs() < 0.001),
+            _ => panic!("expected Float, got {:?}", expr),
+        }
+    }
+
+    #[test]
+    fn test_flow_expr_vec_constructors() {
+        let expr = parse_flow_expr("vec3(1.0, 2.0, 3.0)").unwrap();
+        assert!(matches!(expr, FlowExpr::Vec3(_, _, _)));
+    }
+
+    #[test]
+    fn test_flow_cycle_reported_as_error() {
+        let css = r#"
+            @flow bad {
+                target: fragment;
+                node a = b + 1.0;
+                node b = a + 1.0;
+                output color = a;
+            }
+        "#;
+        let result = Stylesheet::parse_with_errors(css);
+        // Should still parse but with errors
+        assert!(!result.errors.is_empty());
+        let has_cycle_error = result.errors.iter().any(|e| e.message.contains("cycle"));
+        assert!(
+            has_cycle_error,
+            "expected cycle error, got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_flow_with_comments() {
+        let css = r#"
+            @flow test {
+                target: fragment;
+                /* This is a comment */
+                input time;
+                node x = sin(time);
+                output color = vec4(x, x, x, 1.0);
+            }
+        "#;
+        let result = Stylesheet::parse_with_errors(css);
+        assert!(result.stylesheet.contains_flow("test"));
+    }
+
+    #[test]
+    fn test_flow_alongside_rules() {
+        let css = r#"
+            #card { opacity: 0.5; }
+
+            @flow glow {
+                target: fragment;
+                input uv;
+                node c = length(uv);
+                output color = vec4(c, c, c, 1.0);
+            }
+
+            #button { background: #ff0000; }
+        "#;
+        let result = Stylesheet::parse_with_errors(css);
+        assert!(result.stylesheet.get("card").is_some());
+        assert!(result.stylesheet.get("button").is_some());
+        assert!(result.stylesheet.contains_flow("glow"));
+    }
+
+    #[test]
+    fn test_flow_multiple_flows() {
+        let css = r#"
+            @flow a {
+                target: fragment;
+                input uv;
+                node x = length(uv);
+                output color = vec4(x, x, x, 1.0);
+            }
+            @flow b {
+                target: fragment;
+                input time;
+                node y = sin(time);
+                output color = vec4(y, y, y, 1.0);
+            }
+        "#;
+        let result = Stylesheet::parse_with_errors(css);
+        assert_eq!(result.stylesheet.flow_count(), 2);
+        assert!(result.stylesheet.contains_flow("a"));
+        assert!(result.stylesheet.contains_flow("b"));
+    }
+
+    #[test]
+    fn test_flow_bare_output() {
+        let css = r#"
+            @flow test {
+                target: fragment;
+                input uv;
+                node color = vec4(1.0, 0.0, 0.0, 1.0);
+                output color;
+            }
+        "#;
+        let result = Stylesheet::parse_with_errors(css);
+        assert!(result.stylesheet.contains_flow("test"));
+        let flow = result.stylesheet.get_flow("test").unwrap();
+        assert_eq!(flow.outputs.len(), 1);
+        assert!(flow.outputs[0].expr.is_none());
+    }
+
+    #[test]
+    fn test_flow_expr_parenthesized() {
+        let expr = parse_flow_expr("(a + b) * c").unwrap();
+        match &expr {
+            FlowExpr::Mul(left, _right) => {
+                assert!(matches!(left.as_ref(), FlowExpr::Add(_, _)));
+            }
+            _ => panic!("expected Mul, got {:?}", expr),
+        }
     }
 }

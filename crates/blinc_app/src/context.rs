@@ -65,7 +65,23 @@ struct CachedTexture {
     height: u32,
 }
 
+/// Info about a 3D-transformed ancestor layer. When text/SVGs/images are inside a parent
+/// with `perspective` + `rotate-x`/`rotate-y`, this info is used to render them to an
+/// offscreen texture and blit with the same perspective transform.
+#[derive(Clone, Debug)]
+struct Transform3DLayerInfo {
+    /// Node ID of the 3D-transformed ancestor (used as layer grouping key)
+    node_id: LayoutNodeId,
+    /// Screen-space bounds of the 3D layer [x, y, w, h] (DPI-scaled)
+    layer_bounds: [f32; 4],
+    /// Perspective transform parameters
+    transform_3d: blinc_core::Transform3DParams,
+    /// Layer opacity
+    opacity: f32,
+}
+
 /// Text element data for rendering
+#[derive(Clone)]
 struct TextElement {
     content: String,
     x: f32,
@@ -113,9 +129,12 @@ struct TextElement {
     css_affine: Option<[f32; 6]>,
     /// Text shadow (offset_x, offset_y, blur, color) from CSS text-shadow property
     text_shadow: Option<blinc_core::Shadow>,
+    /// 3D layer info if this text is inside a perspective-transformed parent
+    transform_3d_layer: Option<Transform3DLayerInfo>,
 }
 
 /// Image element data for rendering
+#[derive(Clone)]
 struct ImageElement {
     source: String,
     x: f32,
@@ -161,9 +180,12 @@ struct ImageElement {
     mask_params: [f32; 4],
     /// Mask info: [mask_type, start_alpha, end_alpha, 0] (0=none, 1=linear, 2=radial)
     mask_info: [f32; 4],
+    /// 3D layer info if this image is inside a perspective-transformed parent
+    transform_3d_layer: Option<Transform3DLayerInfo>,
 }
 
 /// SVG element data for rendering
+#[derive(Clone)]
 struct SvgElement {
     source: String,
     x: f32,
@@ -193,6 +215,8 @@ struct SvgElement {
     css_affine: Option<[f32; 6]>,
     /// Per-SVG-tag style overrides from CSS tag-name selectors (e.g., `path { fill: red; }`)
     tag_overrides: std::collections::HashMap<String, blinc_layout::element::SvgTagStyle>,
+    /// 3D layer info if this SVG is inside a perspective-transformed parent
+    transform_3d_layer: Option<Transform3DLayerInfo>,
 }
 
 /// Debug bounds element for layout visualization
@@ -2045,6 +2069,7 @@ impl RenderContext {
                 1.0,  // Initial inherited CSS opacity
                 None, // No parent node
                 None, // No initial scroll clip
+                None, // No 3D layer ancestor
             );
         }
 
@@ -2089,6 +2114,10 @@ impl RenderContext {
         // This prevents corner radius morphing when a rounded element (card) is partially
         // scrolled past a sharp scroll boundary.
         current_scroll_clip: Option<[f32; 4]>,
+        // 3D layer info if inside a perspective-transformed ancestor.
+        // Text/SVGs/images inside 3D layers are rendered to offscreen textures
+        // and blitted with the same perspective transform.
+        inside_3d_layer: Option<Transform3DLayerInfo>,
     ) {
         use blinc_layout::Material;
 
@@ -2331,48 +2360,53 @@ impl RenderContext {
         // Compute this node's CSS affine: compose its own CSS transform with inherited.
         // This must happen BEFORE the element-type match block so that SVGs, text, and images
         // get their own transform applied (not just the parent's inherited transform).
+        // NOTE: 3D rotations (rotate-x/rotate-y/perspective) are NOT included here — they
+        // can't be accurately represented as a 2D affine (perspective is projective, not linear).
+        // Proper 3D text compositing requires layer-based rendering (render to texture, then
+        // apply 3D transform to the composite). For now, text stays flat under 3D parents.
         let node_css_affine = if let Some(render_node) = tree.get_render_node(node) {
-            if let Some(blinc_core::Transform::Affine2D(affine)) = &render_node.props.transform {
+            let has_non_identity_2d = if let Some(blinc_core::Transform::Affine2D(affine)) =
+                &render_node.props.transform
+            {
                 let [a, b, c, d, _tx, _ty] = affine.elements;
-                // Check if transform is non-identity (rotation, skew, or scale)
-                let is_identity = (a - 1.0).abs() < 0.0001
+                !((a - 1.0).abs() < 0.0001
                     && b.abs() < 0.0001
                     && c.abs() < 0.0001
-                    && (d - 1.0).abs() < 0.0001;
-                if !is_identity {
-                    // Compute transform center in absolute layout coords
-                    let (cx, cy) =
-                        if let Some([ox_pct, oy_pct]) = render_node.props.transform_origin {
-                            (
-                                abs_x + bounds.width * ox_pct / 100.0,
-                                abs_y + bounds.height * oy_pct / 100.0,
-                            )
-                        } else {
-                            (abs_x + bounds.width / 2.0, abs_y + bounds.height / 2.0)
-                        };
-                    // Build full 6-element affine: T(center) * M * T(-center)
-                    // new_x = a*x + c*y + cx*(1-a) - cy*c
-                    // new_y = b*x + d*y + cy*(1-d) - cx*b
-                    let this_affine =
-                        [a, b, c, d, cx * (1.0 - a) - cy * c, cy * (1.0 - d) - cx * b];
-                    match inherited_css_affine {
-                        Some(parent) => {
-                            // Compose: parent applied first, then this node's transform
-                            // Result = this_affine(parent(x))
-                            let [pa, pb, pc, pd, ptx, pty] = parent;
-                            Some([
-                                a * pa + c * pb,
-                                b * pa + d * pb,
-                                a * pc + c * pd,
-                                b * pc + d * pd,
-                                a * ptx + c * pty + this_affine[4],
-                                b * ptx + d * pty + this_affine[5],
-                            ])
-                        }
-                        None => Some(this_affine),
-                    }
+                    && (d - 1.0).abs() < 0.0001)
+            } else {
+                false
+            };
+
+            if has_non_identity_2d {
+                let affine = match &render_node.props.transform {
+                    Some(blinc_core::Transform::Affine2D(a)) => a.elements,
+                    _ => unreachable!(),
+                };
+                let [a, b, c, d, _tx, _ty] = affine;
+                // Compute transform center in absolute layout coords
+                let (cx, cy) = if let Some([ox_pct, oy_pct]) = render_node.props.transform_origin {
+                    (
+                        abs_x + bounds.width * ox_pct / 100.0,
+                        abs_y + bounds.height * oy_pct / 100.0,
+                    )
                 } else {
-                    inherited_css_affine
+                    (abs_x + bounds.width / 2.0, abs_y + bounds.height / 2.0)
+                };
+                // Build full 6-element affine: T(center) * M * T(-center)
+                let this_affine = [a, b, c, d, cx * (1.0 - a) - cy * c, cy * (1.0 - d) - cx * b];
+                match inherited_css_affine {
+                    Some(parent) => {
+                        let [pa, pb, pc, pd, ptx, pty] = parent;
+                        Some([
+                            a * pa + c * pb,
+                            b * pa + d * pb,
+                            a * pc + c * pd,
+                            b * pc + d * pd,
+                            a * ptx + c * pty + this_affine[4],
+                            b * ptx + d * pty + this_affine[5],
+                        ])
+                    }
+                    None => Some(this_affine),
                 }
             } else {
                 inherited_css_affine
@@ -2572,7 +2606,9 @@ impl RenderContext {
                         italic: text_data.italic,
                         v_align: text_data.v_align,
                         clip_bounds: scaled_clip,
-                        motion_opacity: effective_motion_opacity,
+                        motion_opacity: effective_motion_opacity
+                            * render_node.props.opacity
+                            * inherited_css_opacity,
                         wrap: !is_nowrap && text_data.wrap,
                         line_height: text_data.line_height,
                         measured_width: scaled_measured_width,
@@ -2603,6 +2639,7 @@ impl RenderContext {
                         decoration_thickness: render_node.props.text_decoration_thickness,
                         css_affine: node_css_affine,
                         text_shadow: render_node.props.text_shadow,
+                        transform_3d_layer: inside_3d_layer.clone(),
                     });
                 }
                 ElementType::Svg(svg_data) => {
@@ -2675,9 +2712,12 @@ impl RenderContext {
                         stroke_dashoffset: render_node.props.stroke_dashoffset,
                         svg_path_data: render_node.props.svg_path_data.clone(),
                         clip_bounds: scaled_clip,
-                        motion_opacity: effective_motion_opacity,
+                        motion_opacity: effective_motion_opacity
+                            * render_node.props.opacity
+                            * inherited_css_opacity,
                         css_affine: node_css_affine,
                         tag_overrides: render_node.props.svg_tag_styles.clone(),
+                        transform_3d_layer: inside_3d_layer.clone(),
                     });
                 }
                 ElementType::Image(image_data) => {
@@ -2782,6 +2822,7 @@ impl RenderContext {
                         scroll_clip: scaled_scroll_clip,
                         mask_params,
                         mask_info,
+                        transform_3d_layer: inside_3d_layer.clone(),
                     });
                 }
                 // Canvas elements are rendered inline during tree traversal (in render_layer)
@@ -2863,6 +2904,7 @@ impl RenderContext {
                                 );
                                 mi
                             },
+                            transform_3d_layer: inside_3d_layer.clone(),
                         });
                     }
                 }
@@ -3046,7 +3088,9 @@ impl RenderContext {
                             italic,
                             v_align: styled_data.v_align,
                             clip_bounds: scaled_clip,
-                            motion_opacity: effective_motion_opacity,
+                            motion_opacity: effective_motion_opacity
+                                * render_node.props.opacity
+                                * inherited_css_opacity,
                             wrap: false, // Don't wrap individual segments
                             line_height: styled_data.line_height,
                             measured_width: segment_width,
@@ -3061,6 +3105,7 @@ impl RenderContext {
                             decoration_thickness: render_node.props.text_decoration_thickness,
                             css_affine: node_css_affine,
                             text_shadow: render_node.props.text_shadow,
+                            transform_3d_layer: inside_3d_layer.clone(),
                         });
 
                         x_offset += segment_width;
@@ -3092,6 +3137,40 @@ impl RenderContext {
             inherited_css_opacity
         };
 
+        // Detect 3D layer: if this node has rotate-x/rotate-y/perspective,
+        // create a Transform3DLayerInfo for children to inherit.
+        let child_3d_layer = if let Some(rn) = tree.get_render_node(node) {
+            let has_3d = rn.props.rotate_x.is_some()
+                || rn.props.rotate_y.is_some()
+                || rn.props.perspective.is_some();
+            if has_3d {
+                let rx = rn.props.rotate_x.unwrap_or(0.0).to_radians();
+                let ry = rn.props.rotate_y.unwrap_or(0.0).to_radians();
+                let d = rn.props.perspective.unwrap_or(800.0) * scale;
+                Some(Transform3DLayerInfo {
+                    node_id: node,
+                    layer_bounds: [
+                        abs_x * scale,
+                        abs_y * scale,
+                        bounds.width * scale,
+                        bounds.height * scale,
+                    ],
+                    transform_3d: blinc_core::Transform3DParams {
+                        sin_rx: rx.sin(),
+                        cos_rx: rx.cos(),
+                        sin_ry: ry.sin(),
+                        cos_ry: ry.cos(),
+                        perspective_d: d,
+                    },
+                    opacity: rn.props.opacity,
+                })
+            } else {
+                inside_3d_layer.clone()
+            }
+        } else {
+            inside_3d_layer.clone()
+        };
+
         for child_id in tree.layout().children(node) {
             self.collect_elements_recursive(
                 tree,
@@ -3115,6 +3194,7 @@ impl RenderContext {
                 child_css_opacity,
                 Some(node), // pass current node as parent for children
                 child_scroll_clip,
+                child_3d_layer.clone(),
             );
         }
 
@@ -3202,11 +3282,59 @@ impl RenderContext {
         let mut batch = ctx.take_batch();
 
         // Collect text, SVG, and image elements WITH motion state
-        let (texts, svgs, images) =
+        let (all_texts, all_svgs, all_images) =
             self.collect_render_elements_with_state(tree, Some(render_state));
 
-        // Pre-load all images into cache before rendering
+        // Partition elements into normal (no 3D ancestor) and 3D-layer groups.
+        // Elements inside a 3D-transformed parent need to be rendered to an offscreen
+        // texture and blitted with the same perspective transform.
+        let mut texts = Vec::new();
+        let mut layer_3d_texts: std::collections::HashMap<
+            LayoutNodeId,
+            (Transform3DLayerInfo, Vec<TextElement>),
+        > = std::collections::HashMap::new();
+        for text in all_texts {
+            if let Some(ref info) = text.transform_3d_layer {
+                layer_3d_texts
+                    .entry(info.node_id)
+                    .or_insert_with(|| (info.clone(), Vec::new()))
+                    .1
+                    .push(text);
+            } else {
+                texts.push(text);
+            }
+        }
+
+        let mut svgs = Vec::new();
+        let mut layer_3d_svgs: std::collections::HashMap<LayoutNodeId, Vec<SvgElement>> =
+            std::collections::HashMap::new();
+        for svg in all_svgs {
+            if let Some(ref info) = svg.transform_3d_layer {
+                layer_3d_svgs.entry(info.node_id).or_default().push(svg);
+            } else {
+                svgs.push(svg);
+            }
+        }
+
+        let mut images = Vec::new();
+        let mut layer_3d_images: std::collections::HashMap<LayoutNodeId, Vec<ImageElement>> =
+            std::collections::HashMap::new();
+        for image in all_images {
+            if let Some(ref info) = image.transform_3d_layer {
+                layer_3d_images.entry(info.node_id).or_default().push(image);
+            } else {
+                images.push(image);
+            }
+        }
+
+        // Collect unique 3D layer IDs for rendering
+        let layer_3d_ids: Vec<LayoutNodeId> = layer_3d_texts.keys().cloned().collect();
+
+        // Pre-load all images into cache before rendering (both normal and 3D-layer)
         self.preload_images(&images, width as f32, height as f32);
+        for layer_imgs in layer_3d_images.values() {
+            self.preload_images(layer_imgs, width as f32, height as f32);
+        }
 
         // Prepare text glyphs with z_layer information
         // Store (z_layer, glyphs) to enable interleaved rendering
@@ -3710,6 +3838,23 @@ impl RenderContext {
             }
         }
 
+        // Render 3D-layer text/SVGs/images: for each 3D layer group, render to an
+        // offscreen texture and blit with the same perspective transform as the parent.
+        for layer_id in &layer_3d_ids {
+            if let Some((info, layer_texts)) = layer_3d_texts.get(layer_id) {
+                let layer_svgs_vec = layer_3d_svgs.get(layer_id);
+                let layer_images_vec = layer_3d_images.get(layer_id);
+                self.render_3d_layer_elements(
+                    target,
+                    info,
+                    layer_texts,
+                    layer_svgs_vec.map(|v| v.as_slice()).unwrap_or(&[]),
+                    layer_images_vec.map(|v| v.as_slice()).unwrap_or(&[]),
+                    scale_factor,
+                );
+            }
+        }
+
         // Poll the device to free completed command buffers
         self.renderer.poll();
 
@@ -3733,6 +3878,167 @@ impl RenderContext {
         self.return_scratch_elements(texts, svgs, images);
 
         Ok(())
+    }
+
+    /// Render 3D-layer text/SVGs/images to an offscreen texture and blit with perspective.
+    ///
+    /// Elements inside a parent with `perspective` + `rotate-x`/`rotate-y` need to be
+    /// rendered to a temporary offscreen texture and then blitted with the same perspective
+    /// transform so they visually tilt with their parent's 3D transform.
+    fn render_3d_layer_elements(
+        &mut self,
+        target: &wgpu::TextureView,
+        info: &Transform3DLayerInfo,
+        texts: &[TextElement],
+        svgs: &[SvgElement],
+        images: &[ImageElement],
+        scale_factor: f32,
+    ) {
+        let [lx, ly, lw, lh] = info.layer_bounds;
+        if lw <= 0.0 || lh <= 0.0 {
+            return;
+        }
+
+        let tex_w = (lw.ceil() as u32).max(1);
+        let tex_h = (lh.ceil() as u32).max(1);
+
+        // Acquire offscreen texture
+        let layer_tex = self.renderer.acquire_layer_texture((tex_w, tex_h), false);
+        self.renderer
+            .clear_target(&layer_tex.view, wgpu::Color::TRANSPARENT);
+
+        // Set viewport to offscreen texture size
+        self.renderer.set_viewport_override((tex_w, tex_h));
+
+        // Render offset text glyphs
+        if !texts.is_empty() {
+            let mut layer_glyphs: Vec<GpuGlyph> = Vec::new();
+            for text in texts {
+                let alignment = match text.align {
+                    TextAlign::Left => TextAlignment::Left,
+                    TextAlign::Center => TextAlignment::Center,
+                    TextAlign::Right => TextAlignment::Right,
+                };
+
+                let color = if text.motion_opacity < 1.0 {
+                    [
+                        text.color[0],
+                        text.color[1],
+                        text.color[2],
+                        text.color[3] * text.motion_opacity,
+                    ]
+                } else {
+                    text.color
+                };
+
+                let effective_width = if let Some(clip) = text.clip_bounds {
+                    clip[2].min(text.width)
+                } else {
+                    text.width
+                };
+                let needs_wrap = text.wrap && effective_width < text.measured_width - 2.0;
+                let wrap_width = Some(text.width);
+                let font_name = text.font_family.name.as_deref();
+                let generic = to_gpu_generic_font(text.font_family.generic);
+                let font_weight = text.weight.weight();
+
+                let (anchor, y_pos, use_layout_height) = match text.v_align {
+                    TextVerticalAlign::Center => {
+                        (TextAnchor::Center, text.y + text.height / 2.0, false)
+                    }
+                    TextVerticalAlign::Top => (TextAnchor::Top, text.y, true),
+                    TextVerticalAlign::Baseline => {
+                        let baseline_y = text.y + text.ascender;
+                        (TextAnchor::Baseline, baseline_y, false)
+                    }
+                };
+                let layout_height = if use_layout_height {
+                    Some(text.height)
+                } else {
+                    None
+                };
+
+                if let Ok(mut glyphs) = self.text_ctx.prepare_text_with_style(
+                    &text.content,
+                    text.x - lx,
+                    y_pos - ly,
+                    text.font_size,
+                    color,
+                    anchor,
+                    alignment,
+                    wrap_width,
+                    needs_wrap,
+                    font_name,
+                    generic,
+                    font_weight,
+                    text.italic,
+                    layout_height,
+                    text.letter_spacing,
+                ) {
+                    // Offset clip bounds to layer-local coords
+                    if let Some(clip) = text.clip_bounds {
+                        for glyph in &mut glyphs {
+                            glyph.clip_bounds = [clip[0] - lx, clip[1] - ly, clip[2], clip[3]];
+                        }
+                    }
+                    layer_glyphs.extend(glyphs);
+                }
+            }
+
+            if !layer_glyphs.is_empty() {
+                self.render_text(&layer_tex.view, &layer_glyphs);
+            }
+        }
+
+        // Render offset images (mutate in place — we own these from partition)
+        if !images.is_empty() {
+            let mut offset_images = images.to_vec();
+            for img in &mut offset_images {
+                img.x -= lx;
+                img.y -= ly;
+                if let Some(ref mut clip) = img.clip_bounds {
+                    clip[0] -= lx;
+                    clip[1] -= ly;
+                }
+                if let Some(ref mut scroll) = img.scroll_clip {
+                    scroll[0] -= lx;
+                    scroll[1] -= ly;
+                }
+            }
+            self.render_images(&layer_tex.view, &offset_images, lw, lh, scale_factor);
+        }
+
+        // Render offset SVGs (mutate in place — we own these from partition)
+        if !svgs.is_empty() {
+            let mut offset_svgs = svgs.to_vec();
+            for svg in &mut offset_svgs {
+                svg.x -= lx;
+                svg.y -= ly;
+                if let Some(ref mut clip) = svg.clip_bounds {
+                    clip[0] -= lx;
+                    clip[1] -= ly;
+                }
+            }
+            self.render_rasterized_svgs(&layer_tex.view, &offset_svgs, scale_factor);
+        }
+
+        // Restore viewport
+        self.renderer.restore_viewport();
+
+        // Blit with perspective transform
+        self.renderer.blit_tight_texture_to_target(
+            &layer_tex.view,
+            (tex_w, tex_h),
+            target,
+            (lx, ly),
+            (lw, lh),
+            info.opacity,
+            blinc_core::BlendMode::Normal,
+            None,
+            Some(info.transform_3d),
+        );
+
+        self.renderer.release_layer_texture(layer_tex);
     }
 
     /// Render a tree on top of existing content (no clear)

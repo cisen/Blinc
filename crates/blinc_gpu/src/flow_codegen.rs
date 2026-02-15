@@ -195,7 +195,12 @@ impl<'a> CodegenContext<'a> {
                 self.need_sdf_ops = true;
                 self.used_sdf_ops.insert("sdf_smooth_subtract");
             }
-            FlowFunc::Perlin | FlowFunc::Simplex | FlowFunc::Worley | FlowFunc::Fbm => {
+            FlowFunc::Perlin
+            | FlowFunc::Simplex
+            | FlowFunc::Worley
+            | FlowFunc::Fbm
+            | FlowFunc::FbmEx
+            | FlowFunc::Checkerboard => {
                 self.need_noise = true;
             }
             FlowFunc::Phong | FlowFunc::BlinnPhong => {
@@ -513,6 +518,36 @@ impl<'a> CodegenContext<'a> {
         let _ = writeln!(out, "        }}");
         let _ = writeln!(out, "    }}");
         let _ = writeln!(out, "    return min_dist;");
+        let _ = writeln!(out, "}}");
+        let _ = writeln!(out);
+
+        // Extended FBM with configurable persistence (roughness)
+        let _ = writeln!(
+            out,
+            "fn flow_fbm_ex(p: vec2<f32>, octaves: i32, persistence: f32) -> f32 {{"
+        );
+        let _ = writeln!(out, "    var value = 0.0;");
+        let _ = writeln!(out, "    var amplitude = 0.5;");
+        let _ = writeln!(out, "    var pos = p;");
+        let _ = writeln!(out, "    for (var i = 0; i < octaves; i = i + 1) {{");
+        let _ = writeln!(
+            out,
+            "        value = value + amplitude * flow_noise2d(pos);"
+        );
+        let _ = writeln!(out, "        pos = pos * 2.0;");
+        let _ = writeln!(out, "        amplitude = amplitude * persistence;");
+        let _ = writeln!(out, "    }}");
+        let _ = writeln!(out, "    return value;");
+        let _ = writeln!(out, "}}");
+        let _ = writeln!(out);
+
+        // Checkerboard pattern
+        let _ = writeln!(
+            out,
+            "fn flow_checkerboard(p: vec2<f32>, scale: f32) -> f32 {{"
+        );
+        let _ = writeln!(out, "    let c = floor(p * scale) % vec2<f32>(2.0);");
+        let _ = writeln!(out, "    return abs(c.x + c.y - 1.0);");
         let _ = writeln!(out, "}}");
         let _ = writeln!(out);
     }
@@ -1031,7 +1066,23 @@ fn func_to_wgsl(func: FlowFunc, args: &[String]) -> Result<String, FlowError> {
             } else {
                 "4".to_string()
             };
-            format!("flow_fbm({}, i32({}))", args[0], octaves)
+            format!("flow_fbm({}, i32({}))", args[0], wgsl_to_int(&octaves))
+        }
+        FlowFunc::FbmEx => {
+            format!(
+                "flow_fbm_ex({}, i32({}), {})",
+                args[0],
+                wgsl_to_int(&args[1]),
+                args[2]
+            )
+        }
+        FlowFunc::Checkerboard => {
+            let scale = if args.len() >= 2 {
+                args[1].clone()
+            } else {
+                "8.0".to_string()
+            };
+            format!("flow_checkerboard({}, {})", args[0], scale)
         }
 
         // Simulation helpers
@@ -1098,6 +1149,12 @@ fn format_float(v: f32) -> String {
     } else {
         format!("{}", v)
     }
+}
+
+/// Coerce a WGSL expression string to integer form for i32 parameters.
+/// Strips trailing ".0" from float literals so `i32(6)` is emitted instead of `i32(6.0)`.
+fn wgsl_to_int(s: &str) -> String {
+    s.strip_suffix(".0").unwrap_or(s).to_string()
 }
 
 // ==========================================================================
@@ -1282,7 +1339,7 @@ mod tests {
     #[test]
     fn test_ripple_flow_codegen() {
         let mut graph = make_ripple_flow();
-        graph.validate().unwrap();
+        graph.validate(None).unwrap();
 
         let wgsl = flow_to_wgsl(&graph).unwrap();
 
@@ -1306,8 +1363,9 @@ mod tests {
         assert!(wgsl.contains("let dist: f32 = distance(uv, vec2<f32>(0.5, 0.5))"));
         assert!(wgsl.contains("let wave: f32 = sin(((dist * 20.0) - (time * 4.0)))"));
 
-        // Should contain output
-        assert!(wgsl.contains("return vec4<f32>(wave, wave, wave, 1.0)"));
+        // Should contain output (wrapped in SDF clipping var)
+        assert!(wgsl.contains("var flow_out = vec4<f32>(wave, wave, wave, 1.0)"));
+        assert!(wgsl.contains("return flow_out"));
 
         // Should NOT contain unused helpers
         assert!(!wgsl.contains("flow_sdf_box"));
@@ -1358,7 +1416,7 @@ mod tests {
             expr: Some(FlowExpr::Ref("new_pos".to_string())),
         });
 
-        graph.validate().unwrap();
+        graph.validate(None).unwrap();
         let wgsl = flow_to_wgsl(&graph).unwrap();
 
         // Should have compute entry
@@ -1452,7 +1510,7 @@ mod tests {
             )),
         });
 
-        graph.validate().unwrap();
+        graph.validate(None).unwrap();
         let wgsl = flow_to_wgsl(&graph).unwrap();
 
         // Should have sdf_box helper
@@ -1504,7 +1562,7 @@ mod tests {
             )),
         });
 
-        graph.validate().unwrap();
+        graph.validate(None).unwrap();
         let wgsl = flow_to_wgsl(&graph).unwrap();
 
         // Should have noise helpers
@@ -1512,8 +1570,8 @@ mod tests {
         assert!(wgsl.contains("fn flow_noise2d"));
         assert!(wgsl.contains("fn flow_fbm"));
 
-        // FBM call should use integer octaves
-        assert!(wgsl.contains("flow_fbm(uv, i32(6.0))"));
+        // FBM call should use integer octaves (6.0 → 6 via wgsl_to_int)
+        assert!(wgsl.contains("flow_fbm(uv, i32(6))"));
     }
 
     #[test]
@@ -1557,7 +1615,7 @@ mod tests {
             )),
         });
 
-        graph.validate().unwrap();
+        graph.validate(None).unwrap();
         let wgsl = flow_to_wgsl(&graph).unwrap();
 
         // Should have CSS property uniform

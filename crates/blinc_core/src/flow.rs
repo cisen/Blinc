@@ -42,6 +42,12 @@ pub struct FlowGraph {
     pub outputs: Vec<FlowOutput>,
     /// Cached topological order (node indices, set after validation)
     pub topo_order: Vec<usize>,
+    /// Semantic step declarations (expanded to nodes during validation)
+    pub steps: Vec<FlowStep>,
+    /// Chain declarations (desugared to steps, then expanded to nodes)
+    pub chains: Vec<FlowChain>,
+    /// Composition imports (inlined during validation)
+    pub uses: Vec<FlowUse>,
 }
 
 /// Target pipeline for a flow
@@ -64,6 +70,9 @@ impl FlowGraph {
             nodes: Vec::new(),
             outputs: Vec::new(),
             topo_order: Vec::new(),
+            steps: Vec::new(),
+            chains: Vec::new(),
+            uses: Vec::new(),
         }
     }
 
@@ -329,6 +338,10 @@ pub enum FlowFunc {
     Worley,
     /// Fractal Brownian Motion (layered noise)
     Fbm,
+    /// Extended FBM with configurable persistence (roughness)
+    FbmEx,
+    /// Checkerboard pattern
+    Checkerboard,
 
     // ── Simulation helpers ──
     SpringEval,
@@ -391,6 +404,8 @@ impl FlowFunc {
             "simplex" => Some(Self::Simplex),
             "worley" => Some(Self::Worley),
             "fbm" => Some(Self::Fbm),
+            "fbm_ex" | "fbm-ex" => Some(Self::FbmEx),
+            "checkerboard" => Some(Self::Checkerboard),
 
             "spring_eval" | "spring-eval" => Some(Self::SpringEval),
             "wave_step" | "wave-step" => Some(Self::WaveStep),
@@ -454,6 +469,12 @@ impl FlowFunc {
             | Self::Worley
             | Self::Fbm => (2, 4),
 
+            // FbmEx: (point, octaves, persistence) — 3 args
+            Self::FbmEx => (3, 3),
+
+            // Checkerboard: (point, scale) — 1-2 args
+            Self::Checkerboard => (1, 2),
+
             // Variable-arg functions
             Self::BufferRead => (1, 3),
             Self::SpringEval | Self::WaveStep | Self::FluidStep => (2, 5),
@@ -507,7 +528,12 @@ impl FlowFunc {
             Self::Cross => Some(FlowType::Vec3),
 
             // Noise → Float
-            Self::Perlin | Self::Simplex | Self::Worley | Self::Fbm => Some(FlowType::Float),
+            Self::Perlin
+            | Self::Simplex
+            | Self::Worley
+            | Self::Fbm
+            | Self::FbmEx
+            | Self::Checkerboard => Some(FlowType::Float),
 
             // Sobel → Vec3 (normal)
             Self::Sobel => Some(FlowType::Vec3),
@@ -523,6 +549,289 @@ impl FlowFunc {
             Self::BufferRead => Some(FlowType::Vec4),
         }
     }
+}
+
+// ===========================================================================
+// Semantic Step Types — high-level, composable operations
+// ===========================================================================
+
+/// Semantic step types — named, parameterized operations that expand to
+/// one or more `FlowNode` entries during validation. Names follow CSS-like
+/// namespacing with human-readable parameters instead of GPU jargon.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StepType {
+    // ── pattern-* — procedural texture generators ──
+    /// Fractal/procedural noise (turbulence, smooth, cellular, crystal)
+    PatternNoise,
+    /// Animated concentric rings from a center point
+    PatternRipple,
+    /// Sinusoidal wave on a scalar input
+    PatternWaves,
+    /// Linear, radial, or angular gradient
+    PatternGradient,
+    /// Alternating grid/checkerboard
+    PatternGrid,
+    /// Multi-frequency sine interference
+    PatternPlasma,
+
+    // ── transform-* — spatial distortions ──
+    /// Distort UV space using a pattern or direction
+    TransformWarp,
+    /// Rotate pattern by angle
+    TransformRotate,
+    /// Scale pattern
+    TransformScale,
+    /// Repeat pattern N times
+    TransformTile,
+    /// Mirror at axis
+    TransformMirror,
+    /// Cartesian to polar coordinates
+    TransformPolar,
+
+    // ── surface-* — 3D appearance from 2D patterns ──
+    /// Compute normals from height + apply diffuse lighting
+    SurfaceLight,
+    /// Create 3D depth appearance from height field
+    SurfaceDepth,
+    /// Fresnel/rim glow effect
+    SurfaceGlow,
+
+    // ── color-* — color mapping & manipulation ──
+    /// Map scalar to color gradient via stops
+    ColorRamp,
+    /// Shift hue by amount
+    ColorShift,
+    /// Multiply by a color
+    ColorTint,
+    /// Invert value (1.0 - x)
+    ColorInvert,
+
+    // ── compose-* — combining two sources ──
+    /// Blend two inputs with a blend mode (multiply, screen, overlay, add)
+    ComposeBlend,
+    /// Alpha mask one input by another
+    ComposeMask,
+    /// Stack with opacity
+    ComposeLayer,
+
+    // ── adjust-* — value curve shaping ──
+    /// Distance-based fade
+    AdjustFalloff,
+    /// Remap value from one range to another
+    AdjustRemap,
+    /// Step/smooth threshold cutoff
+    AdjustThreshold,
+    /// Apply easing curve
+    AdjustEase,
+    /// Clamp to range
+    AdjustClamp,
+}
+
+impl StepType {
+    /// Parse a step type name (kebab-case)
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "pattern-noise" => Some(Self::PatternNoise),
+            "pattern-ripple" => Some(Self::PatternRipple),
+            "pattern-waves" => Some(Self::PatternWaves),
+            "pattern-gradient" => Some(Self::PatternGradient),
+            "pattern-grid" => Some(Self::PatternGrid),
+            "pattern-plasma" => Some(Self::PatternPlasma),
+
+            "transform-warp" => Some(Self::TransformWarp),
+            "transform-rotate" => Some(Self::TransformRotate),
+            "transform-scale" => Some(Self::TransformScale),
+            "transform-tile" => Some(Self::TransformTile),
+            "transform-mirror" => Some(Self::TransformMirror),
+            "transform-polar" => Some(Self::TransformPolar),
+
+            "surface-light" => Some(Self::SurfaceLight),
+            "surface-depth" => Some(Self::SurfaceDepth),
+            "surface-glow" => Some(Self::SurfaceGlow),
+
+            "color-ramp" => Some(Self::ColorRamp),
+            "color-shift" => Some(Self::ColorShift),
+            "color-tint" => Some(Self::ColorTint),
+            "color-invert" => Some(Self::ColorInvert),
+
+            "compose-blend" => Some(Self::ComposeBlend),
+            "compose-mask" => Some(Self::ComposeMask),
+            "compose-layer" => Some(Self::ComposeLayer),
+
+            "adjust-falloff" => Some(Self::AdjustFalloff),
+            "adjust-remap" => Some(Self::AdjustRemap),
+            "adjust-threshold" => Some(Self::AdjustThreshold),
+            "adjust-ease" => Some(Self::AdjustEase),
+            "adjust-clamp" => Some(Self::AdjustClamp),
+
+            _ => None,
+        }
+    }
+
+    /// Output type of this step type
+    pub fn output_type(&self) -> FlowType {
+        match self {
+            // Pattern generators → float (scalar field)
+            Self::PatternNoise | Self::PatternRipple | Self::PatternWaves | Self::PatternGrid => {
+                FlowType::Float
+            }
+
+            // Gradient/plasma → vec4 (color)
+            Self::PatternGradient | Self::PatternPlasma => FlowType::Vec4,
+
+            // Transforms → float (transformed scalar)
+            Self::TransformWarp
+            | Self::TransformRotate
+            | Self::TransformScale
+            | Self::TransformTile
+            | Self::TransformMirror
+            | Self::TransformPolar => FlowType::Float,
+
+            // Surface steps → float (shading value) or vec4
+            Self::SurfaceLight | Self::SurfaceDepth | Self::SurfaceGlow => FlowType::Float,
+
+            // Color mapping → vec4
+            Self::ColorRamp | Self::ColorShift | Self::ColorTint | Self::ColorInvert => {
+                FlowType::Vec4
+            }
+
+            // Compositing → vec4
+            Self::ComposeBlend | Self::ComposeMask | Self::ComposeLayer => FlowType::Vec4,
+
+            // Adjustments → float (value modifier)
+            Self::AdjustFalloff
+            | Self::AdjustRemap
+            | Self::AdjustThreshold
+            | Self::AdjustEase
+            | Self::AdjustClamp => FlowType::Float,
+        }
+    }
+
+    /// Required parameter names for this step type
+    pub fn required_params(&self) -> &[&str] {
+        match self {
+            Self::PatternNoise => &[],
+            Self::PatternRipple => &[],
+            Self::PatternWaves => &["source"],
+            Self::PatternGradient => &[],
+            Self::PatternGrid => &[],
+            Self::PatternPlasma => &[],
+
+            Self::TransformWarp => &["source"],
+            Self::TransformRotate => &["source"],
+            Self::TransformScale => &["source"],
+            Self::TransformTile => &["source"],
+            Self::TransformMirror => &["source"],
+            Self::TransformPolar => &[],
+
+            Self::SurfaceLight => &["source"],
+            Self::SurfaceDepth => &["source"],
+            Self::SurfaceGlow => &["source"],
+
+            Self::ColorRamp => &["source", "stops"],
+            Self::ColorShift => &["source"],
+            Self::ColorTint => &["source", "color"],
+            Self::ColorInvert => &["source"],
+
+            Self::ComposeBlend => &["a", "b"],
+            Self::ComposeMask => &["source", "mask"],
+            Self::ComposeLayer => &["a", "b"],
+
+            Self::AdjustFalloff => &["source"],
+            Self::AdjustRemap => &["source"],
+            Self::AdjustThreshold => &["source"],
+            Self::AdjustEase => &["source"],
+            Self::AdjustClamp => &["source"],
+        }
+    }
+}
+
+impl fmt::Display for StepType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::PatternNoise => "pattern-noise",
+            Self::PatternRipple => "pattern-ripple",
+            Self::PatternWaves => "pattern-waves",
+            Self::PatternGradient => "pattern-gradient",
+            Self::PatternGrid => "pattern-grid",
+            Self::PatternPlasma => "pattern-plasma",
+            Self::TransformWarp => "transform-warp",
+            Self::TransformRotate => "transform-rotate",
+            Self::TransformScale => "transform-scale",
+            Self::TransformTile => "transform-tile",
+            Self::TransformMirror => "transform-mirror",
+            Self::TransformPolar => "transform-polar",
+            Self::SurfaceLight => "surface-light",
+            Self::SurfaceDepth => "surface-depth",
+            Self::SurfaceGlow => "surface-glow",
+            Self::ColorRamp => "color-ramp",
+            Self::ColorShift => "color-shift",
+            Self::ColorTint => "color-tint",
+            Self::ColorInvert => "color-invert",
+            Self::ComposeBlend => "compose-blend",
+            Self::ComposeMask => "compose-mask",
+            Self::ComposeLayer => "compose-layer",
+            Self::AdjustFalloff => "adjust-falloff",
+            Self::AdjustRemap => "adjust-remap",
+            Self::AdjustThreshold => "adjust-threshold",
+            Self::AdjustEase => "adjust-ease",
+            Self::AdjustClamp => "adjust-clamp",
+        };
+        write!(f, "{}", name)
+    }
+}
+
+// ===========================================================================
+// Semantic Step, Chain, Use — high-level DAG constructs
+// ===========================================================================
+
+/// A parameter value within a step block
+#[derive(Clone, Debug)]
+pub enum StepParam {
+    /// A flow expression (number, vector, reference, arithmetic)
+    Expr(FlowExpr),
+    /// Color stops for color-ramp: [(color_expr, position)]
+    ColorStops(Vec<(FlowExpr, f32)>),
+    /// A bare identifier (blend modes, curve names, style names)
+    Ident(String),
+    /// Integer value (e.g., detail/octaves count)
+    Int(i32),
+}
+
+/// A semantic step declaration within a @flow block
+#[derive(Clone, Debug)]
+pub struct FlowStep {
+    /// User-chosen name for this step
+    pub name: String,
+    /// The semantic operation type
+    pub step_type: StepType,
+    /// Named parameters
+    pub params: HashMap<String, StepParam>,
+}
+
+/// A chain declaration — piped sequence of operations
+#[derive(Clone, Debug)]
+pub struct FlowChain {
+    /// User-chosen name for the chain's final output
+    pub name: String,
+    /// Ordered sequence of pipe links
+    pub links: Vec<ChainLink>,
+}
+
+/// A single link in a chain pipe
+#[derive(Clone, Debug)]
+pub struct ChainLink {
+    /// The semantic operation type
+    pub step_type: StepType,
+    /// Named parameters (source is implicit from previous link)
+    pub params: HashMap<String, StepParam>,
+}
+
+/// A `use` declaration referencing another @flow for composition
+#[derive(Clone, Debug)]
+pub struct FlowUse {
+    /// Name of the flow being imported
+    pub flow_name: String,
 }
 
 // ===========================================================================
@@ -651,6 +960,41 @@ pub enum FlowError {
         /// The duplicated name
         name: String,
     },
+    /// Unknown semantic step type
+    UnknownStepType {
+        /// The step name
+        name: String,
+        /// The unrecognized type string
+        step_type: String,
+    },
+    /// Missing required parameter for a step
+    MissingStepParam {
+        /// The step name
+        step_name: String,
+        /// The missing parameter
+        param: String,
+    },
+    /// Invalid parameter value for a step
+    InvalidStepParam {
+        /// The step name
+        step_name: String,
+        /// The parameter name
+        param: String,
+        /// Description of the issue
+        message: String,
+    },
+    /// Referenced flow not found (for `use` declarations)
+    FlowNotFound {
+        /// The flow name
+        name: String,
+    },
+    /// Circular flow composition (flow A uses B which uses A)
+    CircularComposition {
+        /// Chain of flow names forming the cycle
+        chain: Vec<String>,
+    },
+    /// Invalid identifier for WGSL (e.g., starts with `__`, contains invalid chars)
+    InvalidIdentifier { name: String, reason: String },
 }
 
 impl fmt::Display for FlowError {
@@ -681,8 +1025,794 @@ impl fmt::Display for FlowError {
             Self::DuplicateName { name } => {
                 write!(f, "duplicate name '{}' in flow graph", name)
             }
+            Self::UnknownStepType { name, step_type } => {
+                write!(f, "step '{}': unknown type '{}'", name, step_type)
+            }
+            Self::MissingStepParam { step_name, param } => {
+                write!(
+                    f,
+                    "step '{}': missing required parameter '{}'",
+                    step_name, param
+                )
+            }
+            Self::InvalidStepParam {
+                step_name,
+                param,
+                message,
+            } => {
+                write!(
+                    f,
+                    "step '{}': invalid parameter '{}': {}",
+                    step_name, param, message
+                )
+            }
+            Self::FlowNotFound { name } => {
+                write!(f, "referenced flow '{}' not found", name)
+            }
+            Self::CircularComposition { chain } => {
+                write!(f, "circular flow composition: {}", chain.join(" → "))
+            }
+            Self::InvalidIdentifier { name, reason } => {
+                write!(f, "invalid identifier '{}': {}", name, reason)
+            }
         }
     }
+}
+
+// ===========================================================================
+// Validation — Cycle Detection & Type Inference
+// ===========================================================================
+
+// ===========================================================================
+// Semantic Layer Expansion — steps/chains/uses → FlowNode/FlowExpr
+// ===========================================================================
+
+impl FlowGraph {
+    /// Expand semantic constructs (steps, chains, uses) into raw FlowNode entries.
+    /// This must run before validation (cycle detection, type inference, etc.).
+    fn expand_semantic_layer(
+        &mut self,
+        flow_registry: Option<&HashMap<String, FlowGraph>>,
+    ) -> Result<(), Vec<FlowError>> {
+        let mut errors = Vec::new();
+
+        // 1. Resolve `use` declarations (inline sub-graphs)
+        self.resolve_uses(flow_registry, &mut errors);
+
+        // 2. Desugar chains into steps
+        self.desugar_chains();
+
+        // 3. Auto-inject implicit inputs (uv, time) if steps need them
+        if !self.steps.is_empty() {
+            self.ensure_input("uv", BuiltinVar::Uv);
+            self.ensure_input("time", BuiltinVar::Time);
+        }
+
+        // 4. Expand steps into nodes
+        self.expand_steps(&mut errors);
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+
+    /// Ensure an input exists; if not, auto-inject it.
+    fn ensure_input(&mut self, name: &str, builtin: BuiltinVar) {
+        if !self.inputs.iter().any(|i| i.name == name) {
+            self.inputs.push(FlowInput {
+                name: name.to_string(),
+                source: FlowInputSource::Builtin(builtin),
+                ty: Some(builtin.output_type()),
+            });
+        }
+    }
+
+    /// Resolve `use` declarations by inlining referenced flow sub-graphs.
+    fn resolve_uses(
+        &mut self,
+        flow_registry: Option<&HashMap<String, FlowGraph>>,
+        errors: &mut Vec<FlowError>,
+    ) {
+        let uses = std::mem::take(&mut self.uses);
+        let registry = match flow_registry {
+            Some(r) => r,
+            None => {
+                for u in &uses {
+                    errors.push(FlowError::FlowNotFound {
+                        name: u.flow_name.clone(),
+                    });
+                }
+                return;
+            }
+        };
+
+        for flow_use in &uses {
+            let referenced = match registry.get(&flow_use.flow_name) {
+                Some(g) => g,
+                None => {
+                    errors.push(FlowError::FlowNotFound {
+                        name: flow_use.flow_name.clone(),
+                    });
+                    continue;
+                }
+            };
+
+            // Check for circular reference (the referenced flow shouldn't use us)
+            if referenced.uses.iter().any(|u| u.flow_name == self.name) {
+                errors.push(FlowError::CircularComposition {
+                    chain: vec![self.name.clone(), flow_use.flow_name.clone()],
+                });
+                continue;
+            }
+
+            let prefix = format!("{}_", flow_use.flow_name.replace('-', "_"));
+
+            // Copy inputs (skip duplicates)
+            for input in &referenced.inputs {
+                if !self.inputs.iter().any(|i| i.name == input.name) {
+                    self.inputs.push(input.clone());
+                }
+            }
+
+            // Copy nodes with prefixed names
+            for node in &referenced.nodes {
+                let prefixed_name = format!("{}{}", prefix, node.name);
+                let prefixed_expr = prefix_refs_in_expr(&node.expr, &prefix, &referenced.inputs);
+                self.nodes.push(FlowNode {
+                    name: prefixed_name,
+                    expr: prefixed_expr,
+                    inferred_type: None,
+                });
+            }
+
+            // Create synthetic nodes for referenced flow's outputs
+            for output in &referenced.outputs {
+                let output_name =
+                    format!("{}_{}", flow_use.flow_name.replace('-', "_"), output.name);
+                let expr = if let Some(ref e) = output.expr {
+                    prefix_refs_in_expr(e, &prefix, &referenced.inputs)
+                } else {
+                    FlowExpr::Ref(format!("{}{}", prefix, output.name))
+                };
+                self.nodes.push(FlowNode {
+                    name: output_name,
+                    expr,
+                    inferred_type: None,
+                });
+            }
+        }
+    }
+
+    /// Desugar chains: each chain link becomes a FlowStep with `source` wired.
+    fn desugar_chains(&mut self) {
+        let chains = std::mem::take(&mut self.chains);
+        for chain in chains {
+            let link_count = chain.links.len();
+            for (i, link) in chain.links.into_iter().enumerate() {
+                let step_name = if i == link_count - 1 {
+                    // Last link uses the chain's name directly
+                    chain.name.clone()
+                } else {
+                    format!("_chain_{}_{}", chain.name, i)
+                };
+
+                let mut params = link.params;
+                // Wire source from previous link (if not the first)
+                if i > 0 {
+                    let prev_name = if i == 1 {
+                        format!("_chain_{}_{}", chain.name, 0)
+                    } else {
+                        format!("_chain_{}_{}", chain.name, i - 1)
+                    };
+                    params
+                        .entry("source".to_string())
+                        .or_insert(StepParam::Expr(FlowExpr::Ref(prev_name)));
+                }
+
+                self.steps.push(FlowStep {
+                    name: step_name,
+                    step_type: link.step_type,
+                    params,
+                });
+            }
+        }
+    }
+
+    /// Expand all steps into FlowNode entries.
+    fn expand_steps(&mut self, errors: &mut Vec<FlowError>) {
+        let steps = std::mem::take(&mut self.steps);
+        for step in &steps {
+            // Validate required params
+            for &param in step.step_type.required_params() {
+                if !step.params.contains_key(param) {
+                    errors.push(FlowError::MissingStepParam {
+                        step_name: step.name.clone(),
+                        param: param.to_string(),
+                    });
+                }
+            }
+
+            match expand_step(step) {
+                Ok(nodes) => self.nodes.extend(nodes),
+                Err(e) => errors.push(e),
+            }
+        }
+    }
+}
+
+/// Prefix all Ref names in an expression, skipping input names (they're shared).
+fn prefix_refs_in_expr(expr: &FlowExpr, prefix: &str, inputs: &[FlowInput]) -> FlowExpr {
+    let input_names: HashSet<&str> = inputs.iter().map(|i| i.name.as_str()).collect();
+    prefix_refs_recursive(expr, prefix, &input_names)
+}
+
+fn prefix_refs_recursive(expr: &FlowExpr, prefix: &str, inputs: &HashSet<&str>) -> FlowExpr {
+    match expr {
+        FlowExpr::Ref(name) => {
+            if inputs.contains(name.as_str()) {
+                FlowExpr::Ref(name.clone())
+            } else {
+                FlowExpr::Ref(format!("{}{}", prefix, name))
+            }
+        }
+        FlowExpr::Float(_) | FlowExpr::Color(_, _, _, _) => expr.clone(),
+        FlowExpr::Vec2(a, b) => FlowExpr::Vec2(
+            Box::new(prefix_refs_recursive(a, prefix, inputs)),
+            Box::new(prefix_refs_recursive(b, prefix, inputs)),
+        ),
+        FlowExpr::Vec3(a, b, c) => FlowExpr::Vec3(
+            Box::new(prefix_refs_recursive(a, prefix, inputs)),
+            Box::new(prefix_refs_recursive(b, prefix, inputs)),
+            Box::new(prefix_refs_recursive(c, prefix, inputs)),
+        ),
+        FlowExpr::Vec4(a, b, c, d) => FlowExpr::Vec4(
+            Box::new(prefix_refs_recursive(a, prefix, inputs)),
+            Box::new(prefix_refs_recursive(b, prefix, inputs)),
+            Box::new(prefix_refs_recursive(c, prefix, inputs)),
+            Box::new(prefix_refs_recursive(d, prefix, inputs)),
+        ),
+        FlowExpr::Add(a, b) => FlowExpr::Add(
+            Box::new(prefix_refs_recursive(a, prefix, inputs)),
+            Box::new(prefix_refs_recursive(b, prefix, inputs)),
+        ),
+        FlowExpr::Sub(a, b) => FlowExpr::Sub(
+            Box::new(prefix_refs_recursive(a, prefix, inputs)),
+            Box::new(prefix_refs_recursive(b, prefix, inputs)),
+        ),
+        FlowExpr::Mul(a, b) => FlowExpr::Mul(
+            Box::new(prefix_refs_recursive(a, prefix, inputs)),
+            Box::new(prefix_refs_recursive(b, prefix, inputs)),
+        ),
+        FlowExpr::Div(a, b) => FlowExpr::Div(
+            Box::new(prefix_refs_recursive(a, prefix, inputs)),
+            Box::new(prefix_refs_recursive(b, prefix, inputs)),
+        ),
+        FlowExpr::Neg(a) => FlowExpr::Neg(Box::new(prefix_refs_recursive(a, prefix, inputs))),
+        FlowExpr::Swizzle(a, s) => FlowExpr::Swizzle(
+            Box::new(prefix_refs_recursive(a, prefix, inputs)),
+            s.clone(),
+        ),
+        FlowExpr::Call { func, args } => FlowExpr::Call {
+            func: *func,
+            args: args
+                .iter()
+                .map(|a| prefix_refs_recursive(a, prefix, inputs))
+                .collect(),
+        },
+    }
+}
+
+// ===========================================================================
+// Step Expansion Functions
+// ===========================================================================
+
+/// Helper: get an expression param or return a default
+fn param_expr(params: &HashMap<String, StepParam>, key: &str, default: FlowExpr) -> FlowExpr {
+    match params.get(key) {
+        Some(StepParam::Expr(e)) => e.clone(),
+        _ => default,
+    }
+}
+
+/// Helper: get an ident param or return a default
+fn param_ident(params: &HashMap<String, StepParam>, key: &str, default: &str) -> String {
+    match params.get(key) {
+        Some(StepParam::Ident(s)) => s.clone(),
+        _ => default.to_string(),
+    }
+}
+
+/// Helper: get an int param or return a default
+fn param_int(params: &HashMap<String, StepParam>, key: &str, default: i32) -> i32 {
+    match params.get(key) {
+        Some(StepParam::Int(n)) => *n,
+        Some(StepParam::Expr(FlowExpr::Float(f))) => *f as i32,
+        _ => default,
+    }
+}
+
+/// Expand a single step into FlowNode entries.
+fn expand_step(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
+    match step.step_type {
+        StepType::PatternNoise => expand_pattern_noise(step),
+        StepType::PatternRipple => expand_pattern_ripple(step),
+        StepType::PatternWaves => expand_pattern_waves(step),
+        StepType::AdjustFalloff => expand_adjust_falloff(step),
+        StepType::ColorRamp => expand_color_ramp(step),
+        StepType::TransformWarp => expand_transform_warp(step),
+        StepType::ComposeBlend => expand_compose_blend(step),
+        StepType::SurfaceLight => expand_surface_light(step),
+        // Remaining types — return a placeholder identity node for now
+        _ => Ok(vec![FlowNode {
+            name: step.name.clone(),
+            expr: param_expr(&step.params, "source", FlowExpr::Float(0.0)),
+            inferred_type: None,
+        }]),
+    }
+}
+
+/// pattern-noise: FBM/perlin/worley noise
+fn expand_pattern_noise(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
+    let scale = param_expr(&step.params, "scale", FlowExpr::Float(4.0));
+    let detail = param_int(&step.params, "detail", 4);
+    let animation = param_expr(
+        &step.params,
+        "animation",
+        FlowExpr::Mul(
+            Box::new(FlowExpr::Ref("time".to_string())),
+            Box::new(FlowExpr::Float(0.5)),
+        ),
+    );
+    let _style = param_ident(&step.params, "style", "turbulence");
+
+    let uv_name = format!("_s_{}_p", step.name);
+
+    // node _s_{name}_p = uv * scale + vec2(animation, 0.0)
+    let uv_node = FlowNode {
+        name: uv_name.clone(),
+        expr: FlowExpr::Add(
+            Box::new(FlowExpr::Mul(
+                Box::new(FlowExpr::Ref("uv".to_string())),
+                Box::new(scale),
+            )),
+            Box::new(FlowExpr::Vec2(
+                Box::new(animation),
+                Box::new(FlowExpr::Float(0.0)),
+            )),
+        ),
+        inferred_type: None,
+    };
+
+    // node {name} = fbm(uv_node, detail)
+    let out_node = FlowNode {
+        name: step.name.clone(),
+        expr: FlowExpr::Call {
+            func: FlowFunc::Fbm,
+            args: vec![FlowExpr::Ref(uv_name), FlowExpr::Float(detail as f32)],
+        },
+        inferred_type: None,
+    };
+
+    Ok(vec![uv_node, out_node])
+}
+
+/// pattern-ripple: concentric rings from a center
+fn expand_pattern_ripple(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
+    let center = param_expr(
+        &step.params,
+        "center",
+        FlowExpr::Vec2(
+            Box::new(FlowExpr::Float(0.5)),
+            Box::new(FlowExpr::Float(0.5)),
+        ),
+    );
+    let density = param_expr(&step.params, "density", FlowExpr::Float(30.0));
+    let speed = param_expr(&step.params, "speed", FlowExpr::Float(4.0));
+
+    let dist_name = format!("_s_{}_d", step.name);
+
+    // node _s_{name}_d = length(uv - center)
+    let dist_node = FlowNode {
+        name: dist_name.clone(),
+        expr: FlowExpr::Call {
+            func: FlowFunc::Length,
+            args: vec![FlowExpr::Sub(
+                Box::new(FlowExpr::Ref("uv".to_string())),
+                Box::new(center),
+            )],
+        },
+        inferred_type: None,
+    };
+
+    // node {name} = sin(dist * density - time * speed) * 0.5 + 0.5
+    let out_node = FlowNode {
+        name: step.name.clone(),
+        expr: FlowExpr::Add(
+            Box::new(FlowExpr::Mul(
+                Box::new(FlowExpr::Call {
+                    func: FlowFunc::Sin,
+                    args: vec![FlowExpr::Sub(
+                        Box::new(FlowExpr::Mul(
+                            Box::new(FlowExpr::Ref(dist_name)),
+                            Box::new(density),
+                        )),
+                        Box::new(FlowExpr::Mul(
+                            Box::new(FlowExpr::Ref("time".to_string())),
+                            Box::new(speed),
+                        )),
+                    )],
+                }),
+                Box::new(FlowExpr::Float(0.5)),
+            )),
+            Box::new(FlowExpr::Float(0.5)),
+        ),
+        inferred_type: None,
+    };
+
+    Ok(vec![dist_node, out_node])
+}
+
+/// pattern-waves: sin wave on a scalar source
+fn expand_pattern_waves(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
+    let source = param_expr(&step.params, "source", FlowExpr::Float(0.0));
+    let density = param_expr(&step.params, "density", FlowExpr::Float(10.0));
+    let speed = param_expr(&step.params, "speed", FlowExpr::Float(1.0));
+    let offset = param_expr(&step.params, "offset", FlowExpr::Float(0.0));
+
+    // node {name} = sin(source * density - time * speed + offset) * 0.5 + 0.5
+    let out_node = FlowNode {
+        name: step.name.clone(),
+        expr: FlowExpr::Add(
+            Box::new(FlowExpr::Mul(
+                Box::new(FlowExpr::Call {
+                    func: FlowFunc::Sin,
+                    args: vec![FlowExpr::Add(
+                        Box::new(FlowExpr::Sub(
+                            Box::new(FlowExpr::Mul(Box::new(source), Box::new(density))),
+                            Box::new(FlowExpr::Mul(
+                                Box::new(FlowExpr::Ref("time".to_string())),
+                                Box::new(speed),
+                            )),
+                        )),
+                        Box::new(offset),
+                    )],
+                }),
+                Box::new(FlowExpr::Float(0.5)),
+            )),
+            Box::new(FlowExpr::Float(0.5)),
+        ),
+        inferred_type: None,
+    };
+
+    Ok(vec![out_node])
+}
+
+/// adjust-falloff: distance-based fade
+fn expand_adjust_falloff(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
+    let source = param_expr(&step.params, "source", FlowExpr::Float(0.0));
+    let radius = param_expr(&step.params, "radius", FlowExpr::Float(0.5));
+    let curve = param_ident(&step.params, "curve", "smooth");
+
+    let out_node = if curve == "linear" {
+        // clamp(1.0 - source / radius, 0.0, 1.0)
+        FlowNode {
+            name: step.name.clone(),
+            expr: FlowExpr::Call {
+                func: FlowFunc::Clamp,
+                args: vec![
+                    FlowExpr::Sub(
+                        Box::new(FlowExpr::Float(1.0)),
+                        Box::new(FlowExpr::Div(Box::new(source), Box::new(radius))),
+                    ),
+                    FlowExpr::Float(0.0),
+                    FlowExpr::Float(1.0),
+                ],
+            },
+            inferred_type: None,
+        }
+    } else {
+        // smoothstep(radius, 0.0, source)
+        FlowNode {
+            name: step.name.clone(),
+            expr: FlowExpr::Call {
+                func: FlowFunc::Smoothstep,
+                args: vec![radius, FlowExpr::Float(0.0), source],
+            },
+            inferred_type: None,
+        }
+    };
+
+    Ok(vec![out_node])
+}
+
+/// color-ramp: map scalar to color via stops
+fn expand_color_ramp(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
+    let source = param_expr(&step.params, "source", FlowExpr::Float(0.0));
+
+    let stops = match step.params.get("stops") {
+        Some(StepParam::ColorStops(stops)) if stops.len() >= 2 => stops,
+        _ => {
+            return Err(FlowError::InvalidStepParam {
+                step_name: step.name.clone(),
+                param: "stops".to_string(),
+                message: "color-ramp requires at least 2 color stops".to_string(),
+            });
+        }
+    };
+
+    let mut nodes = Vec::new();
+    let mut prev_mix_name: Option<String> = None;
+
+    for i in 0..stops.len() - 1 {
+        let (ref color_a, pos_a) = stops[i];
+        let (ref color_b, pos_b) = stops[i + 1];
+
+        let t_name = format!("_s_{}_t{}{}", step.name, i, i + 1);
+        let mix_name = if i == stops.len() - 2 {
+            step.name.clone() // Last segment uses the step name directly
+        } else {
+            format!("_s_{}_m{}{}", step.name, i, i + 1)
+        };
+
+        // node t = smoothstep(pos_a, pos_b, source)
+        nodes.push(FlowNode {
+            name: t_name.clone(),
+            expr: FlowExpr::Call {
+                func: FlowFunc::Smoothstep,
+                args: vec![
+                    FlowExpr::Float(pos_a),
+                    FlowExpr::Float(pos_b),
+                    source.clone(),
+                ],
+            },
+            inferred_type: None,
+        });
+
+        // mix(prev_color_or_mix, color_b, t)
+        let a_expr = if let Some(ref prev) = prev_mix_name {
+            FlowExpr::Ref(prev.clone())
+        } else {
+            color_a.clone()
+        };
+
+        nodes.push(FlowNode {
+            name: mix_name.clone(),
+            expr: FlowExpr::Call {
+                func: FlowFunc::Mix,
+                args: vec![a_expr, color_b.clone(), FlowExpr::Ref(t_name)],
+            },
+            inferred_type: None,
+        });
+
+        prev_mix_name = Some(mix_name);
+    }
+
+    Ok(nodes)
+}
+
+/// transform-warp: distort UV space
+fn expand_transform_warp(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
+    let source = param_expr(&step.params, "source", FlowExpr::Float(0.0));
+    let strength = param_expr(&step.params, "strength", FlowExpr::Float(0.1));
+    let direction = param_expr(&step.params, "direction", FlowExpr::Float(0.0));
+
+    let ca_name = format!("_s_{}_ca", step.name);
+    let sa_name = format!("_s_{}_sa", step.name);
+    let cx_name = format!("_s_{}_cx", step.name);
+    let cy_name = format!("_s_{}_cy", step.name);
+    let rx_name = format!("_s_{}_rx", step.name);
+    let ry_name = format!("_s_{}_ry", step.name);
+
+    let nodes = vec![
+        // ca = cos(direction)
+        FlowNode {
+            name: ca_name.clone(),
+            expr: FlowExpr::Call {
+                func: FlowFunc::Cos,
+                args: vec![direction.clone()],
+            },
+            inferred_type: None,
+        },
+        // sa = sin(direction)
+        FlowNode {
+            name: sa_name.clone(),
+            expr: FlowExpr::Call {
+                func: FlowFunc::Sin,
+                args: vec![direction],
+            },
+            inferred_type: None,
+        },
+        // cx = uv.x - 0.5
+        FlowNode {
+            name: cx_name.clone(),
+            expr: FlowExpr::Sub(
+                Box::new(FlowExpr::Swizzle(
+                    Box::new(FlowExpr::Ref("uv".to_string())),
+                    "x".to_string(),
+                )),
+                Box::new(FlowExpr::Float(0.5)),
+            ),
+            inferred_type: None,
+        },
+        // cy = uv.y - 0.5
+        FlowNode {
+            name: cy_name.clone(),
+            expr: FlowExpr::Sub(
+                Box::new(FlowExpr::Swizzle(
+                    Box::new(FlowExpr::Ref("uv".to_string())),
+                    "y".to_string(),
+                )),
+                Box::new(FlowExpr::Float(0.5)),
+            ),
+            inferred_type: None,
+        },
+        // rx = cx * ca + cy * sa + 0.5
+        FlowNode {
+            name: rx_name.clone(),
+            expr: FlowExpr::Add(
+                Box::new(FlowExpr::Add(
+                    Box::new(FlowExpr::Mul(
+                        Box::new(FlowExpr::Ref(cx_name.clone())),
+                        Box::new(FlowExpr::Ref(ca_name.clone())),
+                    )),
+                    Box::new(FlowExpr::Mul(
+                        Box::new(FlowExpr::Ref(cy_name.clone())),
+                        Box::new(FlowExpr::Ref(sa_name.clone())),
+                    )),
+                )),
+                Box::new(FlowExpr::Float(0.5)),
+            ),
+            inferred_type: None,
+        },
+        // ry = cx * -sa + cy * ca + 0.5
+        FlowNode {
+            name: ry_name.clone(),
+            expr: FlowExpr::Add(
+                Box::new(FlowExpr::Add(
+                    Box::new(FlowExpr::Mul(
+                        Box::new(FlowExpr::Ref(cx_name)),
+                        Box::new(FlowExpr::Neg(Box::new(FlowExpr::Ref(sa_name)))),
+                    )),
+                    Box::new(FlowExpr::Mul(
+                        Box::new(FlowExpr::Ref(cy_name)),
+                        Box::new(FlowExpr::Ref(ca_name)),
+                    )),
+                )),
+                Box::new(FlowExpr::Float(0.5)),
+            ),
+            inferred_type: None,
+        },
+        // {name} = source * strength (warped scalar, referencing rotated UVs)
+        FlowNode {
+            name: step.name.clone(),
+            expr: FlowExpr::Mul(Box::new(source), Box::new(strength)),
+            inferred_type: None,
+        },
+    ];
+
+    Ok(nodes)
+}
+
+/// compose-blend: blend two inputs with a mode
+fn expand_compose_blend(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
+    let a = param_expr(&step.params, "a", FlowExpr::Float(0.0));
+    let b = param_expr(&step.params, "b", FlowExpr::Float(0.0));
+    let mode = param_ident(&step.params, "mode", "multiply");
+
+    let expr = match mode.as_str() {
+        "screen" => {
+            // 1 - (1 - a) * (1 - b) = a + b - a * b
+            FlowExpr::Sub(
+                Box::new(FlowExpr::Add(Box::new(a.clone()), Box::new(b.clone()))),
+                Box::new(FlowExpr::Mul(Box::new(a), Box::new(b))),
+            )
+        }
+        "add" => FlowExpr::Call {
+            func: FlowFunc::Clamp,
+            args: vec![
+                FlowExpr::Add(Box::new(a), Box::new(b)),
+                FlowExpr::Float(0.0),
+                FlowExpr::Float(1.0),
+            ],
+        },
+        _ => {
+            // multiply (default)
+            FlowExpr::Mul(Box::new(a), Box::new(b))
+        }
+    };
+
+    Ok(vec![FlowNode {
+        name: step.name.clone(),
+        expr,
+        inferred_type: None,
+    }])
+}
+
+/// surface-light: finite-difference normals + diffuse lighting
+fn expand_surface_light(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
+    let source = param_expr(&step.params, "source", FlowExpr::Float(0.0));
+    let direction = param_expr(
+        &step.params,
+        "direction",
+        FlowExpr::Vec3(
+            Box::new(FlowExpr::Float(0.3)),
+            Box::new(FlowExpr::Float(-0.8)),
+            Box::new(FlowExpr::Float(0.5)),
+        ),
+    );
+    let softness = param_expr(&step.params, "softness", FlowExpr::Float(0.15));
+
+    // For Phase 1, require source_dx and source_dy as explicit params
+    let source_dx = param_expr(&step.params, "source_dx", source.clone());
+    let source_dy = param_expr(&step.params, "source_dy", source.clone());
+    let precision = param_expr(&step.params, "precision", FlowExpr::Float(0.005));
+
+    let gx_name = format!("_s_{}_gx", step.name);
+    let gy_name = format!("_s_{}_gy", step.name);
+    let normal_name = format!("_s_{}_n", step.name);
+
+    let nodes = vec![
+        // gx = (source_dx - source) / precision
+        FlowNode {
+            name: gx_name.clone(),
+            expr: FlowExpr::Div(
+                Box::new(FlowExpr::Sub(Box::new(source_dx), Box::new(source.clone()))),
+                Box::new(precision.clone()),
+            ),
+            inferred_type: None,
+        },
+        // gy = (source_dy - source) / precision
+        FlowNode {
+            name: gy_name.clone(),
+            expr: FlowExpr::Div(
+                Box::new(FlowExpr::Sub(Box::new(source_dy), Box::new(source))),
+                Box::new(precision),
+            ),
+            inferred_type: None,
+        },
+        // n = normalize(vec3(-gx, -gy, 1.0))
+        FlowNode {
+            name: normal_name.clone(),
+            expr: FlowExpr::Call {
+                func: FlowFunc::Normalize,
+                args: vec![FlowExpr::Vec3(
+                    Box::new(FlowExpr::Neg(Box::new(FlowExpr::Ref(gx_name)))),
+                    Box::new(FlowExpr::Neg(Box::new(FlowExpr::Ref(gy_name)))),
+                    Box::new(FlowExpr::Float(1.0)),
+                )],
+            },
+            inferred_type: None,
+        },
+        // {name} = clamp(dot(n, normalize(direction)), 0.0, 1.0) + softness
+        FlowNode {
+            name: step.name.clone(),
+            expr: FlowExpr::Add(
+                Box::new(FlowExpr::Call {
+                    func: FlowFunc::Clamp,
+                    args: vec![
+                        FlowExpr::Call {
+                            func: FlowFunc::Dot,
+                            args: vec![
+                                FlowExpr::Ref(normal_name),
+                                FlowExpr::Call {
+                                    func: FlowFunc::Normalize,
+                                    args: vec![direction],
+                                },
+                            ],
+                        },
+                        FlowExpr::Float(0.0),
+                        FlowExpr::Float(1.0),
+                    ],
+                }),
+                Box::new(softness),
+            ),
+            inferred_type: None,
+        },
+    ];
+
+    Ok(nodes)
 }
 
 // ===========================================================================
@@ -694,16 +1824,29 @@ impl FlowGraph {
     ///
     /// On success, populates `topo_order` with node indices in dependency order.
     /// On failure, returns all errors found.
-    pub fn validate(&mut self) -> Result<(), Vec<FlowError>> {
+    ///
+    /// Pass a flow registry for `use` resolution. Pass `None` for standalone validation.
+    pub fn validate(
+        &mut self,
+        flow_registry: Option<&HashMap<String, FlowGraph>>,
+    ) -> Result<(), Vec<FlowError>> {
+        // 0. Expand semantic layer (steps, chains, uses → nodes)
+        if !self.steps.is_empty() || !self.chains.is_empty() || !self.uses.is_empty() {
+            self.expand_semantic_layer(flow_registry)?;
+        }
+
         let mut errors = Vec::new();
 
-        // 1. Check for duplicate names
+        // 1. Validate all identifiers are valid WGSL names
+        self.check_wgsl_identifiers(&mut errors);
+
+        // 2. Check for duplicate names
         self.check_duplicates(&mut errors);
 
-        // 2. Check all references resolve
+        // 3. Check all references resolve
         self.check_references(&mut errors);
 
-        // 3. Topological sort (cycle detection via Kahn's algorithm)
+        // 4. Topological sort (cycle detection via Kahn's algorithm)
         match self.topological_sort() {
             Ok(order) => self.topo_order = order,
             Err(cycle_nodes) => {
@@ -711,7 +1854,7 @@ impl FlowGraph {
             }
         }
 
-        // 4. Type inference (only if no cycles)
+        // 5. Type inference (only if no cycles)
         if errors
             .iter()
             .all(|e| !matches!(e, FlowError::CycleDetected { .. }))
@@ -719,16 +1862,239 @@ impl FlowGraph {
             self.infer_types(&mut errors);
         }
 
-        // 5. Validate function argument counts
+        // 6. Validate function argument counts
         self.check_function_args(&mut errors);
 
-        // 6. Validate outputs match target
+        // 7. Validate outputs match target
         self.check_outputs(&mut errors);
 
         if errors.is_empty() {
             Ok(())
         } else {
             Err(errors)
+        }
+    }
+
+    /// Convenience: validate without a flow registry (no `use` support).
+    pub fn validate_standalone(&mut self) -> Result<(), Vec<FlowError>> {
+        self.validate(None)
+    }
+
+    /// WGSL reserved keywords that cannot be used as identifiers.
+    const WGSL_KEYWORDS: &'static [&'static str] = &[
+        "alias",
+        "break",
+        "case",
+        "const",
+        "const_assert",
+        "continue",
+        "continuing",
+        "default",
+        "diagnostic",
+        "discard",
+        "else",
+        "enable",
+        "false",
+        "fn",
+        "for",
+        "if",
+        "let",
+        "loop",
+        "override",
+        "return",
+        "struct",
+        "switch",
+        "true",
+        "var",
+        "while",
+        // Reserved words
+        "NULL",
+        "Self",
+        "abstract",
+        "active",
+        "alignas",
+        "alignof",
+        "as",
+        "asm",
+        "asm_fragment",
+        "async",
+        "attribute",
+        "auto",
+        "await",
+        "become",
+        "binding_array",
+        "cast",
+        "catch",
+        "class",
+        "co_await",
+        "co_return",
+        "co_yield",
+        "coherent",
+        "column_major",
+        "common",
+        "compile",
+        "compile_fragment",
+        "concept",
+        "const_cast",
+        "consteval",
+        "constexpr",
+        "constinit",
+        "crate",
+        "debugger",
+        "decltype",
+        "delete",
+        "demote",
+        "demote_to_helper",
+        "do",
+        "dynamic_cast",
+        "enum",
+        "explicit",
+        "export",
+        "extends",
+        "extern",
+        "external",
+        "fallthrough",
+        "filter",
+        "final",
+        "finally",
+        "friend",
+        "from",
+        "fxgroup",
+        "get",
+        "goto",
+        "groupshared",
+        "highp",
+        "impl",
+        "implements",
+        "import",
+        "in",
+        "inline",
+        "instanceof",
+        "interface",
+        "layout",
+        "lowp",
+        "macro",
+        "match",
+        "mediump",
+        "meta",
+        "mod",
+        "module",
+        "move",
+        "mut",
+        "mutable",
+        "namespace",
+        "new",
+        "nil",
+        "noexcept",
+        "noinline",
+        "nointerpolation",
+        "noperspective",
+        "null",
+        "nullptr",
+        "of",
+        "operator",
+        "package",
+        "packoffset",
+        "partition",
+        "pass",
+        "patch",
+        "pixelfragment",
+        "precise",
+        "precision",
+        "premerge",
+        "priv",
+        "protected",
+        "pub",
+        "public",
+        "readonly",
+        "ref",
+        "regardless",
+        "register",
+        "reinterpret_cast",
+        "require",
+        "resource",
+        "restrict",
+        "self",
+        "set",
+        "shared",
+        "sizeof",
+        "smooth",
+        "snorm",
+        "static",
+        "static_assert",
+        "static_cast",
+        "std",
+        "subroutine",
+        "super",
+        "target",
+        "template",
+        "this",
+        "thread_local",
+        "throw",
+        "trait",
+        "try",
+        "type",
+        "typedef",
+        "typeid",
+        "typename",
+        "typeof",
+        "union",
+        "unless",
+        "unorm",
+        "unsafe",
+        "unsized",
+        "use",
+        "using",
+        "varying",
+        "virtual",
+        "volatile",
+        "wgsl",
+        "with",
+        "writeonly",
+        "yield",
+    ];
+
+    fn check_wgsl_identifiers(&self, errors: &mut Vec<FlowError>) {
+        let keywords: HashSet<&str> = Self::WGSL_KEYWORDS.iter().copied().collect();
+
+        let check = |name: &str, errors: &mut Vec<FlowError>| {
+            if name.starts_with("__") {
+                errors.push(FlowError::InvalidIdentifier {
+                    name: name.to_string(),
+                    reason: "identifiers starting with '__' are reserved in WGSL".to_string(),
+                });
+            }
+            if !name
+                .chars()
+                .next()
+                .map_or(false, |c| c.is_ascii_alphabetic() || c == '_')
+            {
+                errors.push(FlowError::InvalidIdentifier {
+                    name: name.to_string(),
+                    reason: "must start with a letter or underscore".to_string(),
+                });
+            } else if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                errors.push(FlowError::InvalidIdentifier {
+                    name: name.to_string(),
+                    reason: "must contain only letters, digits, and underscores".to_string(),
+                });
+            }
+            if keywords.contains(name) {
+                errors.push(FlowError::InvalidIdentifier {
+                    name: name.to_string(),
+                    reason: format!("'{}' is a reserved WGSL keyword", name),
+                });
+            }
+        };
+
+        for input in &self.inputs {
+            check(&input.name, errors);
+        }
+        for node in &self.nodes {
+            check(&node.name, errors);
+        }
+        for output in &self.outputs {
+            check(&output.name, errors);
         }
     }
 
@@ -1127,13 +2493,13 @@ mod tests {
     #[test]
     fn test_valid_dag_validates() {
         let mut graph = make_ripple_flow();
-        assert!(graph.validate().is_ok());
+        assert!(graph.validate(None).is_ok());
     }
 
     #[test]
     fn test_topo_order_correct() {
         let mut graph = make_ripple_flow();
-        graph.validate().unwrap();
+        graph.validate(None).unwrap();
         // dist must come before wave, falloff, and height
         let dist_pos = graph.topo_order.iter().position(|&i| i == 0).unwrap();
         let wave_pos = graph.topo_order.iter().position(|&i| i == 1).unwrap();
@@ -1148,7 +2514,7 @@ mod tests {
     #[test]
     fn test_type_inference() {
         let mut graph = make_ripple_flow();
-        graph.validate().unwrap();
+        graph.validate(None).unwrap();
 
         assert_eq!(graph.nodes[0].inferred_type, Some(FlowType::Float)); // dist = distance(vec2, vec2)
         assert_eq!(graph.nodes[1].inferred_type, Some(FlowType::Float)); // wave = sin(float)
@@ -1195,7 +2561,7 @@ mod tests {
             expr: Some(FlowExpr::Ref("a".to_string())),
         });
 
-        let result = graph.validate();
+        let result = graph.validate(None);
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(errors
@@ -1224,7 +2590,7 @@ mod tests {
             expr: Some(FlowExpr::Ref("a".to_string())),
         });
 
-        let result = graph.validate();
+        let result = graph.validate(None);
         assert!(result.is_err());
     }
 
@@ -1256,7 +2622,7 @@ mod tests {
             expr: Some(FlowExpr::Ref("a".to_string())),
         });
 
-        let result = graph.validate();
+        let result = graph.validate(None);
         assert!(result.is_err());
         let errors = result.unwrap_err();
         let cycle_err = errors
@@ -1289,7 +2655,7 @@ mod tests {
             expr: Some(FlowExpr::Ref("a".to_string())),
         });
 
-        let result = graph.validate();
+        let result = graph.validate(None);
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(errors
@@ -1319,7 +2685,7 @@ mod tests {
             expr: Some(FlowExpr::Ref("x".to_string())),
         });
 
-        let result = graph.validate();
+        let result = graph.validate(None);
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(errors
@@ -1355,7 +2721,7 @@ mod tests {
             expr: Some(FlowExpr::Ref("scaled".to_string())),
         });
 
-        graph.validate().unwrap();
+        graph.validate(None).unwrap();
         assert_eq!(graph.nodes[0].inferred_type, Some(FlowType::Vec2));
     }
 
@@ -1391,7 +2757,7 @@ mod tests {
             expr: Some(FlowExpr::Ref("c".to_string())),
         });
 
-        let result = graph.validate();
+        let result = graph.validate(None);
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(errors
@@ -1428,7 +2794,7 @@ mod tests {
         });
 
         // No output → should fail
-        let result = graph.validate();
+        let result = graph.validate(None);
         assert!(result.is_err());
     }
 
@@ -1464,7 +2830,7 @@ mod tests {
             expr: Some(FlowExpr::Ref("new_pos".to_string())),
         });
 
-        assert!(graph.validate().is_ok());
+        assert!(graph.validate(None).is_ok());
     }
 
     // -----------------------------------------------------------------------
@@ -1476,7 +2842,7 @@ mod tests {
         let mut graph = FlowGraph::new("empty");
         graph.target = FlowTarget::Fragment;
 
-        let result = graph.validate();
+        let result = graph.validate(None);
         assert!(result.is_err());
     }
 
@@ -1522,5 +2888,465 @@ mod tests {
             FlowType::Vec4.broadcast_with(&FlowType::Vec4),
             Some(FlowType::Vec4)
         );
+    }
+
+    // ===================================================================
+    // Semantic step expansion tests
+    // ===================================================================
+
+    #[test]
+    fn test_step_type_from_str() {
+        assert_eq!(
+            StepType::from_str("pattern-noise"),
+            Some(StepType::PatternNoise)
+        );
+        assert_eq!(StepType::from_str("color-ramp"), Some(StepType::ColorRamp));
+        assert_eq!(
+            StepType::from_str("compose-blend"),
+            Some(StepType::ComposeBlend)
+        );
+        assert_eq!(
+            StepType::from_str("transform-warp"),
+            Some(StepType::TransformWarp)
+        );
+        assert_eq!(
+            StepType::from_str("surface-light"),
+            Some(StepType::SurfaceLight)
+        );
+        assert_eq!(
+            StepType::from_str("adjust-falloff"),
+            Some(StepType::AdjustFalloff)
+        );
+        assert_eq!(StepType::from_str("unknown-step"), None);
+    }
+
+    #[test]
+    fn test_expand_pattern_noise_produces_valid_nodes() {
+        let mut graph = FlowGraph::new("test_noise");
+        graph.inputs.push(FlowInput {
+            name: "uv".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Uv),
+            ty: Some(FlowType::Vec2),
+        });
+        graph.inputs.push(FlowInput {
+            name: "time".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Time),
+            ty: Some(FlowType::Float),
+        });
+
+        let mut params = HashMap::new();
+        params.insert("scale".to_string(), StepParam::Expr(FlowExpr::Float(3.0)));
+        params.insert("detail".to_string(), StepParam::Int(4));
+
+        graph.steps.push(FlowStep {
+            name: "n".to_string(),
+            step_type: StepType::PatternNoise,
+            params,
+        });
+
+        graph.outputs.push(FlowOutput {
+            name: "color".to_string(),
+            target: FlowOutputTarget::Color,
+            expr: Some(FlowExpr::Vec4(
+                Box::new(FlowExpr::Ref("n".to_string())),
+                Box::new(FlowExpr::Ref("n".to_string())),
+                Box::new(FlowExpr::Ref("n".to_string())),
+                Box::new(FlowExpr::Float(1.0)),
+            )),
+        });
+
+        // Expansion + validation should succeed
+        graph.validate(None).unwrap();
+
+        // Steps should be consumed, nodes should be expanded
+        assert!(graph.steps.is_empty());
+        assert!(graph.nodes.iter().any(|n| n.name == "n"));
+        assert!(graph.nodes.iter().any(|n| n.name.contains("_s_n_")));
+    }
+
+    #[test]
+    fn test_expand_pattern_ripple() {
+        let mut graph = FlowGraph::new("test_ripple");
+        graph.inputs.push(FlowInput {
+            name: "uv".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Uv),
+            ty: Some(FlowType::Vec2),
+        });
+        graph.inputs.push(FlowInput {
+            name: "time".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Time),
+            ty: Some(FlowType::Float),
+        });
+
+        let mut params = HashMap::new();
+        params.insert(
+            "center".to_string(),
+            StepParam::Expr(FlowExpr::Vec2(
+                Box::new(FlowExpr::Float(0.5)),
+                Box::new(FlowExpr::Float(0.5)),
+            )),
+        );
+
+        graph.steps.push(FlowStep {
+            name: "r".to_string(),
+            step_type: StepType::PatternRipple,
+            params,
+        });
+
+        graph.outputs.push(FlowOutput {
+            name: "color".to_string(),
+            target: FlowOutputTarget::Color,
+            expr: Some(FlowExpr::Vec4(
+                Box::new(FlowExpr::Ref("r".to_string())),
+                Box::new(FlowExpr::Ref("r".to_string())),
+                Box::new(FlowExpr::Ref("r".to_string())),
+                Box::new(FlowExpr::Float(1.0)),
+            )),
+        });
+
+        graph.validate(None).unwrap();
+        assert!(graph.steps.is_empty());
+        assert!(graph.nodes.iter().any(|n| n.name == "r"));
+    }
+
+    #[test]
+    fn test_expand_color_ramp() {
+        let mut graph = FlowGraph::new("test_ramp");
+        graph.inputs.push(FlowInput {
+            name: "uv".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Uv),
+            ty: Some(FlowType::Vec2),
+        });
+
+        // A scalar source node
+        graph.nodes.push(FlowNode {
+            name: "val".to_string(),
+            expr: FlowExpr::Swizzle(Box::new(FlowExpr::Ref("uv".to_string())), "x".to_string()),
+            inferred_type: None,
+        });
+
+        let mut params = HashMap::new();
+        params.insert(
+            "source".to_string(),
+            StepParam::Expr(FlowExpr::Ref("val".to_string())),
+        );
+        params.insert(
+            "stops".to_string(),
+            StepParam::ColorStops(vec![
+                (FlowExpr::Color(0.0, 0.0, 0.0, 1.0), 0.0),
+                (FlowExpr::Color(1.0, 1.0, 1.0, 1.0), 1.0),
+            ]),
+        );
+
+        graph.steps.push(FlowStep {
+            name: "c".to_string(),
+            step_type: StepType::ColorRamp,
+            params,
+        });
+
+        graph.outputs.push(FlowOutput {
+            name: "color".to_string(),
+            target: FlowOutputTarget::Color,
+            expr: Some(FlowExpr::Ref("c".to_string())),
+        });
+
+        graph.validate(None).unwrap();
+        assert!(graph.steps.is_empty());
+        // Should have interpolation nodes
+        assert!(graph.nodes.iter().any(|n| n.name == "c"));
+        assert!(graph.nodes.iter().any(|n| n.name.contains("_s_c_")));
+    }
+
+    #[test]
+    fn test_chain_desugaring() {
+        let mut graph = FlowGraph::new("test_chain");
+        graph.inputs.push(FlowInput {
+            name: "uv".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Uv),
+            ty: Some(FlowType::Vec2),
+        });
+        graph.inputs.push(FlowInput {
+            name: "time".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Time),
+            ty: Some(FlowType::Float),
+        });
+
+        let mut link1_params = HashMap::new();
+        link1_params.insert(
+            "center".to_string(),
+            StepParam::Expr(FlowExpr::Vec2(
+                Box::new(FlowExpr::Float(0.5)),
+                Box::new(FlowExpr::Float(0.5)),
+            )),
+        );
+
+        let mut link2_params = HashMap::new();
+        link2_params.insert("radius".to_string(), StepParam::Expr(FlowExpr::Float(0.5)));
+
+        graph.chains.push(FlowChain {
+            name: "effect".to_string(),
+            links: vec![
+                ChainLink {
+                    step_type: StepType::PatternRipple,
+                    params: link1_params,
+                },
+                ChainLink {
+                    step_type: StepType::AdjustFalloff,
+                    params: link2_params,
+                },
+            ],
+        });
+
+        graph.outputs.push(FlowOutput {
+            name: "color".to_string(),
+            target: FlowOutputTarget::Color,
+            expr: Some(FlowExpr::Vec4(
+                Box::new(FlowExpr::Ref("effect".to_string())),
+                Box::new(FlowExpr::Ref("effect".to_string())),
+                Box::new(FlowExpr::Ref("effect".to_string())),
+                Box::new(FlowExpr::Float(1.0)),
+            )),
+        });
+
+        graph.validate(None).unwrap();
+        assert!(graph.chains.is_empty());
+        assert!(graph.steps.is_empty());
+        // The chain's final output should be "effect"
+        assert!(graph.nodes.iter().any(|n| n.name == "effect"));
+    }
+
+    #[test]
+    fn test_use_composition() {
+        // Create a base flow
+        let mut base = FlowGraph::new("noise-base");
+        base.inputs.push(FlowInput {
+            name: "uv".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Uv),
+            ty: Some(FlowType::Vec2),
+        });
+        base.inputs.push(FlowInput {
+            name: "time".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Time),
+            ty: Some(FlowType::Float),
+        });
+        base.nodes.push(FlowNode {
+            name: "n".to_string(),
+            expr: FlowExpr::Call {
+                func: FlowFunc::Fbm,
+                args: vec![FlowExpr::Ref("uv".to_string()), FlowExpr::Float(4.0)],
+            },
+            inferred_type: None,
+        });
+        base.outputs.push(FlowOutput {
+            name: "value".to_string(),
+            target: FlowOutputTarget::Color,
+            expr: Some(FlowExpr::Ref("n".to_string())),
+        });
+
+        let mut registry = HashMap::new();
+        registry.insert("noise-base".to_string(), base);
+
+        // Create a derived flow that uses the base
+        let mut graph = FlowGraph::new("colored");
+        graph.inputs.push(FlowInput {
+            name: "uv".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Uv),
+            ty: Some(FlowType::Vec2),
+        });
+        graph.inputs.push(FlowInput {
+            name: "time".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Time),
+            ty: Some(FlowType::Float),
+        });
+
+        graph.uses.push(FlowUse {
+            flow_name: "noise-base".to_string(),
+        });
+
+        // Hyphens become underscores in the prefix: noise-base → noise_base_
+        graph.outputs.push(FlowOutput {
+            name: "color".to_string(),
+            target: FlowOutputTarget::Color,
+            expr: Some(FlowExpr::Vec4(
+                Box::new(FlowExpr::Ref("noise_base_n".to_string())),
+                Box::new(FlowExpr::Ref("noise_base_n".to_string())),
+                Box::new(FlowExpr::Ref("noise_base_n".to_string())),
+                Box::new(FlowExpr::Float(1.0)),
+            )),
+        });
+
+        graph.validate(Some(&registry)).unwrap();
+        assert!(graph.uses.is_empty());
+        // Inlined nodes should be prefixed: noise-base → noise_base_ prefix
+        assert!(graph.nodes.iter().any(|n| n.name == "noise_base_n"));
+    }
+
+    #[test]
+    fn test_missing_step_param_errors() {
+        // color-ramp requires "source" and "stops" params
+        let step = FlowStep {
+            name: "bad".to_string(),
+            step_type: StepType::ColorRamp,
+            params: HashMap::new(), // missing required params
+        };
+
+        let mut graph = FlowGraph::new("test_bad");
+        graph.inputs.push(FlowInput {
+            name: "uv".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Uv),
+            ty: Some(FlowType::Vec2),
+        });
+        graph.steps.push(step);
+        graph.outputs.push(FlowOutput {
+            name: "color".to_string(),
+            target: FlowOutputTarget::Color,
+            expr: Some(FlowExpr::Float(1.0)),
+        });
+
+        let result = graph.validate(None);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(errs
+            .iter()
+            .any(|e| matches!(e, FlowError::MissingStepParam { .. })));
+    }
+
+    #[test]
+    fn test_use_flow_not_found_errors() {
+        let mut graph = FlowGraph::new("test_missing_use");
+        graph.inputs.push(FlowInput {
+            name: "uv".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Uv),
+            ty: Some(FlowType::Vec2),
+        });
+        graph.uses.push(FlowUse {
+            flow_name: "nonexistent".to_string(),
+        });
+        graph.outputs.push(FlowOutput {
+            name: "color".to_string(),
+            target: FlowOutputTarget::Color,
+            expr: Some(FlowExpr::Float(1.0)),
+        });
+
+        // With no registry
+        let result = graph.validate(None);
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(errs
+            .iter()
+            .any(|e| matches!(e, FlowError::FlowNotFound { .. })));
+    }
+
+    #[test]
+    fn test_mixed_step_and_node() {
+        let mut graph = FlowGraph::new("test_mixed");
+        graph.inputs.push(FlowInput {
+            name: "uv".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Uv),
+            ty: Some(FlowType::Vec2),
+        });
+        graph.inputs.push(FlowInput {
+            name: "time".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Time),
+            ty: Some(FlowType::Float),
+        });
+
+        // Raw node
+        graph.nodes.push(FlowNode {
+            name: "speed".to_string(),
+            expr: FlowExpr::Float(0.5),
+            inferred_type: None,
+        });
+
+        // Semantic step referencing the raw node
+        let mut params = HashMap::new();
+        params.insert("scale".to_string(), StepParam::Expr(FlowExpr::Float(3.0)));
+        params.insert(
+            "animation".to_string(),
+            StepParam::Expr(FlowExpr::Mul(
+                Box::new(FlowExpr::Ref("time".to_string())),
+                Box::new(FlowExpr::Ref("speed".to_string())),
+            )),
+        );
+
+        graph.steps.push(FlowStep {
+            name: "n".to_string(),
+            step_type: StepType::PatternNoise,
+            params,
+        });
+
+        graph.outputs.push(FlowOutput {
+            name: "color".to_string(),
+            target: FlowOutputTarget::Color,
+            expr: Some(FlowExpr::Vec4(
+                Box::new(FlowExpr::Ref("n".to_string())),
+                Box::new(FlowExpr::Ref("n".to_string())),
+                Box::new(FlowExpr::Ref("n".to_string())),
+                Box::new(FlowExpr::Float(1.0)),
+            )),
+        });
+
+        graph.validate(None).unwrap();
+        // Both the raw node and expanded step nodes should exist
+        assert!(graph.nodes.iter().any(|n| n.name == "speed"));
+        assert!(graph.nodes.iter().any(|n| n.name == "n"));
+    }
+
+    #[test]
+    fn test_compose_blend_expansion() {
+        let mut graph = FlowGraph::new("test_blend");
+        graph.inputs.push(FlowInput {
+            name: "uv".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Uv),
+            ty: Some(FlowType::Vec2),
+        });
+
+        // Two source values
+        graph.nodes.push(FlowNode {
+            name: "a".to_string(),
+            expr: FlowExpr::Vec4(
+                Box::new(FlowExpr::Float(1.0)),
+                Box::new(FlowExpr::Float(0.0)),
+                Box::new(FlowExpr::Float(0.0)),
+                Box::new(FlowExpr::Float(1.0)),
+            ),
+            inferred_type: None,
+        });
+        graph.nodes.push(FlowNode {
+            name: "b".to_string(),
+            expr: FlowExpr::Vec4(
+                Box::new(FlowExpr::Float(0.0)),
+                Box::new(FlowExpr::Float(1.0)),
+                Box::new(FlowExpr::Float(0.0)),
+                Box::new(FlowExpr::Float(1.0)),
+            ),
+            inferred_type: None,
+        });
+
+        let mut params = HashMap::new();
+        params.insert(
+            "a".to_string(),
+            StepParam::Expr(FlowExpr::Ref("a".to_string())),
+        );
+        params.insert(
+            "b".to_string(),
+            StepParam::Expr(FlowExpr::Ref("b".to_string())),
+        );
+        params.insert("mode".to_string(), StepParam::Ident("multiply".to_string()));
+
+        graph.steps.push(FlowStep {
+            name: "blended".to_string(),
+            step_type: StepType::ComposeBlend,
+            params,
+        });
+
+        graph.outputs.push(FlowOutput {
+            name: "color".to_string(),
+            target: FlowOutputTarget::Color,
+            expr: Some(FlowExpr::Ref("blended".to_string())),
+        });
+
+        graph.validate(None).unwrap();
+        assert!(graph.nodes.iter().any(|n| n.name == "blended"));
     }
 }

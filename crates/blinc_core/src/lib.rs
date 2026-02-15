@@ -86,8 +86,9 @@ pub use context_state::{
 
 // Re-export flow DAG types
 pub use flow::{
-    BuiltinVar, FlowError, FlowExpr, FlowFunc, FlowGraph, FlowInput, FlowInputSource, FlowNode,
-    FlowOutput, FlowOutputTarget, FlowTarget, FlowType,
+    BuiltinVar, ChainLink, FlowChain, FlowError, FlowExpr, FlowFunc, FlowGraph, FlowInput,
+    FlowInputSource, FlowNode, FlowOutput, FlowOutputTarget, FlowStep, FlowTarget, FlowType,
+    FlowUse, StepParam, StepType,
 };
 
 // Re-export store types

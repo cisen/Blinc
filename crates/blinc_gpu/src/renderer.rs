@@ -3181,10 +3181,20 @@ impl GpuRenderer {
                 occlusion_query_set: None,
             });
 
-            // Scope the flow quad to the element's bounds via viewport + scissor
+            // Scope the flow quad to the element's bounds via viewport + scissor.
+            // Clamp to render target bounds to avoid wgpu validation errors.
             if let Some([x, y, w, h]) = viewport {
-                pass.set_viewport(x, y, w, h, 0.0, 1.0);
-                pass.set_scissor_rect(x as u32, y as u32, w as u32, h as u32);
+                let (tw, th) = self.viewport_size;
+                let tw = tw as f32;
+                let th = th as f32;
+                let cx = x.max(0.0);
+                let cy = y.max(0.0);
+                let cw = (w - (cx - x)).min(tw - cx).max(1.0);
+                let ch = (h - (cy - y)).min(th - cy).max(1.0);
+                if cx < tw && cy < th {
+                    pass.set_viewport(cx, cy, cw, ch, 0.0, 1.0);
+                    pass.set_scissor_rect(cx as u32, cy as u32, cw as u32, ch as u32);
+                }
             }
 
             self.flow_pipeline_cache

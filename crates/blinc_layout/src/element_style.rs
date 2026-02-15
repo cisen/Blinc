@@ -1223,6 +1223,281 @@ impl ElementStyle {
     }
 
     // =========================================================================
+    // Text Properties
+    // =========================================================================
+
+    /// Set text color
+    pub fn text_color(mut self, color: Color) -> Self {
+        self.text_color = Some(color);
+        self
+    }
+
+    /// Set font size in pixels
+    pub fn font_size(mut self, size: f32) -> Self {
+        self.font_size = Some(size);
+        self
+    }
+
+    /// Set font weight
+    pub fn font_weight(mut self, weight: crate::div::FontWeight) -> Self {
+        self.font_weight = Some(weight);
+        self
+    }
+
+    /// Set text decoration
+    pub fn text_decoration(mut self, decoration: TextDecoration) -> Self {
+        self.text_decoration = Some(decoration);
+        self
+    }
+
+    /// Set line height multiplier
+    pub fn line_height(mut self, height: f32) -> Self {
+        self.line_height = Some(height);
+        self
+    }
+
+    /// Set text alignment
+    pub fn text_align(mut self, align: crate::div::TextAlign) -> Self {
+        self.text_align = Some(align);
+        self
+    }
+
+    /// Set letter spacing in pixels
+    pub fn letter_spacing(mut self, spacing: f32) -> Self {
+        self.letter_spacing = Some(spacing);
+        self
+    }
+
+    /// Set text shadow
+    pub fn text_shadow(mut self, shadow: Shadow) -> Self {
+        self.text_shadow = Some(shadow);
+        self
+    }
+
+    // =========================================================================
+    // Transform Extras
+    // =========================================================================
+
+    /// Set skew X angle in degrees
+    pub fn skew_x(mut self, deg: f32) -> Self {
+        self.skew_x = Some(deg);
+        self
+    }
+
+    /// Set skew Y angle in degrees
+    pub fn skew_y(mut self, deg: f32) -> Self {
+        self.skew_y = Some(deg);
+        self
+    }
+
+    /// Set transform origin as percentages [x%, y%] (50, 50 = center)
+    pub fn transform_origin(mut self, x: f32, y: f32) -> Self {
+        self.transform_origin = Some([x, y]);
+        self
+    }
+
+    // =========================================================================
+    // Transition
+    // =========================================================================
+
+    /// Set CSS transition configuration
+    pub fn transition(mut self, t: CssTransitionSet) -> Self {
+        self.transition = Some(t);
+        self
+    }
+
+    // =========================================================================
+    // Filter
+    // =========================================================================
+
+    /// Set CSS filter
+    pub fn filter(mut self, f: CssFilter) -> Self {
+        self.filter = Some(f);
+        self
+    }
+
+    // =========================================================================
+    // Overflow per-axis
+    // =========================================================================
+
+    /// Set overflow-x behavior
+    pub fn overflow_x(mut self, o: StyleOverflow) -> Self {
+        self.overflow_x = Some(o);
+        self
+    }
+
+    /// Set overflow-y behavior
+    pub fn overflow_y(mut self, o: StyleOverflow) -> Self {
+        self.overflow_y = Some(o);
+        self
+    }
+
+    // =========================================================================
+    // Position & Inset
+    // =========================================================================
+
+    /// Set CSS position
+    pub fn position(mut self, pos: StylePosition) -> Self {
+        self.position = Some(pos);
+        self
+    }
+
+    /// Set top inset in pixels
+    pub fn top(mut self, px: f32) -> Self {
+        self.top = Some(px);
+        self
+    }
+
+    /// Set right inset in pixels
+    pub fn right(mut self, px: f32) -> Self {
+        self.right = Some(px);
+        self
+    }
+
+    /// Set bottom inset in pixels
+    pub fn bottom(mut self, px: f32) -> Self {
+        self.bottom = Some(px);
+        self
+    }
+
+    /// Set left inset in pixels
+    pub fn left(mut self, px: f32) -> Self {
+        self.left = Some(px);
+        self
+    }
+
+    /// Set inset for all sides
+    pub fn inset(mut self, px: f32) -> Self {
+        self.top = Some(px);
+        self.right = Some(px);
+        self.bottom = Some(px);
+        self.left = Some(px);
+        self
+    }
+
+    /// Set z-index
+    pub fn z_index(mut self, z: i32) -> Self {
+        self.z_index = Some(z);
+        self
+    }
+
+    /// Set visibility
+    pub fn visibility(mut self, vis: StyleVisibility) -> Self {
+        self.visibility = Some(vis);
+        self
+    }
+
+    // =========================================================================
+    // Form Element Colors
+    // =========================================================================
+
+    /// Set caret (cursor) color for text inputs
+    pub fn caret_color(mut self, color: Color) -> Self {
+        self.caret_color = Some(color);
+        self
+    }
+
+    /// Set text selection highlight color
+    pub fn selection_color(mut self, color: Color) -> Self {
+        self.selection_color = Some(color);
+        self
+    }
+
+    /// Set placeholder text color
+    pub fn placeholder_color(mut self, color: Color) -> Self {
+        self.placeholder_color = Some(color);
+        self
+    }
+
+    /// Set accent color for form controls
+    pub fn accent_color(mut self, color: Color) -> Self {
+        self.accent_color = Some(color);
+        self
+    }
+
+    // =========================================================================
+    // Scrollbar
+    // =========================================================================
+
+    /// Set scrollbar colors (thumb, track)
+    pub fn scrollbar_color(mut self, thumb: Color, track: Color) -> Self {
+        self.scrollbar_color = Some((thumb, track));
+        self
+    }
+
+    /// Set scrollbar width mode
+    pub fn scrollbar_width(mut self, width: ScrollbarWidth) -> Self {
+        self.scrollbar_width = Some(width);
+        self
+    }
+
+    // =========================================================================
+    // SVG Properties
+    // =========================================================================
+
+    /// Set SVG fill color
+    pub fn fill(mut self, color: Color) -> Self {
+        self.fill = Some(color);
+        self
+    }
+
+    /// Set SVG stroke color
+    pub fn stroke(mut self, color: Color) -> Self {
+        self.stroke = Some(color);
+        self
+    }
+
+    /// Set SVG stroke width
+    pub fn stroke_width(mut self, width: f32) -> Self {
+        self.stroke_width = Some(width);
+        self
+    }
+
+    /// Set SVG stroke-dasharray pattern
+    pub fn stroke_dasharray(mut self, pattern: Vec<f32>) -> Self {
+        self.stroke_dasharray = Some(pattern);
+        self
+    }
+
+    /// Set SVG stroke-dashoffset
+    pub fn stroke_dashoffset(mut self, offset: f32) -> Self {
+        self.stroke_dashoffset = Some(offset);
+        self
+    }
+
+    /// Set SVG path data (d attribute)
+    pub fn svg_path_data(mut self, data: impl Into<String>) -> Self {
+        self.svg_path_data = Some(data.into());
+        self
+    }
+
+    // =========================================================================
+    // Image Properties
+    // =========================================================================
+
+    /// Set object-fit (0=cover, 1=contain, 2=fill, 3=scale-down, 4=none)
+    pub fn object_fit(mut self, fit: u8) -> Self {
+        self.object_fit = Some(fit);
+        self
+    }
+
+    /// Set object-position as [x, y] in 0.0-1.0 range
+    pub fn object_position(mut self, x: f32, y: f32) -> Self {
+        self.object_position = Some([x, y]);
+        self
+    }
+
+    // =========================================================================
+    // Flex shrink with value
+    // =========================================================================
+
+    /// Set flex-shrink to a specific value
+    pub fn flex_shrink(mut self, value: f32) -> Self {
+        self.flex_shrink = Some(value);
+        self
+    }
+
+    // =========================================================================
     // Merging
     // =========================================================================
 
@@ -1473,41 +1748,92 @@ pub fn style() -> ElementStyle {
 ///
 /// # Supported Properties
 ///
-/// ## Standard CSS Properties
+/// ## Visual
 /// - `background`: Color or Brush
-/// - `border-radius`: f32 (uniform) or CornerRadius
-/// - `box-shadow`: Shadow
+/// - `border-radius`: f32 or CornerRadius
+/// - `box-shadow`: sm | md | lg | xl | none | Shadow
 /// - `opacity`: f32 (0.0-1.0)
-/// - `transform`: Transform
+/// - `transform`: Transform | `scale(f)` | `scale(x,y)` | `translate(x,y)` | `rotate(deg)` | `skewX(deg)` | `skewY(deg)`
+/// - `transform-origin`: (x%, y%)
+/// - `clip-path`: ClipPath
+/// - `filter`: CssFilter
+/// - `mask-image`: MaskImage
+/// - `mask-mode`: MaskMode
+/// - `mix-blend-mode`: BlendMode
 ///
-/// ## 3D Transform Properties
-/// - `rotate-x`: f32 (degrees)
-/// - `rotate-y`: f32 (degrees)
-/// - `perspective`: f32 (pixels)
-/// - `translate-z`: f32 (pixels)
+/// ## Text
+/// - `color`: Color (text color)
+/// - `font-size`: f32 (pixels)
+/// - `font-weight`: FontWeight
+/// - `text-decoration`: TextDecoration
+/// - `text-decoration-color`: Color
+/// - `text-decoration-thickness`: f32
+/// - `line-height`: f32
+/// - `text-align`: left | center | right | TextAlign
+/// - `letter-spacing`: f32
+/// - `text-shadow`: Shadow
+/// - `text-overflow`: clip | ellipsis | TextOverflow
+/// - `white-space`: normal | nowrap | pre | WhiteSpace
 ///
-/// ## 3D SDF Shape Properties
-/// - `shape-3d`: &str ("box", "sphere", "cylinder", "torus", "capsule", "group")
-/// - `depth`: f32 (pixels)
+/// ## Layout
+/// - `width`, `height`, `min-width`, `min-height`, `max-width`, `max-height`: f32
+/// - `display`: flex | block | none
+/// - `flex-direction`: row | column | row-reverse | column-reverse
+/// - `flex-wrap`: wrap | nowrap
+/// - `flex-grow`, `flex-shrink`: f32
+/// - `align-items`: center | start | end | stretch | baseline
+/// - `justify-content`: center | start | end | space-between | space-around | space-evenly
+/// - `align-self`: center | start | end | stretch | baseline
+/// - `padding`, `margin`: f32 (uniform)
+/// - `gap`: f32
+/// - `overflow`: clip | hidden | visible | scroll
+/// - `overflow-x`, `overflow-y`: clip | hidden | visible | scroll
+/// - `position`: static | relative | absolute | fixed | sticky
+/// - `top`, `right`, `bottom`, `left`: f32
+/// - `inset`: f32 (all sides)
+/// - `z-index`: i32
+/// - `visibility`: visible | hidden
 ///
-/// ## 3D Lighting Properties
-/// - `light-direction`: (f32, f32, f32)
-/// - `light-intensity`: f32
-/// - `ambient`: f32
-/// - `specular`: f32
+/// ## Border & Outline
+/// - `border`: (width, color)
+/// - `border-width`: f32
+/// - `border-color`: Color
+/// - `outline`: (width, color)
+/// - `outline-width`, `outline-color`, `outline-offset`: f32 / Color
 ///
-/// ## 3D Boolean Operation Properties
-/// - `3d-op`: &str ("union", "subtract", "intersect", "smooth-union", "smooth-subtract", "smooth-intersect")
-/// - `3d-blend`: f32 (pixels)
+/// ## 3D
+/// - `rotate-x`, `rotate-y`: f32 (degrees)
+/// - `perspective`: f32, `translate-z`: f32
+/// - `shape-3d`: "box" | "sphere" | "cylinder" | "torus" | "capsule" | "group"
+/// - `depth`: f32, `light-direction`: (x,y,z), `light-intensity`, `ambient`, `specular`: f32
+/// - `3d-op`: "union" | "subtract" | "intersect" | smooth variants
+/// - `3d-blend`: f32
 ///
-/// ## Blinc Extensions
-/// - `backdrop-filter`: `glass`, `metallic`, `chrome`, `gold`, `wood`
-/// - `render-layer`: RenderLayer
+/// ## Materials
+/// - `backdrop-filter`: glass | metallic | chrome | gold | wood | Material
+/// - `render-layer`: foreground | background | RenderLayer
 ///
-/// ## Animation Properties
+/// ## Animation & Transition
 /// - `animation`: CssAnimation
-/// - `animation-name`: String
-/// - `animation-duration`: u32 (milliseconds)
+/// - `animation-name`: String, `animation-duration`: u32 (ms)
+/// - `animation-delay`: u32, `animation-timing-function`, `animation-iteration-count`: u32
+/// - `animation-direction`, `animation-fill-mode`
+/// - `transition`: CssTransitionSet
+///
+/// ## SVG
+/// - `fill`, `stroke`: Color
+/// - `stroke-width`: f32, `stroke-dasharray`: `Vec<f32>`, `stroke-dashoffset`: f32
+///
+/// ## Form Controls
+/// - `caret-color`, `selection-color`, `placeholder-color`, `accent-color`: Color
+/// - `scrollbar-color`: (thumb, track), `scrollbar-width`: auto | thin | none
+///
+/// ## Interaction
+/// - `pointer-events`: auto | none
+/// - `cursor`: CursorStyle
+///
+/// ## Image
+/// - `object-fit`: u8, `object-position`: (x, y)
 #[macro_export]
 macro_rules! css {
     // Empty style
@@ -2034,6 +2360,618 @@ macro_rules! css_impl {
     ($style:ident; border-color: $value:expr) => {
         $style.border_color = Some($value);
     };
+
+    // =========================================================================
+    // Text Properties (CSS: color, font-size, font-weight, etc.)
+    // =========================================================================
+    ($style:ident; color: $value:expr; $($rest:tt)*) => {
+        $style = $style.text_color($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; color: $value:expr) => {
+        $style = $style.text_color($value);
+    };
+    ($style:ident; font-size: $value:expr; $($rest:tt)*) => {
+        $style = $style.font_size($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; font-size: $value:expr) => {
+        $style = $style.font_size($value);
+    };
+    ($style:ident; font-weight: $value:expr; $($rest:tt)*) => {
+        $style = $style.font_weight($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; font-weight: $value:expr) => {
+        $style = $style.font_weight($value);
+    };
+    ($style:ident; text-decoration: $value:expr; $($rest:tt)*) => {
+        $style = $style.text_decoration($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; text-decoration: $value:expr) => {
+        $style = $style.text_decoration($value);
+    };
+    ($style:ident; text-decoration-color: $value:expr; $($rest:tt)*) => {
+        $style = $style.text_decoration_color($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; text-decoration-color: $value:expr) => {
+        $style = $style.text_decoration_color($value);
+    };
+    ($style:ident; text-decoration-thickness: $value:expr; $($rest:tt)*) => {
+        $style = $style.text_decoration_thickness($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; text-decoration-thickness: $value:expr) => {
+        $style = $style.text_decoration_thickness($value);
+    };
+    ($style:ident; line-height: $value:expr; $($rest:tt)*) => {
+        $style = $style.line_height($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; line-height: $value:expr) => {
+        $style = $style.line_height($value);
+    };
+    ($style:ident; text-align: center; $($rest:tt)*) => {
+        $style = $style.text_align($crate::div::TextAlign::Center);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; text-align: right; $($rest:tt)*) => {
+        $style = $style.text_align($crate::div::TextAlign::Right);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; text-align: left; $($rest:tt)*) => {
+        $style = $style.text_align($crate::div::TextAlign::Left);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; text-align: $value:expr; $($rest:tt)*) => {
+        $style = $style.text_align($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; text-align: $value:expr) => {
+        $style = $style.text_align($value);
+    };
+    ($style:ident; letter-spacing: $value:expr; $($rest:tt)*) => {
+        $style = $style.letter_spacing($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; letter-spacing: $value:expr) => {
+        $style = $style.letter_spacing($value);
+    };
+    ($style:ident; text-shadow: $value:expr; $($rest:tt)*) => {
+        $style = $style.text_shadow($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; text-shadow: $value:expr) => {
+        $style = $style.text_shadow($value);
+    };
+    ($style:ident; text-overflow: clip; $($rest:tt)*) => {
+        $style = $style.text_overflow($crate::element_style::TextOverflow::Clip);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; text-overflow: ellipsis; $($rest:tt)*) => {
+        $style = $style.text_overflow($crate::element_style::TextOverflow::Ellipsis);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; text-overflow: $value:expr; $($rest:tt)*) => {
+        $style = $style.text_overflow($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; text-overflow: $value:expr) => {
+        $style = $style.text_overflow($value);
+    };
+    ($style:ident; white-space: normal; $($rest:tt)*) => {
+        $style = $style.white_space($crate::element_style::WhiteSpace::Normal);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; white-space: nowrap; $($rest:tt)*) => {
+        $style = $style.white_space($crate::element_style::WhiteSpace::Nowrap);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; white-space: pre; $($rest:tt)*) => {
+        $style = $style.white_space($crate::element_style::WhiteSpace::Pre);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; white-space: $value:expr; $($rest:tt)*) => {
+        $style = $style.white_space($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; white-space: $value:expr) => {
+        $style = $style.white_space($value);
+    };
+
+    // =========================================================================
+    // Transform Extras (CSS: transform-origin, skew)
+    // =========================================================================
+    ($style:ident; transform-origin: ($x:expr, $y:expr); $($rest:tt)*) => {
+        $style = $style.transform_origin($x, $y);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; transform-origin: ($x:expr, $y:expr)) => {
+        $style = $style.transform_origin($x, $y);
+    };
+    ($style:ident; transform: skewX($deg:expr); $($rest:tt)*) => {
+        $style = $style.skew_x($deg);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; transform: skewY($deg:expr); $($rest:tt)*) => {
+        $style = $style.skew_y($deg);
+        $crate::css_impl!($style; $($rest)*);
+    };
+
+    // =========================================================================
+    // Transition (CSS: transition)
+    // =========================================================================
+    ($style:ident; transition: $value:expr; $($rest:tt)*) => {
+        $style = $style.transition($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; transition: $value:expr) => {
+        $style = $style.transition($value);
+    };
+
+    // =========================================================================
+    // Filter (CSS: filter)
+    // =========================================================================
+    ($style:ident; filter: $value:expr; $($rest:tt)*) => {
+        $style = $style.filter($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; filter: $value:expr) => {
+        $style = $style.filter($value);
+    };
+
+    // =========================================================================
+    // Mask Properties (CSS: mask-image, mask-mode)
+    // =========================================================================
+    ($style:ident; mask-image: $value:expr; $($rest:tt)*) => {
+        $style.mask_image = Some($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; mask-image: $value:expr) => {
+        $style.mask_image = Some($value);
+    };
+    ($style:ident; mask-mode: $value:expr; $($rest:tt)*) => {
+        $style = $style.mask_mode($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; mask-mode: $value:expr) => {
+        $style = $style.mask_mode($value);
+    };
+
+    // =========================================================================
+    // Mix Blend Mode (CSS: mix-blend-mode)
+    // =========================================================================
+    ($style:ident; mix-blend-mode: $value:expr; $($rest:tt)*) => {
+        $style = $style.mix_blend_mode($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; mix-blend-mode: $value:expr) => {
+        $style = $style.mix_blend_mode($value);
+    };
+
+    // =========================================================================
+    // Outline (CSS: outline, outline-width, outline-color, outline-offset)
+    // =========================================================================
+    ($style:ident; outline: ($width:expr, $color:expr); $($rest:tt)*) => {
+        $style = $style.outline($width, $color);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; outline: ($width:expr, $color:expr)) => {
+        $style = $style.outline($width, $color);
+    };
+    ($style:ident; outline-width: $value:expr; $($rest:tt)*) => {
+        $style = $style.outline_w($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; outline-width: $value:expr) => {
+        $style = $style.outline_w($value);
+    };
+    ($style:ident; outline-color: $value:expr; $($rest:tt)*) => {
+        $style.outline_color = Some($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; outline-color: $value:expr) => {
+        $style.outline_color = Some($value);
+    };
+    ($style:ident; outline-offset: $value:expr; $($rest:tt)*) => {
+        $style = $style.outline_offset($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; outline-offset: $value:expr) => {
+        $style = $style.outline_offset($value);
+    };
+
+    // =========================================================================
+    // Border shorthand (CSS: border)
+    // =========================================================================
+    ($style:ident; border: ($width:expr, $color:expr); $($rest:tt)*) => {
+        $style = $style.border($width, $color);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; border: ($width:expr, $color:expr)) => {
+        $style = $style.border($width, $color);
+    };
+
+    // =========================================================================
+    // Overflow per-axis (CSS: overflow-x, overflow-y)
+    // =========================================================================
+    ($style:ident; overflow-x: clip; $($rest:tt)*) => {
+        $style = $style.overflow_x($crate::element_style::StyleOverflow::Clip);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; overflow-x: hidden; $($rest:tt)*) => {
+        $style = $style.overflow_x($crate::element_style::StyleOverflow::Clip);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; overflow-x: visible; $($rest:tt)*) => {
+        $style = $style.overflow_x($crate::element_style::StyleOverflow::Visible);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; overflow-x: scroll; $($rest:tt)*) => {
+        $style = $style.overflow_x($crate::element_style::StyleOverflow::Scroll);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; overflow-y: clip; $($rest:tt)*) => {
+        $style = $style.overflow_y($crate::element_style::StyleOverflow::Clip);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; overflow-y: hidden; $($rest:tt)*) => {
+        $style = $style.overflow_y($crate::element_style::StyleOverflow::Clip);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; overflow-y: visible; $($rest:tt)*) => {
+        $style = $style.overflow_y($crate::element_style::StyleOverflow::Visible);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; overflow-y: scroll; $($rest:tt)*) => {
+        $style = $style.overflow_y($crate::element_style::StyleOverflow::Scroll);
+        $crate::css_impl!($style; $($rest)*);
+    };
+
+    // =========================================================================
+    // Position & Inset (CSS: position, top, right, bottom, left, inset)
+    // =========================================================================
+    ($style:ident; position: static; $($rest:tt)*) => {
+        $style = $style.position($crate::element_style::StylePosition::Static);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; position: relative; $($rest:tt)*) => {
+        $style = $style.position($crate::element_style::StylePosition::Relative);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; position: absolute; $($rest:tt)*) => {
+        $style = $style.position($crate::element_style::StylePosition::Absolute);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; position: fixed; $($rest:tt)*) => {
+        $style = $style.position($crate::element_style::StylePosition::Fixed);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; position: sticky; $($rest:tt)*) => {
+        $style = $style.position($crate::element_style::StylePosition::Sticky);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; position: $value:expr; $($rest:tt)*) => {
+        $style = $style.position($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; position: $value:expr) => {
+        $style = $style.position($value);
+    };
+    ($style:ident; top: $value:expr; $($rest:tt)*) => {
+        $style = $style.top($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; top: $value:expr) => {
+        $style = $style.top($value);
+    };
+    ($style:ident; right: $value:expr; $($rest:tt)*) => {
+        $style = $style.right($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; right: $value:expr) => {
+        $style = $style.right($value);
+    };
+    ($style:ident; bottom: $value:expr; $($rest:tt)*) => {
+        $style = $style.bottom($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; bottom: $value:expr) => {
+        $style = $style.bottom($value);
+    };
+    ($style:ident; left: $value:expr; $($rest:tt)*) => {
+        $style = $style.left($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; left: $value:expr) => {
+        $style = $style.left($value);
+    };
+    ($style:ident; inset: $value:expr; $($rest:tt)*) => {
+        $style = $style.inset($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; inset: $value:expr) => {
+        $style = $style.inset($value);
+    };
+    ($style:ident; z-index: $value:expr; $($rest:tt)*) => {
+        $style = $style.z_index($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; z-index: $value:expr) => {
+        $style = $style.z_index($value);
+    };
+    ($style:ident; visibility: visible; $($rest:tt)*) => {
+        $style = $style.visibility($crate::element_style::StyleVisibility::Visible);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; visibility: hidden; $($rest:tt)*) => {
+        $style = $style.visibility($crate::element_style::StyleVisibility::Hidden);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; visibility: $value:expr; $($rest:tt)*) => {
+        $style = $style.visibility($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; visibility: $value:expr) => {
+        $style = $style.visibility($value);
+    };
+
+    // =========================================================================
+    // Form Element Colors
+    // =========================================================================
+    ($style:ident; caret-color: $value:expr; $($rest:tt)*) => {
+        $style = $style.caret_color($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; caret-color: $value:expr) => {
+        $style = $style.caret_color($value);
+    };
+    ($style:ident; selection-color: $value:expr; $($rest:tt)*) => {
+        $style = $style.selection_color($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; selection-color: $value:expr) => {
+        $style = $style.selection_color($value);
+    };
+    ($style:ident; placeholder-color: $value:expr; $($rest:tt)*) => {
+        $style = $style.placeholder_color($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; placeholder-color: $value:expr) => {
+        $style = $style.placeholder_color($value);
+    };
+    ($style:ident; accent-color: $value:expr; $($rest:tt)*) => {
+        $style = $style.accent_color($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; accent-color: $value:expr) => {
+        $style = $style.accent_color($value);
+    };
+
+    // =========================================================================
+    // Scrollbar Properties
+    // =========================================================================
+    ($style:ident; scrollbar-color: ($thumb:expr, $track:expr); $($rest:tt)*) => {
+        $style = $style.scrollbar_color($thumb, $track);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; scrollbar-color: ($thumb:expr, $track:expr)) => {
+        $style = $style.scrollbar_color($thumb, $track);
+    };
+    ($style:ident; scrollbar-width: auto; $($rest:tt)*) => {
+        $style = $style.scrollbar_width($crate::element_style::ScrollbarWidth::Auto);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; scrollbar-width: thin; $($rest:tt)*) => {
+        $style = $style.scrollbar_width($crate::element_style::ScrollbarWidth::Thin);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; scrollbar-width: none; $($rest:tt)*) => {
+        $style = $style.scrollbar_width($crate::element_style::ScrollbarWidth::None);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; scrollbar-width: $value:expr; $($rest:tt)*) => {
+        $style = $style.scrollbar_width($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; scrollbar-width: $value:expr) => {
+        $style = $style.scrollbar_width($value);
+    };
+
+    // =========================================================================
+    // SVG Properties (CSS: fill, stroke, etc.)
+    // =========================================================================
+    ($style:ident; fill: $value:expr; $($rest:tt)*) => {
+        $style = $style.fill($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; fill: $value:expr) => {
+        $style = $style.fill($value);
+    };
+    ($style:ident; stroke: $value:expr; $($rest:tt)*) => {
+        $style = $style.stroke($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; stroke: $value:expr) => {
+        $style = $style.stroke($value);
+    };
+    ($style:ident; stroke-width: $value:expr; $($rest:tt)*) => {
+        $style = $style.stroke_width($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; stroke-width: $value:expr) => {
+        $style = $style.stroke_width($value);
+    };
+    ($style:ident; stroke-dasharray: $value:expr; $($rest:tt)*) => {
+        $style = $style.stroke_dasharray($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; stroke-dasharray: $value:expr) => {
+        $style = $style.stroke_dasharray($value);
+    };
+    ($style:ident; stroke-dashoffset: $value:expr; $($rest:tt)*) => {
+        $style = $style.stroke_dashoffset($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; stroke-dashoffset: $value:expr) => {
+        $style = $style.stroke_dashoffset($value);
+    };
+
+    // =========================================================================
+    // Image Properties (CSS: object-fit, object-position)
+    // =========================================================================
+    ($style:ident; object-fit: $value:expr; $($rest:tt)*) => {
+        $style = $style.object_fit($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; object-fit: $value:expr) => {
+        $style = $style.object_fit($value);
+    };
+    ($style:ident; object-position: ($x:expr, $y:expr); $($rest:tt)*) => {
+        $style = $style.object_position($x, $y);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; object-position: ($x:expr, $y:expr)) => {
+        $style = $style.object_position($x, $y);
+    };
+
+    // =========================================================================
+    // Interaction Properties (CSS: pointer-events, cursor)
+    // =========================================================================
+    ($style:ident; pointer-events: none; $($rest:tt)*) => {
+        $style = $style.pointer_events_none();
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; pointer-events: auto; $($rest:tt)*) => {
+        $style = $style.pointer_events(blinc_core::PointerEvents::Auto);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; pointer-events: $value:expr; $($rest:tt)*) => {
+        $style = $style.pointer_events($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; pointer-events: $value:expr) => {
+        $style = $style.pointer_events($value);
+    };
+    ($style:ident; cursor: $value:expr; $($rest:tt)*) => {
+        $style = $style.cursor($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; cursor: $value:expr) => {
+        $style = $style.cursor($value);
+    };
+
+    // =========================================================================
+    // Animation sub-properties
+    // =========================================================================
+    ($style:ident; animation-delay: $value:expr; $($rest:tt)*) => {
+        {
+            let mut anim = $style.animation.clone().unwrap_or_default();
+            anim.delay_ms = $value;
+            $style.animation = Some(anim);
+        }
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; animation-delay: $value:expr) => {
+        {
+            let mut anim = $style.animation.clone().unwrap_or_default();
+            anim.delay_ms = $value;
+            $style.animation = Some(anim);
+        }
+    };
+    ($style:ident; animation-timing-function: $value:expr; $($rest:tt)*) => {
+        {
+            let mut anim = $style.animation.clone().unwrap_or_default();
+            anim.timing = $value;
+            $style.animation = Some(anim);
+        }
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; animation-timing-function: $value:expr) => {
+        {
+            let mut anim = $style.animation.clone().unwrap_or_default();
+            anim.timing = $value;
+            $style.animation = Some(anim);
+        }
+    };
+    ($style:ident; animation-iteration-count: $value:expr; $($rest:tt)*) => {
+        {
+            let mut anim = $style.animation.clone().unwrap_or_default();
+            anim.iteration_count = $value;
+            $style.animation = Some(anim);
+        }
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; animation-iteration-count: $value:expr) => {
+        {
+            let mut anim = $style.animation.clone().unwrap_or_default();
+            anim.iteration_count = $value;
+            $style.animation = Some(anim);
+        }
+    };
+    ($style:ident; animation-direction: $value:expr; $($rest:tt)*) => {
+        {
+            let mut anim = $style.animation.clone().unwrap_or_default();
+            anim.direction = $value;
+            $style.animation = Some(anim);
+        }
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; animation-direction: $value:expr) => {
+        {
+            let mut anim = $style.animation.clone().unwrap_or_default();
+            anim.direction = $value;
+            $style.animation = Some(anim);
+        }
+    };
+    ($style:ident; animation-fill-mode: $value:expr; $($rest:tt)*) => {
+        {
+            let mut anim = $style.animation.clone().unwrap_or_default();
+            anim.fill_mode = $value;
+            $style.animation = Some(anim);
+        }
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; animation-fill-mode: $value:expr) => {
+        {
+            let mut anim = $style.animation.clone().unwrap_or_default();
+            anim.fill_mode = $value;
+            $style.animation = Some(anim);
+        }
+    };
+
+    // =========================================================================
+    // Display: block
+    // =========================================================================
+    ($style:ident; display: block; $($rest:tt)*) => {
+        $style.display = Some($crate::element_style::StyleDisplay::Block);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; flex-wrap: nowrap; $($rest:tt)*) => {
+        $style.flex_wrap = Some(false);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; flex-shrink: $value:expr; $($rest:tt)*) => {
+        $style = $style.flex_shrink($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; flex-shrink: $value:expr) => {
+        $style = $style.flex_shrink($value);
+    };
+    ($style:ident; align-items: baseline; $($rest:tt)*) => {
+        $style.align_items = Some($crate::element_style::StyleAlign::Baseline);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; align-self: stretch; $($rest:tt)*) => {
+        $style.align_self = Some($crate::element_style::StyleAlign::Stretch);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; align-self: baseline; $($rest:tt)*) => {
+        $style.align_self = Some($crate::element_style::StyleAlign::Baseline);
+        $crate::css_impl!($style; $($rest)*);
+    };
 }
 
 /// Rust-friendly macro for creating ElementStyle with builder-like syntax
@@ -2540,6 +3478,302 @@ macro_rules! style_impl {
         $style.border_color = Some($value);
         $crate::style_impl!($style; $($($rest)*)?);
     };
+
+    // =========================================================================
+    // Text Properties
+    // =========================================================================
+    ($style:ident; text_color: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.text_color($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; color: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.text_color($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; font_size: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.font_size($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; font_weight: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.font_weight($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; text_decoration: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.text_decoration($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; text_decoration_color: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.text_decoration_color($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; text_decoration_thickness: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.text_decoration_thickness($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; line_height: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.line_height($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; text_align: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.text_align($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; letter_spacing: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.letter_spacing($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; text_shadow: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.text_shadow($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; text_overflow: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.text_overflow($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; white_space: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.white_space($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+
+    // =========================================================================
+    // Transform Extras
+    // =========================================================================
+    ($style:ident; skew_x: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.skew_x($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; skew_y: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.skew_y($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; transform_origin: ($x:expr, $y:expr) $(, $($rest:tt)*)?) => {
+        $style = $style.transform_origin($x, $y);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+
+    // =========================================================================
+    // Transition
+    // =========================================================================
+    ($style:ident; transition: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.transition($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+
+    // =========================================================================
+    // Filter
+    // =========================================================================
+    ($style:ident; filter: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.filter($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+
+    // =========================================================================
+    // Mask Properties
+    // =========================================================================
+    ($style:ident; mask_image: $value:expr $(, $($rest:tt)*)?) => {
+        $style.mask_image = Some($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; mask_gradient: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.mask_gradient($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; mask_mode: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.mask_mode($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+
+    // =========================================================================
+    // Mix Blend Mode
+    // =========================================================================
+    ($style:ident; mix_blend_mode: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.mix_blend_mode($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+
+    // =========================================================================
+    // Outline
+    // =========================================================================
+    ($style:ident; outline: ($width:expr, $color:expr) $(, $($rest:tt)*)?) => {
+        $style = $style.outline($width, $color);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; outline_width: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.outline_w($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; outline_color: $value:expr $(, $($rest:tt)*)?) => {
+        $style.outline_color = Some($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; outline_offset: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.outline_offset($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+
+    // =========================================================================
+    // Overflow per-axis
+    // =========================================================================
+    ($style:ident; overflow_x: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.overflow_x($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; overflow_y: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.overflow_y($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+
+    // =========================================================================
+    // Position & Inset
+    // =========================================================================
+    ($style:ident; position: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.position($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; top: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.top($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; right: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.right($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; bottom: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.bottom($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; left: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.left($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; inset: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.inset($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; z_index: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.z_index($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; visibility: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.visibility($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+
+    // =========================================================================
+    // Form Element Colors
+    // =========================================================================
+    ($style:ident; caret_color: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.caret_color($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; selection_color: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.selection_color($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; placeholder_color: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.placeholder_color($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; accent_color: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.accent_color($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+
+    // =========================================================================
+    // Scrollbar Properties
+    // =========================================================================
+    ($style:ident; scrollbar_color: ($thumb:expr, $track:expr) $(, $($rest:tt)*)?) => {
+        $style = $style.scrollbar_color($thumb, $track);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; scrollbar_width: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.scrollbar_width($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+
+    // =========================================================================
+    // SVG Properties
+    // =========================================================================
+    ($style:ident; fill: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.fill($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; stroke: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.stroke($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; stroke_width: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.stroke_width($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; stroke_dasharray: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.stroke_dasharray($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; stroke_dashoffset: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.stroke_dashoffset($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; svg_path_data: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.svg_path_data($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+
+    // =========================================================================
+    // Image Properties
+    // =========================================================================
+    ($style:ident; object_fit: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.object_fit($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; object_position: ($x:expr, $y:expr) $(, $($rest:tt)*)?) => {
+        $style = $style.object_position($x, $y);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+
+    // =========================================================================
+    // Interaction Properties
+    // =========================================================================
+    ($style:ident; pointer_events: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.pointer_events($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; pointer_events_none $(, $($rest:tt)*)?) => {
+        $style = $style.pointer_events_none();
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; cursor: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.cursor($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+
+    // =========================================================================
+    // Flex shrink with value
+    // =========================================================================
+    ($style:ident; flex_shrink: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.flex_shrink($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+
+    // =========================================================================
+    // Display block
+    // =========================================================================
+    ($style:ident; display_block $(, $($rest:tt)*)?) => {
+        $style.display = Some($crate::element_style::StyleDisplay::Block);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+
+    // =========================================================================
+    // Width/Height aliases for CSS-style naming
+    // =========================================================================
+    ($style:ident; width: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.w($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; height: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.h($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
 }
 
 #[cfg(test)]
@@ -2883,5 +4117,350 @@ mod tests {
 
         // Same opacity
         assert_eq!(from_css.opacity, from_style.opacity);
+    }
+
+    #[test]
+    fn test_css_macro_text_properties() {
+        let s = css! {
+            color: Color::RED;
+            font-size: 16.0;
+            line-height: 1.5;
+            letter-spacing: 0.5;
+        };
+        assert_eq!(s.text_color, Some(Color::RED));
+        assert_eq!(s.font_size, Some(16.0));
+        assert_eq!(s.line_height, Some(1.5));
+        assert_eq!(s.letter_spacing, Some(0.5));
+    }
+
+    #[test]
+    fn test_style_macro_text_properties() {
+        let s = style! {
+            text_color: Color::BLUE,
+            font_size: 14.0,
+            line_height: 1.2,
+            letter_spacing: 1.0,
+        };
+        assert_eq!(s.text_color, Some(Color::BLUE));
+        assert_eq!(s.font_size, Some(14.0));
+        assert_eq!(s.line_height, Some(1.2));
+        assert_eq!(s.letter_spacing, Some(1.0));
+    }
+
+    #[test]
+    fn test_css_macro_text_decoration() {
+        let s = css! {
+            text-decoration: TextDecoration::Underline;
+            text-decoration-color: Color::RED;
+            text-decoration-thickness: 2.0;
+        };
+        assert_eq!(s.text_decoration, Some(TextDecoration::Underline));
+        assert_eq!(s.text_decoration_color, Some(Color::RED));
+        assert_eq!(s.text_decoration_thickness, Some(2.0));
+    }
+
+    #[test]
+    fn test_css_macro_text_overflow() {
+        let s = css! {
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        };
+        assert_eq!(s.text_overflow, Some(TextOverflow::Ellipsis));
+        assert_eq!(s.white_space, Some(WhiteSpace::Nowrap));
+    }
+
+    #[test]
+    fn test_css_macro_position_inset() {
+        let s = css! {
+            position: absolute;
+            top: 10.0;
+            right: 20.0;
+            bottom: 30.0;
+            left: 40.0;
+            z-index: 5;
+        };
+        assert_eq!(s.position, Some(StylePosition::Absolute));
+        assert_eq!(s.top, Some(10.0));
+        assert_eq!(s.right, Some(20.0));
+        assert_eq!(s.bottom, Some(30.0));
+        assert_eq!(s.left, Some(40.0));
+        assert_eq!(s.z_index, Some(5));
+    }
+
+    #[test]
+    fn test_style_macro_position_inset() {
+        let s = style! {
+            position: StylePosition::Relative,
+            top: 5.0,
+            inset: 0.0,
+            z_index: 10,
+        };
+        assert_eq!(s.position, Some(StylePosition::Relative));
+        // inset overrides top
+        assert_eq!(s.top, Some(0.0));
+        assert_eq!(s.right, Some(0.0));
+        assert_eq!(s.bottom, Some(0.0));
+        assert_eq!(s.left, Some(0.0));
+        assert_eq!(s.z_index, Some(10));
+    }
+
+    #[test]
+    fn test_css_macro_visibility() {
+        let s = css! {
+            visibility: hidden;
+        };
+        assert_eq!(s.visibility, Some(StyleVisibility::Hidden));
+    }
+
+    #[test]
+    fn test_css_macro_overflow_axes() {
+        let s = css! {
+            overflow-x: scroll;
+            overflow-y: hidden;
+        };
+        assert_eq!(s.overflow_x, Some(StyleOverflow::Scroll));
+        assert_eq!(s.overflow_y, Some(StyleOverflow::Clip));
+    }
+
+    #[test]
+    fn test_css_macro_outline() {
+        let s = css! {
+            outline: (2.0, Color::RED);
+            outline-offset: 4.0;
+        };
+        assert_eq!(s.outline_width, Some(2.0));
+        assert_eq!(s.outline_color, Some(Color::RED));
+        assert_eq!(s.outline_offset, Some(4.0));
+    }
+
+    #[test]
+    fn test_style_macro_outline() {
+        let s = style! {
+            outline: (3.0, Color::BLUE),
+            outline_offset: 2.0,
+        };
+        assert_eq!(s.outline_width, Some(3.0));
+        assert_eq!(s.outline_color, Some(Color::BLUE));
+        assert_eq!(s.outline_offset, Some(2.0));
+    }
+
+    #[test]
+    fn test_css_macro_form_colors() {
+        let s = css! {
+            caret-color: Color::RED;
+            selection-color: Color::BLUE;
+            placeholder-color: Color::rgba(0.5, 0.5, 0.5, 1.0);
+            accent-color: Color::GREEN;
+        };
+        assert_eq!(s.caret_color, Some(Color::RED));
+        assert_eq!(s.selection_color, Some(Color::BLUE));
+        assert!(s.placeholder_color.is_some());
+        assert_eq!(s.accent_color, Some(Color::GREEN));
+    }
+
+    #[test]
+    fn test_style_macro_form_colors() {
+        let s = style! {
+            caret_color: Color::RED,
+            accent_color: Color::GREEN,
+        };
+        assert_eq!(s.caret_color, Some(Color::RED));
+        assert_eq!(s.accent_color, Some(Color::GREEN));
+    }
+
+    #[test]
+    fn test_css_macro_svg_properties() {
+        let s = css! {
+            fill: Color::RED;
+            stroke: Color::BLUE;
+            stroke-width: 2.0;
+            stroke-dashoffset: 10.0;
+        };
+        assert_eq!(s.fill, Some(Color::RED));
+        assert_eq!(s.stroke, Some(Color::BLUE));
+        assert_eq!(s.stroke_width, Some(2.0));
+        assert_eq!(s.stroke_dashoffset, Some(10.0));
+    }
+
+    #[test]
+    fn test_style_macro_svg_properties() {
+        let s = style! {
+            fill: Color::RED,
+            stroke: Color::BLUE,
+            stroke_width: 3.0,
+            stroke_dasharray: vec![5.0, 3.0],
+            stroke_dashoffset: 0.0,
+        };
+        assert_eq!(s.fill, Some(Color::RED));
+        assert_eq!(s.stroke, Some(Color::BLUE));
+        assert_eq!(s.stroke_width, Some(3.0));
+        assert_eq!(s.stroke_dasharray, Some(vec![5.0, 3.0]));
+        assert_eq!(s.stroke_dashoffset, Some(0.0));
+    }
+
+    #[test]
+    fn test_css_macro_transform_extras() {
+        let s = css! {
+            transform-origin: (0.0, 100.0);
+        };
+        assert_eq!(s.transform_origin, Some([0.0, 100.0]));
+    }
+
+    #[test]
+    fn test_style_macro_transform_extras() {
+        let s = style! {
+            skew_x: 15.0,
+            skew_y: 10.0,
+            transform_origin: (50.0, 50.0),
+        };
+        assert_eq!(s.skew_x, Some(15.0));
+        assert_eq!(s.skew_y, Some(10.0));
+        assert_eq!(s.transform_origin, Some([50.0, 50.0]));
+    }
+
+    #[test]
+    fn test_css_macro_scrollbar() {
+        let s = css! {
+            scrollbar-color: (Color::RED, Color::WHITE);
+            scrollbar-width: thin;
+        };
+        assert_eq!(s.scrollbar_color, Some((Color::RED, Color::WHITE)));
+        assert_eq!(s.scrollbar_width, Some(ScrollbarWidth::Thin));
+    }
+
+    #[test]
+    fn test_css_macro_image_properties() {
+        let s = css! {
+            object-fit: 1;
+            object-position: (0.5, 0.0);
+        };
+        assert_eq!(s.object_fit, Some(1));
+        assert_eq!(s.object_position, Some([0.5, 0.0]));
+    }
+
+    #[test]
+    fn test_style_macro_image_properties() {
+        let s = style! {
+            object_fit: 0,
+            object_position: (0.0, 1.0),
+        };
+        assert_eq!(s.object_fit, Some(0));
+        assert_eq!(s.object_position, Some([0.0, 1.0]));
+    }
+
+    #[test]
+    fn test_css_macro_filter() {
+        let f = CssFilter {
+            grayscale: 1.0,
+            ..Default::default()
+        };
+        let s = css! {
+            filter: f;
+        };
+        assert!(s.filter.is_some());
+        assert_eq!(s.filter.unwrap().grayscale, 1.0);
+    }
+
+    #[test]
+    fn test_style_macro_filter() {
+        let f = CssFilter {
+            brightness: 1.5,
+            ..Default::default()
+        };
+        let s = style! {
+            filter: f,
+        };
+        assert!(s.filter.is_some());
+        assert_eq!(s.filter.unwrap().brightness, 1.5);
+    }
+
+    #[test]
+    fn test_css_macro_border_shorthand() {
+        let s = css! {
+            border: (2.0, Color::RED);
+        };
+        assert_eq!(s.border_width, Some(2.0));
+        assert_eq!(s.border_color, Some(Color::RED));
+    }
+
+    #[test]
+    fn test_css_macro_display_block() {
+        let s = css! {
+            display: block;
+        };
+        assert_eq!(s.display, Some(StyleDisplay::Block));
+    }
+
+    #[test]
+    fn test_css_macro_pointer_events() {
+        let s = css! {
+            pointer-events: none;
+        };
+        assert_eq!(s.pointer_events, Some(PointerEvents::None));
+    }
+
+    #[test]
+    fn test_style_macro_pointer_events() {
+        let s = style! {
+            pointer_events_none,
+        };
+        assert_eq!(s.pointer_events, Some(PointerEvents::None));
+    }
+
+    #[test]
+    fn test_css_macro_inset() {
+        let s = css! {
+            inset: 10.0;
+        };
+        assert_eq!(s.top, Some(10.0));
+        assert_eq!(s.right, Some(10.0));
+        assert_eq!(s.bottom, Some(10.0));
+        assert_eq!(s.left, Some(10.0));
+    }
+
+    #[test]
+    fn test_css_macro_flex_extras() {
+        let s = css! {
+            flex-wrap: nowrap;
+            align-items: baseline;
+            align-self: stretch;
+        };
+        assert_eq!(s.flex_wrap, Some(false));
+        assert_eq!(s.align_items, Some(StyleAlign::Baseline));
+        assert_eq!(s.align_self, Some(StyleAlign::Stretch));
+    }
+
+    #[test]
+    fn test_css_style_parity_text() {
+        let from_css = css! {
+            color: Color::RED;
+            font-size: 16.0;
+            letter-spacing: 2.0;
+        };
+        let from_style = style! {
+            text_color: Color::RED,
+            font_size: 16.0,
+            letter_spacing: 2.0,
+        };
+        assert_eq!(from_css.text_color, from_style.text_color);
+        assert_eq!(from_css.font_size, from_style.font_size);
+        assert_eq!(from_css.letter_spacing, from_style.letter_spacing);
+    }
+
+    #[test]
+    fn test_css_style_parity_position() {
+        let from_css = css! {
+            position: absolute;
+            top: 10.0;
+            z-index: 5;
+        };
+        let from_style = style! {
+            position: StylePosition::Absolute,
+            top: 10.0,
+            z_index: 5,
+        };
+        assert_eq!(from_css.position, from_style.position);
+        assert_eq!(from_css.top, from_style.top);
+        assert_eq!(from_css.z_index, from_style.z_index);
     }
 }

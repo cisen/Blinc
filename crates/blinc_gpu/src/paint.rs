@@ -3057,6 +3057,7 @@ mod tests {
             opacity: 0.5,
             depth: false,
             effects: Vec::new(),
+            transform_3d: None,
         };
         ctx.push_layer(config);
 
@@ -3095,6 +3096,7 @@ mod tests {
             opacity: 0.8,
             depth: false,
             effects: Vec::new(),
+            transform_3d: None,
         };
         ctx.push_layer(config1);
         assert_eq!(ctx.layer_stack.len(), 1);
@@ -3109,6 +3111,7 @@ mod tests {
             opacity: 0.5,
             depth: false,
             effects: Vec::new(),
+            transform_3d: None,
         };
         ctx.push_layer(config2);
         assert_eq!(ctx.layer_stack.len(), 2);

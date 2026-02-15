@@ -16,6 +16,7 @@
 //! - **Path Rendering**: Vector path tessellation via lyon
 
 pub mod backbuffer;
+pub mod flow_codegen;
 pub mod gradient_texture;
 pub mod image;
 pub mod paint;
@@ -53,6 +54,9 @@ pub use particles::{
     GpuEmitter, GpuForce, GpuParticle, GpuRenderUniforms, GpuSimulationUniforms, ParticleManager,
     ParticleSystemGpu, ParticleViewport, PARTICLE_COMPUTE_SHADER, PARTICLE_RENDER_SHADER,
 };
+
+// Flow DAG → WGSL codegen
+pub use flow_codegen::flow_to_wgsl;
 
 // Re-export text types for convenience
 pub use blinc_text::{ColorSpan, FontRegistry, GenericFont, TextAlignment, TextAnchor};

@@ -1119,6 +1119,8 @@ pub struct RenderProps {
     pub mask_image: Option<blinc_core::MaskImage>,
     /// CSS mask-mode
     pub mask_mode: Option<blinc_core::MaskMode>,
+    /// @flow shader name (references a FlowGraph in the stylesheet)
+    pub flow: Option<String>,
 }
 
 impl Default for RenderProps {
@@ -1195,6 +1197,7 @@ impl Default for RenderProps {
             white_space: None,
             mask_image: None,
             mask_mode: None,
+            flow: None,
         }
     }
 }

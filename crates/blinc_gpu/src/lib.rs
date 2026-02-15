@@ -17,6 +17,7 @@
 
 pub mod backbuffer;
 pub mod flow_codegen;
+pub mod flow_pipeline;
 pub mod gradient_texture;
 pub mod image;
 pub mod paint;
@@ -55,8 +56,9 @@ pub use particles::{
     ParticleSystemGpu, ParticleViewport, PARTICLE_COMPUTE_SHADER, PARTICLE_RENDER_SHADER,
 };
 
-// Flow DAG → WGSL codegen
+// Flow DAG → WGSL codegen + GPU pipeline cache
 pub use flow_codegen::flow_to_wgsl;
+pub use flow_pipeline::{FlowPipelineCache, FlowUniformData};
 
 // Re-export text types for convenience
 pub use blinc_text::{ColorSpan, FontRegistry, GenericFont, TextAlignment, TextAnchor};

@@ -852,6 +852,8 @@ pub struct GpuRenderer {
     /// Set via `set_blend_target()` before rendering, cleared after.
     /// Safety: Only valid during an active render frame.
     blend_target_ptr: Option<*const wgpu::Texture>,
+    /// Cached @flow GPU pipelines (compiled lazily from FlowGraph → WGSL)
+    flow_pipeline_cache: crate::flow_pipeline::FlowPipelineCache,
 }
 
 /// Image rendering pipeline (created lazily on first image render)
@@ -1403,6 +1405,9 @@ impl GpuRenderer {
             &path_image_sampler,
         );
 
+        let flow_pipeline_cache =
+            crate::flow_pipeline::FlowPipelineCache::new(device.clone(), texture_format);
+
         Ok(Self {
             instance,
             adapter,
@@ -1436,6 +1441,7 @@ impl GpuRenderer {
             dummy_blend_dest_view,
             dummy_blend_dest_texture: dummy_blend_dest,
             blend_target_ptr: None,
+            flow_pipeline_cache,
         })
     }
 
@@ -3125,6 +3131,60 @@ impl GpuRenderer {
             });
             self.rebind_sdf_bind_group();
         }
+    }
+
+    /// Get a mutable reference to the @flow pipeline cache
+    pub fn flow_pipeline_cache(&mut self) -> &mut crate::flow_pipeline::FlowPipelineCache {
+        &mut self.flow_pipeline_cache
+    }
+
+    /// Render a @flow fragment shader into a target texture.
+    ///
+    /// Compiles the flow on first use, updates uniforms, and draws a fullscreen quad.
+    /// Returns false if the flow is not found or compilation failed.
+    pub fn render_flow(
+        &mut self,
+        target: &wgpu::TextureView,
+        flow_name: &str,
+        uniforms: &crate::flow_pipeline::FlowUniformData,
+    ) -> bool {
+        let bind_group =
+            match self
+                .flow_pipeline_cache
+                .prepare_render(&self.queue, flow_name, uniforms)
+            {
+                Some(bg) => bg,
+                None => return false,
+            };
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Flow Render Encoder"),
+            });
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Flow Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load, // Preserve existing content
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            self.flow_pipeline_cache
+                .render_fragment(&mut pass, flow_name, &bind_group);
+        }
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+        true
     }
 
     /// Render a batch of primitives to a texture view

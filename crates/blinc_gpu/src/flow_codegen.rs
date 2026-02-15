@@ -102,8 +102,7 @@ impl<'a> CodegenContext<'a> {
             if matches!(input.source, FlowInputSource::Buffer { .. }) {
                 self.has_buffer_io = true;
                 if let FlowInputSource::Buffer { name, ty } = &input.source {
-                    self.buffer_bindings
-                        .push((name.clone(), *ty, false)); // read-only
+                    self.buffer_bindings.push((name.clone(), *ty, false)); // read-only
                 }
             }
         }
@@ -111,10 +110,7 @@ impl<'a> CodegenContext<'a> {
             if let FlowOutputTarget::Buffer { name } = &output.target {
                 self.has_buffer_io = true;
                 // Check if already exists as input (read-write) or new (write-only)
-                let existing = self
-                    .buffer_bindings
-                    .iter_mut()
-                    .find(|(n, _, _)| n == name);
+                let existing = self.buffer_bindings.iter_mut().find(|(n, _, _)| n == name);
                 if let Some(entry) = existing {
                     entry.2 = true; // promote to read-write
                 } else {
@@ -278,19 +274,12 @@ impl<'a> CodegenContext<'a> {
 
     fn emit_bindings(&self, out: &mut String) {
         // group(0) binding(0) = uniforms
-        let _ = writeln!(
-            out,
-            "@group(0) @binding(0) var<uniform> u: FlowUniforms;"
-        );
+        let _ = writeln!(out, "@group(0) @binding(0) var<uniform> u: FlowUniforms;");
 
         // Storage buffers start at binding(1)
         for (i, (name, _ty, is_rw)) in self.buffer_bindings.iter().enumerate() {
             let binding = i + 1;
-            let access = if *is_rw {
-                "read_write"
-            } else {
-                "read"
-            };
+            let access = if *is_rw { "read_write" } else { "read" };
             let safe_name = sanitize_name(name);
             let _ = writeln!(
                 out,
@@ -328,7 +317,10 @@ impl<'a> CodegenContext<'a> {
         let _ = writeln!(out, "// ---- SDF Primitives ----");
 
         if self.used_sdf_prims.contains("sdf_box") {
-            let _ = writeln!(out, "fn flow_sdf_box(p: vec2<f32>, half_size: vec2<f32>) -> f32 {{");
+            let _ = writeln!(
+                out,
+                "fn flow_sdf_box(p: vec2<f32>, half_size: vec2<f32>) -> f32 {{"
+            );
             let _ = writeln!(out, "    let d = abs(p) - half_size;");
             let _ = writeln!(
                 out,
@@ -404,10 +396,7 @@ impl<'a> CodegenContext<'a> {
                 out,
                 "fn flow_sdf_smooth_union(a: f32, b: f32, k: f32) -> f32 {{"
             );
-            let _ = writeln!(
-                out,
-                "    let h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);"
-            );
+            let _ = writeln!(out, "    let h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);");
             let _ = writeln!(out, "    return mix(b, a, h) - k * h * (1.0 - h);");
             let _ = writeln!(out, "}}");
             let _ = writeln!(out);
@@ -418,10 +407,7 @@ impl<'a> CodegenContext<'a> {
                 out,
                 "fn flow_sdf_smooth_intersect(a: f32, b: f32, k: f32) -> f32 {{"
             );
-            let _ = writeln!(
-                out,
-                "    let h = clamp(0.5 - 0.5 * (b - a) / k, 0.0, 1.0);"
-            );
+            let _ = writeln!(out, "    let h = clamp(0.5 - 0.5 * (b - a) / k, 0.0, 1.0);");
             let _ = writeln!(out, "    return mix(b, a, h) + k * h * (1.0 - h);");
             let _ = writeln!(out, "}}");
             let _ = writeln!(out);
@@ -491,15 +477,15 @@ impl<'a> CodegenContext<'a> {
         let _ = writeln!(out);
 
         // FBM
-        let _ = writeln!(
-            out,
-            "fn flow_fbm(p: vec2<f32>, octaves: i32) -> f32 {{"
-        );
+        let _ = writeln!(out, "fn flow_fbm(p: vec2<f32>, octaves: i32) -> f32 {{");
         let _ = writeln!(out, "    var value = 0.0;");
         let _ = writeln!(out, "    var amplitude = 0.5;");
         let _ = writeln!(out, "    var pos = p;");
         let _ = writeln!(out, "    for (var i = 0; i < octaves; i = i + 1) {{");
-        let _ = writeln!(out, "        value = value + amplitude * flow_noise2d(pos);");
+        let _ = writeln!(
+            out,
+            "        value = value + amplitude * flow_noise2d(pos);"
+        );
         let _ = writeln!(out, "        pos = pos * 2.0;");
         let _ = writeln!(out, "        amplitude = amplitude * 0.5;");
         let _ = writeln!(out, "    }}");
@@ -514,10 +500,7 @@ impl<'a> CodegenContext<'a> {
         let _ = writeln!(out, "    var min_dist = 1.0;");
         let _ = writeln!(out, "    for (var y = -1; y <= 1; y = y + 1) {{");
         let _ = writeln!(out, "        for (var x = -1; x <= 1; x = x + 1) {{");
-        let _ = writeln!(
-            out,
-            "            let neighbor = vec2<f32>(f32(x), f32(y));"
-        );
+        let _ = writeln!(out, "            let neighbor = vec2<f32>(f32(x), f32(y));");
         let _ = writeln!(
             out,
             "            let point = flow_hash22(i + neighbor) * 0.5 + vec2<f32>(0.5);"
@@ -540,30 +523,15 @@ impl<'a> CodegenContext<'a> {
             out,
             "fn flow_phong(normal: vec3<f32>, light_dir: vec3<f32>, view_dir: vec3<f32>) -> vec4<f32> {{"
         );
-        let _ = writeln!(
-            out,
-            "    let ambient = 0.1;"
-        );
-        let _ = writeln!(
-            out,
-            "    let diff = max(dot(normal, light_dir), 0.0);"
-        );
-        let _ = writeln!(
-            out,
-            "    let reflect_dir = reflect(-light_dir, normal);"
-        );
+        let _ = writeln!(out, "    let ambient = 0.1;");
+        let _ = writeln!(out, "    let diff = max(dot(normal, light_dir), 0.0);");
+        let _ = writeln!(out, "    let reflect_dir = reflect(-light_dir, normal);");
         let _ = writeln!(
             out,
             "    let spec = pow(max(dot(view_dir, reflect_dir), 0.0), 32.0);"
         );
-        let _ = writeln!(
-            out,
-            "    let intensity = ambient + diff + spec * 0.5;"
-        );
-        let _ = writeln!(
-            out,
-            "    return vec4<f32>(vec3<f32>(intensity), 1.0);"
-        );
+        let _ = writeln!(out, "    let intensity = ambient + diff + spec * 0.5;");
+        let _ = writeln!(out, "    return vec4<f32>(vec3<f32>(intensity), 1.0);");
         let _ = writeln!(out, "}}");
         let _ = writeln!(out);
 
@@ -572,26 +540,14 @@ impl<'a> CodegenContext<'a> {
             "fn flow_blinn_phong(normal: vec3<f32>, light_dir: vec3<f32>, view_dir: vec3<f32>) -> vec4<f32> {{"
         );
         let _ = writeln!(out, "    let ambient = 0.1;");
-        let _ = writeln!(
-            out,
-            "    let diff = max(dot(normal, light_dir), 0.0);"
-        );
-        let _ = writeln!(
-            out,
-            "    let half_dir = normalize(light_dir + view_dir);"
-        );
+        let _ = writeln!(out, "    let diff = max(dot(normal, light_dir), 0.0);");
+        let _ = writeln!(out, "    let half_dir = normalize(light_dir + view_dir);");
         let _ = writeln!(
             out,
             "    let spec = pow(max(dot(normal, half_dir), 0.0), 64.0);"
         );
-        let _ = writeln!(
-            out,
-            "    let intensity = ambient + diff + spec * 0.5;"
-        );
-        let _ = writeln!(
-            out,
-            "    return vec4<f32>(vec3<f32>(intensity), 1.0);"
-        );
+        let _ = writeln!(out, "    let intensity = ambient + diff + spec * 0.5;");
+        let _ = writeln!(out, "    return vec4<f32>(vec3<f32>(intensity), 1.0);");
         let _ = writeln!(out, "}}");
         let _ = writeln!(out);
     }
@@ -603,8 +559,14 @@ impl<'a> CodegenContext<'a> {
             out,
             "fn flow_spring_eval(pos: f32, vel: f32, target: f32, stiffness: f32, damping: f32) -> vec2<f32> {{"
         );
-        let _ = writeln!(out, "    let force = -stiffness * (pos - target) - damping * vel;");
-        let _ = writeln!(out, "    return vec2<f32>(pos + vel * 0.016, vel + force * 0.016);");
+        let _ = writeln!(
+            out,
+            "    let force = -stiffness * (pos - target) - damping * vel;"
+        );
+        let _ = writeln!(
+            out,
+            "    return vec2<f32>(pos + vel * 0.016, vel + force * 0.016);"
+        );
         let _ = writeln!(out, "}}");
         let _ = writeln!(out);
 
@@ -612,15 +574,12 @@ impl<'a> CodegenContext<'a> {
             out,
             "fn flow_wave_step(height: f32, velocity: f32, neighbors_avg: f32, damping: f32) -> vec2<f32> {{"
         );
+        let _ = writeln!(out, "    let accel = (neighbors_avg - height) * 2.0;");
+        let _ = writeln!(out, "    let new_vel = (velocity + accel) * damping;");
         let _ = writeln!(
             out,
-            "    let accel = (neighbors_avg - height) * 2.0;"
+            "    return vec2<f32>(height + new_vel * 0.016, new_vel);"
         );
-        let _ = writeln!(
-            out,
-            "    let new_vel = (velocity + accel) * damping;"
-        );
-        let _ = writeln!(out, "    return vec2<f32>(height + new_vel * 0.016, new_vel);");
         let _ = writeln!(out, "}}");
         let _ = writeln!(out);
     }
@@ -656,10 +615,7 @@ impl<'a> CodegenContext<'a> {
         let _ = writeln!(out, "        vec2<f32>(1.0, 0.0),");
         let _ = writeln!(out, "    );");
         let _ = writeln!(out, "    // Triangle strip indices: 0,1,2, 2,1,3");
-        let _ = writeln!(
-            out,
-            "    let idx = array<u32, 6>(0u, 1u, 2u, 2u, 1u, 3u);"
-        );
+        let _ = writeln!(out, "    let idx = array<u32, 6>(0u, 1u, 2u, 2u, 1u, 3u);");
         let _ = writeln!(out, "    let i = idx[vi];");
         let _ = writeln!(out, "    var output: VertexOutput;");
         let _ = writeln!(out, "    output.position = vec4<f32>(pos[i], 0.0, 1.0);");
@@ -732,9 +688,7 @@ impl<'a> CodegenContext<'a> {
                     let value = match builtin {
                         blinc_core::BuiltinVar::Uv => "in.uv".to_string(),
                         blinc_core::BuiltinVar::Time => "u.time".to_string(),
-                        blinc_core::BuiltinVar::Resolution => {
-                            "u.element_bounds.zw".to_string()
-                        }
+                        blinc_core::BuiltinVar::Resolution => "u.element_bounds.zw".to_string(),
                         blinc_core::BuiltinVar::Sdf => {
                             // The element's SDF at the fragment position
                             "0.0".to_string() // placeholder — bound at runtime
@@ -762,19 +716,11 @@ impl<'a> CodegenContext<'a> {
                 }
                 FlowInputSource::CssProperty(prop) => {
                     let safe = sanitize_name(prop);
-                    let _ = writeln!(
-                        out,
-                        "{}let {}: {} = u.css_{};",
-                        indent, name, wgsl_ty, safe
-                    );
+                    let _ = writeln!(out, "{}let {}: {} = u.css_{};", indent, name, wgsl_ty, safe);
                 }
                 FlowInputSource::EnvVar(var) => {
                     let safe = sanitize_name(var);
-                    let _ = writeln!(
-                        out,
-                        "{}let {}: {} = u.env_{};",
-                        indent, name, wgsl_ty, safe
-                    );
+                    let _ = writeln!(out, "{}let {}: {} = u.env_{};", indent, name, wgsl_ty, safe);
                 }
                 FlowInputSource::Auto => {
                     // Auto-resolved: default to 0
@@ -815,10 +761,11 @@ impl<'a> CodegenContext<'a> {
 
     fn emit_fragment_output(&self, out: &mut String, indent: &str) -> Result<(), FlowError> {
         // Find the color output
-        let color_output = self.graph.outputs.iter().find(|o| {
-            o.target == FlowOutputTarget::Color
-                || (o.name == "color" && o.target == FlowOutputTarget::Color)
-        });
+        let color_output = self
+            .graph
+            .outputs
+            .iter()
+            .find(|o| o.target == FlowOutputTarget::Color);
 
         if let Some(co) = color_output {
             if let Some(expr) = &co.expr {
@@ -849,17 +796,9 @@ impl<'a> CodegenContext<'a> {
                 let safe_buf = sanitize_name(name);
                 if let Some(expr) = &output.expr {
                     let expr_str = expr_to_wgsl(expr)?;
-                    let _ = writeln!(
-                        out,
-                        "{}buf_{}[idx] = {};",
-                        indent, safe_buf, expr_str
-                    );
+                    let _ = writeln!(out, "{}buf_{}[idx] = {};", indent, safe_buf, expr_str);
                 } else {
-                    let _ = writeln!(
-                        out,
-                        "{}buf_{}[idx] = {};",
-                        indent, safe_buf, output.name
-                    );
+                    let _ = writeln!(out, "{}buf_{}[idx] = {};", indent, safe_buf, output.name);
                 }
             }
         }
@@ -993,7 +932,10 @@ fn func_to_wgsl(func: FlowFunc, args: &[String]) -> Result<String, FlowError> {
         FlowFunc::SdfIntersect => format!("flow_sdf_intersect({}, {})", args[0], args[1]),
         FlowFunc::SdfSubtract => format!("flow_sdf_subtract({}, {})", args[0], args[1]),
         FlowFunc::SdfSmoothUnion => {
-            format!("flow_sdf_smooth_union({}, {}, {})", args[0], args[1], args[2])
+            format!(
+                "flow_sdf_smooth_union({}, {}, {})",
+                args[0], args[1], args[2]
+            )
         }
         FlowFunc::SdfSmoothIntersect => {
             format!(
@@ -1086,7 +1028,9 @@ fn func_to_wgsl(func: FlowFunc, args: &[String]) -> Result<String, FlowError> {
             // Simplified fluid step
             format!(
                 "flow_wave_step({}, {}, {}, 0.995)",
-                args[0], args[1], args.get(2).map(|s| s.as_str()).unwrap_or("0.0")
+                args[0],
+                args[1],
+                args.get(2).map(|s| s.as_str()).unwrap_or("0.0")
             )
         }
     })
@@ -1099,7 +1043,13 @@ fn func_to_wgsl(func: FlowFunc, args: &[String]) -> Result<String, FlowError> {
 /// Sanitize a name for use as a WGSL identifier
 fn sanitize_name(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -1500,10 +1450,7 @@ mod tests {
             name: "n".to_string(),
             expr: FlowExpr::Call {
                 func: FlowFunc::Fbm,
-                args: vec![
-                    FlowExpr::Ref("uv".to_string()),
-                    FlowExpr::Float(6.0),
-                ],
+                args: vec![FlowExpr::Ref("uv".to_string()), FlowExpr::Float(6.0)],
             },
             inferred_type: None,
         });

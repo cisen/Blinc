@@ -29,6 +29,35 @@ const IMAGE_CACHE_CAPACITY: usize = 128;
 /// Maximum number of parsed SVG documents to cache
 const SVG_CACHE_CAPACITY: usize = 64;
 
+/// Intersect two axis-aligned clip rects [x, y, w, h], returning their overlap.
+fn intersect_clip_rects(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    let x1 = a[0].max(b[0]);
+    let y1 = a[1].max(b[1]);
+    let x2 = (a[0] + a[2]).min(b[0] + b[2]);
+    let y2 = (a[1] + a[3]).min(b[1] + b[3]);
+    [x1, y1, (x2 - x1).max(0.0), (y2 - y1).max(0.0)]
+}
+
+/// Merge a new clip rect with an optional existing one via intersection.
+fn merge_scroll_clip(new_clip: [f32; 4], existing: Option<[f32; 4]>) -> Option<[f32; 4]> {
+    match existing {
+        Some(ex) => Some(intersect_clip_rects(new_clip, ex)),
+        None => Some(new_clip),
+    }
+}
+
+/// Compute effective clip for elements that support only a single clip rect (text, SVG).
+/// Intersects primary clip and scroll clip so nested scroll containers are respected.
+fn effective_single_clip(
+    primary: Option<[f32; 4]>,
+    scroll: Option<[f32; 4]>,
+) -> Option<[f32; 4]> {
+    match (primary, scroll) {
+        (Some(c), Some(s)) => Some(intersect_clip_rects(c, s)),
+        (c, s) => c.or(s),
+    }
+}
+
 /// Maximum number of rasterized SVG textures to cache
 /// Key is (svg_hash, width, height, tint_hash) - separate textures for different sizes/tints
 const RASTERIZED_SVG_CACHE_CAPACITY: usize = 64;
@@ -2302,12 +2331,13 @@ impl RenderContext {
                     // This node is rounded (card), parent is sharp (scroll container).
                     // Keep them separate to avoid SDF radius clamping/morphing.
                     // Primary clip = this node's rounded clip (full card bounds).
-                    // Scroll clip = parent's sharp clip (scroll boundary).
-                    (Some(this_clip), this_clip_radius, Some(parent_clip))
+                    // Scroll clip = parent's sharp clip intersected with any existing scroll clip.
+                    (Some(this_clip), this_clip_radius, merge_scroll_clip(parent_clip, current_scroll_clip))
                 } else if !this_has_radius && parent_has_radius {
                     // This node is sharp (scroll), parent is rounded (card).
-                    // Keep parent as primary rounded clip, this as scroll clip.
-                    (current_clip, current_clip_radius, Some(this_clip))
+                    // Keep parent as primary rounded clip, this as scroll clip
+                    // intersected with any existing scroll clip.
+                    (current_clip, current_clip_radius, merge_scroll_clip(this_clip, current_scroll_clip))
                 } else {
                     // Both have same kind of radius — intersect normally.
                     let x1 = parent_clip[0].max(this_clip[0]);
@@ -2481,9 +2511,9 @@ impl RenderContext {
                     let scaled_measured_width =
                         text_data.measured_width * effective_motion_scale.0 * scale;
 
-                    // Scale clip bounds if present — fall back to scroll_clip for
-                    // elements that only support a single clip rect (text, SVG).
-                    let effective_clip = current_clip.or(current_scroll_clip);
+                    // Intersect primary clip with scroll clip — text only supports
+                    // a single clip rect so we must merge both boundaries.
+                    let effective_clip = effective_single_clip(current_clip, current_scroll_clip);
                     let scaled_clip = effective_clip
                         .map(|[cx, cy, cw, ch]| [cx * scale, cy * scale, cw * scale, ch * scale]);
 
@@ -2679,9 +2709,9 @@ impl RenderContext {
                             (final_x, final_y, base_width, base_height)
                         };
 
-                    // Scale clip bounds if present — fall back to scroll_clip for
-                    // elements that only support a single clip rect (text, SVG).
-                    let effective_clip = current_clip.or(current_scroll_clip);
+                    // Intersect primary clip with scroll clip — text/SVG only support
+                    // a single clip rect so we must merge both boundaries.
+                    let effective_clip = effective_single_clip(current_clip, current_scroll_clip);
                     let scaled_clip = effective_clip
                         .map(|[cx, cy, cw, ch]| [cx * scale, cy * scale, cw * scale, ch * scale]);
 
@@ -2950,8 +2980,8 @@ impl RenderContext {
                     let base_styled_font_size =
                         render_node.props.font_size.unwrap_or(styled_data.font_size);
                     let scaled_font_size = base_styled_font_size * effective_motion_scale.1 * scale;
-                    // Fall back to scroll_clip for elements that only support a single clip rect
-                    let effective_clip = current_clip.or(current_scroll_clip);
+                    // Intersect primary clip with scroll clip for styled text
+                    let effective_clip = effective_single_clip(current_clip, current_scroll_clip);
                     let scaled_clip = effective_clip
                         .map(|[cx, cy, cw, ch]| [cx * scale, cy * scale, cw * scale, ch * scale]);
 

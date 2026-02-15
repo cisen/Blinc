@@ -194,7 +194,6 @@ fn main() -> Result<()> {
                 }
 
                 #prev {
-                    transform: rotate(15deg);
                     fill: #ffffff;
                     stroke: #ffffff;
                     stroke-width: 0.5;

@@ -6172,12 +6172,11 @@ fn parse_transform_with_3d(value: &str, style: &mut ElementStyle) -> bool {
             affine = affine.then(&Affine2D::scale(sx, sy));
             has_2d = true;
             parsed_any = true;
-        // 2D: rotate
-        } else if let Ok((_, t)) = parse_rotate_transform::<nom::error::Error<&str>>(func) {
-            if let Transform::Affine2D(ref a) = t {
-                style.rotate = Some(a.elements[1].atan2(a.elements[0]).to_degrees());
-                affine = affine.then(a);
-            }
+        // 2D: rotate — parse angle directly to avoid lossy matrix decomposition
+        // (atan2 wraps 360° to 0°, breaking spin animations)
+        } else if let Some(deg) = parse_function_angle(func, "rotate") {
+            style.rotate = Some(deg);
+            affine = affine.then(&Affine2D::rotation(deg.to_radians()));
             has_2d = true;
             parsed_any = true;
         // 2D: translate / translateX / translateY

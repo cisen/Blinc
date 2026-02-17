@@ -3,6 +3,16 @@
 //! Compiles FlowGraph → WGSL → wgpu pipeline on first use, caches by flow name.
 //! Handles both fragment (render) and compute (simulation) pipelines.
 //! Uniform buffers are updated per-frame with runtime data (time, pointer, etc.).
+//!
+//! ## Memory optimizations
+//!
+//! - **Bind group caching**: Bind groups are created once per flow (or once per scene
+//!   texture change) and reused across frames. Only the uniform buffer is written each
+//!   frame via `queue.write_buffer()`.
+//! - **Right-sized storage buffers**: Storage buffers start at 1K elements (not 64K)
+//!   and are only allocated when the flow actually uses buffer I/O.
+//! - **LRU pipeline eviction**: The pipeline cache holds at most `MAX_CACHED_PIPELINES`
+//!   entries. When full, the least-recently-used pipeline is evicted.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -10,6 +20,13 @@ use std::sync::Arc;
 use blinc_core::{FlowGraph, FlowInputSource, FlowTarget, FlowType};
 
 use crate::flow_codegen::{flow_needs_scene_texture, flow_to_wgsl};
+
+/// Maximum number of compiled flow pipelines kept in cache.
+/// When exceeded, the least-recently-used pipeline is evicted.
+const MAX_CACHED_PIPELINES: usize = 24;
+
+/// Default storage buffer element count (1K instead of 64K).
+const DEFAULT_BUFFER_ELEMENTS: u64 = 1024;
 
 // ==========================================================================
 // Uniform Data
@@ -79,6 +96,11 @@ struct CachedFlowPipeline {
     needs_scene: bool,
     /// Binding index for the scene texture (if needs_scene)
     scene_texture_binding: u32,
+    /// Cached bind group (reused across frames). Invalidated when scene texture changes.
+    cached_bind_group: Option<wgpu::BindGroup>,
+    /// The scene texture view pointer used when the cached bind group was built.
+    /// If the scene texture changes (resize), the bind group must be rebuilt.
+    cached_scene_id: u64,
 }
 
 // ==========================================================================
@@ -93,10 +115,14 @@ pub struct FlowPipelineCache {
     device: Arc<wgpu::Device>,
     texture_format: wgpu::TextureFormat,
     pipelines: HashMap<String, CachedFlowPipeline>,
+    /// LRU order: most-recently-used at the back
+    lru_order: Vec<String>,
     /// Sampler for scene texture sampling (linear filtering)
     scene_sampler: wgpu::Sampler,
     /// 1x1 transparent dummy texture for flows that don't use scene sampling
     dummy_scene_view: wgpu::TextureView,
+    /// Monotonic ID for scene texture changes (incremented on each new scene texture)
+    scene_generation: u64,
 }
 
 impl FlowPipelineCache {
@@ -132,8 +158,10 @@ impl FlowPipelineCache {
             device,
             texture_format,
             pipelines: HashMap::new(),
+            lru_order: Vec::new(),
             scene_sampler,
             dummy_scene_view,
+            scene_generation: 0,
         }
     }
 
@@ -142,14 +170,42 @@ impl FlowPipelineCache {
         self.pipelines.contains_key(flow_name)
     }
 
+    /// Bump a flow to the most-recently-used position
+    fn touch_lru(&mut self, name: &str) {
+        if let Some(pos) = self.lru_order.iter().position(|n| n == name) {
+            self.lru_order.remove(pos);
+        }
+        self.lru_order.push(name.to_string());
+    }
+
+    /// Evict the least-recently-used pipeline if over capacity
+    fn evict_if_needed(&mut self) {
+        while self.pipelines.len() >= MAX_CACHED_PIPELINES && !self.lru_order.is_empty() {
+            let oldest = self.lru_order.remove(0);
+            if self.pipelines.remove(&oldest).is_some() {
+                tracing::debug!("Flow pipeline cache: evicted '{}'", oldest);
+            }
+        }
+    }
+
+    /// Notify the cache that the scene texture has changed (e.g., viewport resize).
+    /// This invalidates all cached bind groups for flows that use scene sampling.
+    pub fn invalidate_scene_bind_groups(&mut self) {
+        self.scene_generation += 1;
+    }
+
     /// Compile a FlowGraph into a GPU pipeline and cache it.
     ///
     /// Returns Ok(()) on success, or an error string on compilation failure.
     /// If the pipeline already exists, this is a no-op.
     pub fn compile(&mut self, graph: &FlowGraph) -> Result<(), String> {
         if self.pipelines.contains_key(&graph.name) {
+            self.touch_lru(&graph.name);
             return Ok(());
         }
+
+        // Evict oldest pipeline if at capacity
+        self.evict_if_needed();
 
         // Generate WGSL
         let wgsl = flow_to_wgsl(graph).map_err(|e| format!("codegen error: {}", e))?;
@@ -182,13 +238,9 @@ impl FlowPipelineCache {
             .count();
 
         // Compute uniform buffer size: base FlowUniformData + dynamic fields (each f32-aligned)
-        // Dynamic fields are appended after the base struct.
-        // Each dynamic field is padded to 4 bytes (f32) for simplicity.
         let base_size = std::mem::size_of::<FlowUniformData>() as u64;
-        let dynamic_size = (dynamic_field_count * 4) as u64; // Each field is at most f32
-                                                             // Round up to 16-byte alignment for uniform buffer requirements
+        let dynamic_size = (dynamic_field_count * 4) as u64;
         let uniform_size = ((base_size + dynamic_size + 15) / 16) * 16;
-        // Minimum 256 bytes to satisfy minUniformBufferOffsetAlignment on some GPUs
         let uniform_size = uniform_size.max(256);
 
         // Create uniform buffer
@@ -213,10 +265,9 @@ impl FlowPipelineCache {
                         FlowType::Vec3 => 12,
                         FlowType::Vec4 => 16,
                     };
-                    // Default buffer size: 64K elements
                     let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some(&format!("Flow Buffer: {}", name)),
-                        size: elem_size * 65536,
+                        size: elem_size * DEFAULT_BUFFER_ELEMENTS,
                         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                         mapped_at_creation: false,
                     });
@@ -233,7 +284,7 @@ impl FlowPipelineCache {
                 if !storage_buffers.contains_key(name) {
                     let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some(&format!("Flow Buffer: {}", name)),
-                        size: 16 * 65536, // vec4 * 64K
+                        size: 16 * DEFAULT_BUFFER_ELEMENTS, // vec4
                         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                         mapped_at_creation: false,
                     });
@@ -290,7 +341,7 @@ impl FlowPipelineCache {
 
         // Check if this flow uses sample_scene() and needs a scene texture
         let needs_scene = flow_needs_scene_texture(graph);
-        let scene_texture_binding = binding_index; // next available binding
+        let scene_texture_binding = binding_index;
         if needs_scene {
             // Scene texture
             layout_entries.push(wgpu::BindGroupLayoutEntry {
@@ -313,7 +364,7 @@ impl FlowPipelineCache {
             });
             binding_index += 1;
         }
-        let _ = binding_index; // suppress unused warning
+        let _ = binding_index;
 
         let bind_group_layout =
             self.device
@@ -402,6 +453,7 @@ impl FlowPipelineCache {
             }
         }
 
+        self.touch_lru(&graph.name);
         self.pipelines.insert(
             graph.name.clone(),
             CachedFlowPipeline {
@@ -415,6 +467,8 @@ impl FlowPipelineCache {
                 uniform_size,
                 needs_scene,
                 scene_texture_binding,
+                cached_bind_group: None,
+                cached_scene_id: 0,
             },
         );
 
@@ -424,44 +478,52 @@ impl FlowPipelineCache {
     /// Invalidate (remove) a cached pipeline, forcing recompilation on next use.
     pub fn invalidate(&mut self, flow_name: &str) {
         self.pipelines.remove(flow_name);
+        self.lru_order.retain(|n| n != flow_name);
     }
 
     /// Invalidate all cached pipelines.
     pub fn invalidate_all(&mut self) {
         self.pipelines.clear();
+        self.lru_order.clear();
     }
 
-    /// Update the uniform buffer for a flow and return the bind group for rendering.
+    /// Build or return the cached bind group for a flow.
     ///
-    /// `scene_texture` is an optional texture view of the current framebuffer,
-    /// needed for flows that use `sample_scene()`. If None and the flow needs it,
-    /// a 1x1 dummy texture is used.
-    ///
-    /// Returns None if the flow is not compiled.
-    pub fn prepare_render(
-        &self,
-        queue: &wgpu::Queue,
+    /// The bind group is rebuilt only when:
+    /// - It hasn't been created yet
+    /// - The scene texture changed (for flows using sample_scene())
+    fn ensure_bind_group(
+        &mut self,
         flow_name: &str,
-        uniforms: &FlowUniformData,
         scene_texture: Option<&wgpu::TextureView>,
-    ) -> Option<wgpu::BindGroup> {
-        let cached = self.pipelines.get(flow_name)?;
+    ) -> bool {
+        let cached = match self.pipelines.get(flow_name) {
+            Some(c) => c,
+            None => return false,
+        };
 
-        // Write base uniforms
-        queue.write_buffer(&cached.uniform_buffer, 0, bytemuck::bytes_of(uniforms));
+        // Determine if we need to rebuild the bind group
+        let needs_rebuild = match &cached.cached_bind_group {
+            None => true,
+            Some(_) => {
+                // For scene flows, check if the scene texture generation changed
+                cached.needs_scene && cached.cached_scene_id != self.scene_generation
+            }
+        };
 
-        // Build bind group with current resources
+        if !needs_rebuild {
+            return true;
+        }
+
+        // Build entries
         let mut entries = vec![wgpu::BindGroupEntry {
             binding: 0,
             resource: cached.uniform_buffer.as_entire_binding(),
         }];
 
-        // Add storage buffer entries (binding indices start at 1)
-        let mut binding = 1u32;
-        // We need to iterate in the same order as the layout was created.
-        // For simplicity, iterate storage_buffers in sorted key order.
         let mut buf_names: Vec<&String> = cached.storage_buffers.keys().collect();
         buf_names.sort();
+        let mut binding = 1u32;
         for name in buf_names {
             if let Some(buf) = cached.storage_buffers.get(name.as_str()) {
                 entries.push(wgpu::BindGroupEntry {
@@ -472,7 +534,6 @@ impl FlowPipelineCache {
             }
         }
 
-        // Add scene texture + sampler if needed
         if cached.needs_scene {
             let tex_view = scene_texture.unwrap_or(&self.dummy_scene_view);
             entries.push(wgpu::BindGroupEntry {
@@ -491,7 +552,40 @@ impl FlowPipelineCache {
             entries: &entries,
         });
 
-        Some(bind_group)
+        let gen = self.scene_generation;
+        let cached = self.pipelines.get_mut(flow_name).unwrap();
+        cached.cached_bind_group = Some(bind_group);
+        cached.cached_scene_id = gen;
+        true
+    }
+
+    /// Update the uniform buffer for a flow and return whether the bind group is ready.
+    ///
+    /// `scene_texture` is an optional texture view of the current framebuffer,
+    /// needed for flows that use `sample_scene()`. If None and the flow needs it,
+    /// a 1x1 dummy texture is used.
+    ///
+    /// Returns false if the flow is not compiled.
+    pub fn prepare_render(
+        &mut self,
+        queue: &wgpu::Queue,
+        flow_name: &str,
+        uniforms: &FlowUniformData,
+        scene_texture: Option<&wgpu::TextureView>,
+    ) -> bool {
+        let cached = match self.pipelines.get(flow_name) {
+            Some(c) => c,
+            None => return false,
+        };
+
+        // Write uniforms (only CPU→GPU data that changes per-frame)
+        queue.write_buffer(&cached.uniform_buffer, 0, bytemuck::bytes_of(uniforms));
+
+        // Ensure bind group is built/cached
+        self.ensure_bind_group(flow_name, scene_texture);
+
+        self.touch_lru(flow_name);
+        true
     }
 
     /// Check if a compiled flow needs a scene texture for rendering.
@@ -501,15 +595,19 @@ impl FlowPipelineCache {
             .map_or(false, |c| c.needs_scene)
     }
 
+    /// Check if any compiled flow needs a scene texture.
+    pub fn any_needs_scene_texture(&self) -> bool {
+        self.pipelines.values().any(|c| c.needs_scene)
+    }
+
     /// Render a fragment flow into a render pass.
     ///
-    /// The caller must have already called `prepare_render()` to get the bind group.
+    /// The caller must have already called `prepare_render()`.
     /// Draws a fullscreen quad (6 vertices from the flow's vertex shader).
     pub fn render_fragment<'a>(
         &'a self,
         pass: &mut wgpu::RenderPass<'a>,
         flow_name: &str,
-        bind_group: &'a wgpu::BindGroup,
     ) -> bool {
         let cached = match self.pipelines.get(flow_name) {
             Some(c) => c,
@@ -521,20 +619,24 @@ impl FlowPipelineCache {
             None => return false,
         };
 
+        let bind_group = match &cached.cached_bind_group {
+            Some(bg) => bg,
+            None => return false,
+        };
+
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, bind_group, &[]);
-        pass.draw(0..6, 0..1); // Fullscreen quad: 6 vertices (2 triangles)
+        pass.draw(0..6, 0..1);
         true
     }
 
     /// Dispatch a compute flow.
     ///
-    /// The caller must have already called `prepare_render()` to get the bind group.
+    /// The caller must have already called `prepare_render()`.
     pub fn dispatch_compute<'a>(
         &'a self,
         pass: &mut wgpu::ComputePass<'a>,
         flow_name: &str,
-        bind_group: &'a wgpu::BindGroup,
         workgroup_count: u32,
     ) -> bool {
         let cached = match self.pipelines.get(flow_name) {
@@ -544,6 +646,11 @@ impl FlowPipelineCache {
 
         let pipeline = match &cached.compute_pipeline {
             Some(p) => p,
+            None => return false,
+        };
+
+        let bind_group = match &cached.cached_bind_group {
+            Some(bg) => bg,
             None => return false,
         };
 

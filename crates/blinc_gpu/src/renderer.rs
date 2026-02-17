@@ -3147,6 +3147,77 @@ impl GpuRenderer {
     /// Compiles the flow on first use, updates uniforms, and draws a fullscreen quad.
     /// If `viewport` is Some([x, y, w, h]), the quad is scoped to that region in pixels.
     /// Returns false if the flow is not found or compilation failed.
+    /// Ensure the scene copy texture exists, matches viewport size, and is up-to-date.
+    ///
+    /// Called once per frame before rendering any flows that use `sample_scene()`.
+    /// Returns the scene texture view, or None if the copy failed.
+    fn ensure_scene_copy(&mut self) -> Option<&wgpu::TextureView> {
+        let (tw, th) = self.viewport_size;
+        if tw == 0 || th == 0 {
+            return None;
+        }
+
+        // Recreate texture on viewport resize
+        let needs_recreate = match &self.scene_copy_texture {
+            Some((_, _, w, h)) => *w != tw || *h != th,
+            None => true,
+        };
+        if needs_recreate {
+            let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Flow Scene Copy Texture"),
+                size: wgpu::Extent3d {
+                    width: tw,
+                    height: th,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.texture_format,
+                usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+            self.scene_copy_texture = Some((tex, view, tw, th));
+            // Scene texture changed — invalidate bind groups that reference it
+            self.flow_pipeline_cache.invalidate_scene_bind_groups();
+        }
+
+        // Copy current render target → scene copy texture (single copy per frame)
+        if let Some((scene_tex, _, _, _)) = &self.scene_copy_texture {
+            if let Some(tex_ptr) = self.blend_target_ptr {
+                let src_tex = unsafe { &*tex_ptr };
+                let mut copy_encoder =
+                    self.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("Flow Scene Copy Encoder"),
+                        });
+                copy_encoder.copy_texture_to_texture(
+                    wgpu::ImageCopyTexture {
+                        texture: src_tex,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::ImageCopyTexture {
+                        texture: scene_tex,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d {
+                        width: tw,
+                        height: th,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                self.queue.submit(std::iter::once(copy_encoder.finish()));
+            }
+        }
+
+        self.scene_copy_texture.as_ref().map(|(_, v, _, _)| v)
+    }
+
     pub fn render_flow(
         &mut self,
         target: &wgpu::TextureView,
@@ -3154,85 +3225,24 @@ impl GpuRenderer {
         uniforms: &crate::flow_pipeline::FlowUniformData,
         viewport: Option<[f32; 4]>,
     ) -> bool {
-        // If this flow uses sample_scene(), copy the current framebuffer first
-        let scene_view: Option<&wgpu::TextureView> =
+        // If this flow uses sample_scene(), ensure scene copy is ready
+        let scene_view_owned: Option<*const wgpu::TextureView> =
             if self.flow_pipeline_cache.needs_scene_texture(flow_name) {
-                let (tw, th) = self.viewport_size;
-                // Ensure scene copy texture exists and matches render target size
-                let needs_recreate = match &self.scene_copy_texture {
-                    Some((_, _, w, h)) => *w != tw || *h != th,
-                    None => true,
-                };
-                if needs_recreate && tw > 0 && th > 0 {
-                    let tex = self.device.create_texture(&wgpu::TextureDescriptor {
-                        label: Some("Flow Scene Copy Texture"),
-                        size: wgpu::Extent3d {
-                            width: tw,
-                            height: th,
-                            depth_or_array_layers: 1,
-                        },
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: self.texture_format,
-                        usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
-                        view_formats: &[],
-                    });
-                    let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-                    self.scene_copy_texture = Some((tex, view, tw, th));
-                }
-
-                // Copy current render target → scene copy texture
-                if let Some((scene_tex, _, _, _)) = &self.scene_copy_texture {
-                    // We need to get the underlying texture from the target view.
-                    // Since we have the render target texture via blend_target_ptr, use that.
-                    // Otherwise, we need the texture passed in — use viewport_size to create a copy.
-                    let mut copy_encoder =
-                        self.device
-                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                                label: Some("Flow Scene Copy Encoder"),
-                            });
-
-                    // Use the blend_target_ptr if available (set during frame rendering)
-                    if let Some(tex_ptr) = self.blend_target_ptr {
-                        let src_tex = unsafe { &*tex_ptr };
-                        copy_encoder.copy_texture_to_texture(
-                            wgpu::ImageCopyTexture {
-                                texture: src_tex,
-                                mip_level: 0,
-                                origin: wgpu::Origin3d::ZERO,
-                                aspect: wgpu::TextureAspect::All,
-                            },
-                            wgpu::ImageCopyTexture {
-                                texture: scene_tex,
-                                mip_level: 0,
-                                origin: wgpu::Origin3d::ZERO,
-                                aspect: wgpu::TextureAspect::All,
-                            },
-                            wgpu::Extent3d {
-                                width: tw,
-                                height: th,
-                                depth_or_array_layers: 1,
-                            },
-                        );
-                        self.queue.submit(std::iter::once(copy_encoder.finish()));
-                    }
-                }
-
-                self.scene_copy_texture.as_ref().map(|(_, v, _, _)| v)
+                self.ensure_scene_copy().map(|v| v as *const _)
             } else {
                 None
             };
+        // SAFETY: scene_copy_texture is owned by self and lives for the duration of this call
+        let scene_view = scene_view_owned.map(|ptr| unsafe { &*ptr });
 
-        let bind_group = match self.flow_pipeline_cache.prepare_render(
+        if !self.flow_pipeline_cache.prepare_render(
             &self.queue,
             flow_name,
             uniforms,
             scene_view,
         ) {
-            Some(bg) => bg,
-            None => return false,
-        };
+            return false;
+        }
 
         let mut encoder = self
             .device
@@ -3273,7 +3283,7 @@ impl GpuRenderer {
             }
 
             self.flow_pipeline_cache
-                .render_fragment(&mut pass, flow_name, &bind_group);
+                .render_fragment(&mut pass, flow_name);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));

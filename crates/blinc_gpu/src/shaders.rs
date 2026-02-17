@@ -97,6 +97,11 @@ struct Primitive {
     // Mask info: (mask_type, start_alpha, end_alpha, 0)
     // mask_type: 0=none, 1=linear, 2=radial
     mask_info: vec4<f32>,
+    // Corner shape (superellipse n parameter per corner)
+    // n=1.0 = round (default), n=0.0 = bevel, n=2.0 = squircle, n=-1.0 = scoop
+    corner_shape: vec4<f32>,
+    // Overflow fade distances (top, right, bottom, left) in pixels
+    clip_fade: vec4<f32>,
     // Type info (primitive_type, fill_type, clip_type, 0)
     type_info: vec4<u32>,
 }
@@ -280,6 +285,72 @@ fn sd_rounded_rect(p: vec2<f32>, origin: vec2<f32>, size: vec2<f32>, radius: vec
     return length(max(q_adjusted, vec2<f32>(0.0))) + min(max(q_adjusted.x, q_adjusted.y), 0.0) - r;
 }
 
+// Shaped rectangle SDF with per-corner superellipse parameter
+// shape.xyzw = superellipse n for (top-left, top-right, bottom-right, bottom-left)
+// n=1.0 = round (circle), n=0.0 = bevel, n=2.0 = squircle
+// n>=100.0 = square, n<=-100.0 = notch, n<0 = concave (scoop)
+fn sd_shaped_rect(p: vec2<f32>, origin: vec2<f32>, size: vec2<f32>, radius: vec4<f32>, shape: vec4<f32>) -> f32 {
+    let half_size = size * 0.5;
+    let center = origin + half_size;
+    let rel = p - center;
+    let q = abs(rel) - half_size;
+
+    // Select corner radius and shape based on quadrant
+    var r: f32;
+    var n: f32;
+    if rel.y < 0.0 {
+        if rel.x > 0.0 {
+            r = radius.y; n = shape.y;  // top-right
+        } else {
+            r = radius.x; n = shape.x;  // top-left
+        }
+    } else {
+        if rel.x > 0.0 {
+            r = radius.z; n = shape.z;  // bottom-right
+        } else {
+            r = radius.w; n = shape.w;  // bottom-left
+        }
+    }
+
+    r = min(r, min(half_size.x, half_size.y));
+
+    // Notch: rectangular step cut at each corner (before guard)
+    // Shape = union of horizontal bar (full width, height-2r) and vertical bar (width-2r, full height)
+    if n <= -100.0 {
+        let d_h = max(q.x, q.y + r);  // horizontal bar SDF
+        let d_v = max(q.x + r, q.y);  // vertical bar SDF
+        return min(d_h, d_v);          // union
+    }
+
+    let q_adj = q + vec2<f32>(r);
+
+    // Fast path: n ~ 1.0 -> standard circular
+    if abs(n - 1.0) < 0.01 {
+        return length(max(q_adj, vec2<f32>(0.0))) + min(max(q_adj.x, q_adj.y), 0.0) - r;
+    }
+
+    // Outside corner region -> flat edge
+    if q_adj.x <= 0.0 || q_adj.y <= 0.0 {
+        return max(q.x, q.y);
+    }
+
+    // Square: sharp corner (L-infinity convex)
+    if n >= 100.0 {
+        return max(q_adj.x, q_adj.y) - r;
+    }
+
+    // Superellipse: p_exp = 2^|n|, clamped to avoid overflow
+    let t = q_adj / max(r, 0.001);
+    let p_exp = pow(2.0, min(abs(n), 5.0));
+    let se = pow(t.x, p_exp) + pow(t.y, p_exp);
+    let se_dist = (pow(se, 1.0 / p_exp) - 1.0) * r;
+
+    if n < 0.0 {
+        return -se_dist;  // concave (scoop)
+    }
+    return se_dist;  // convex
+}
+
 // Circle SDF
 fn sd_circle(p: vec2<f32>, center: vec2<f32>, radius: f32) -> f32 {
     return length(p - center) - radius;
@@ -370,55 +441,60 @@ fn shadow_circle(p: vec2<f32>, center: vec2<f32>, radius: f32, sigma: f32) -> f3
 //   clip_bounds = rect scissor from parent clips [x, y, w, h]
 //   clip_radius = shape-specific data
 // The shader applies BOTH the rect scissor AND the shape clip.
-fn calculate_clip_alpha(p: vec2<f32>, clip_bounds: vec4<f32>, clip_radius: vec4<f32>, clip_type: u32) -> f32 {
-    // If no clip, return 1.0 (fully visible)
-    if clip_type == CLIP_NONE {
-        return 1.0;
+// clip_fade = (top, right, bottom, left) overflow fade distances in pixels
+fn calculate_clip_alpha(p: vec2<f32>, clip_bounds: vec4<f32>, clip_radius: vec4<f32>, clip_type: u32, clip_fade: vec4<f32>) -> f32 {
+    var alpha: f32 = 1.0;
+
+    if clip_type != CLIP_NONE {
+        let aa_width = 0.75;
+        switch clip_type {
+            case CLIP_RECT: {
+                let clip_origin = clip_bounds.xy;
+                let clip_size = clip_bounds.zw;
+                let clip_d = sd_rounded_rect(p, clip_origin, clip_size, clip_radius);
+                alpha = 1.0 - smoothstep(-aa_width, aa_width, clip_d);
+            }
+            case CLIP_CIRCLE: {
+                let scissor_d = sd_rounded_rect(p, clip_bounds.xy, clip_bounds.zw, vec4<f32>(0.0));
+                let scissor_alpha = 1.0 - smoothstep(-aa_width, aa_width, scissor_d);
+                let center = clip_radius.xy;
+                let radius = clip_radius.z;
+                let clip_d = sd_circle(p, center, radius);
+                let shape_alpha = 1.0 - smoothstep(-aa_width, aa_width, clip_d);
+                alpha = scissor_alpha * shape_alpha;
+            }
+            case CLIP_ELLIPSE: {
+                let scissor_d = sd_rounded_rect(p, clip_bounds.xy, clip_bounds.zw, vec4<f32>(0.0));
+                let scissor_alpha = 1.0 - smoothstep(-aa_width, aa_width, scissor_d);
+                let center = clip_radius.xy;
+                let radii = clip_radius.zw;
+                let clip_d = sd_ellipse(p, center, radii);
+                let shape_alpha = 1.0 - smoothstep(-aa_width, aa_width, clip_d);
+                alpha = scissor_alpha * shape_alpha;
+            }
+            case CLIP_POLYGON: {
+                let scissor_d = sd_rounded_rect(p, clip_bounds.xy, clip_bounds.zw, vec4<f32>(0.0));
+                let scissor_alpha = 1.0 - smoothstep(-aa_width, aa_width, scissor_d);
+                let vertex_count = u32(clip_radius.z);
+                let aux_offset = u32(clip_radius.w);
+                let shape_alpha = calculate_polygon_clip_alpha(p, vertex_count, aux_offset);
+                alpha = scissor_alpha * shape_alpha;
+            }
+            default: {}
+        }
     }
 
-    let aa_width = 0.75;
-
-    switch clip_type {
-        case CLIP_RECT: {
-            // Rectangular clip with optional rounded corners
-            let clip_origin = clip_bounds.xy;
-            let clip_size = clip_bounds.zw;
-            let clip_d = sd_rounded_rect(p, clip_origin, clip_size, clip_radius);
-            return 1.0 - smoothstep(-aa_width, aa_width, clip_d);
-        }
-        case CLIP_CIRCLE: {
-            // clip_bounds = rect scissor, clip_radius = [cx, cy, radius, 0]
-            let scissor_d = sd_rounded_rect(p, clip_bounds.xy, clip_bounds.zw, vec4<f32>(0.0));
-            let scissor_alpha = 1.0 - smoothstep(-aa_width, aa_width, scissor_d);
-            let center = clip_radius.xy;
-            let radius = clip_radius.z;
-            let clip_d = sd_circle(p, center, radius);
-            let shape_alpha = 1.0 - smoothstep(-aa_width, aa_width, clip_d);
-            return scissor_alpha * shape_alpha;
-        }
-        case CLIP_ELLIPSE: {
-            // clip_bounds = rect scissor, clip_radius = [cx, cy, rx, ry]
-            let scissor_d = sd_rounded_rect(p, clip_bounds.xy, clip_bounds.zw, vec4<f32>(0.0));
-            let scissor_alpha = 1.0 - smoothstep(-aa_width, aa_width, scissor_d);
-            let center = clip_radius.xy;
-            let radii = clip_radius.zw;
-            let clip_d = sd_ellipse(p, center, radii);
-            let shape_alpha = 1.0 - smoothstep(-aa_width, aa_width, clip_d);
-            return scissor_alpha * shape_alpha;
-        }
-        case CLIP_POLYGON: {
-            // clip_bounds = rect scissor, clip_radius = [0, 0, vertex_count, aux_offset]
-            let scissor_d = sd_rounded_rect(p, clip_bounds.xy, clip_bounds.zw, vec4<f32>(0.0));
-            let scissor_alpha = 1.0 - smoothstep(-aa_width, aa_width, scissor_d);
-            let vertex_count = u32(clip_radius.z);
-            let aux_offset = u32(clip_radius.w);
-            let shape_alpha = calculate_polygon_clip_alpha(p, vertex_count, aux_offset);
-            return scissor_alpha * shape_alpha;
-        }
-        default: {
-            return 1.0;
-        }
+    // Apply overflow fade (smooth alpha ramp at clip edges)
+    if clip_fade.x > 0.0 || clip_fade.y > 0.0 || clip_fade.z > 0.0 || clip_fade.w > 0.0 {
+        let clip_min = clip_bounds.xy;
+        let clip_max = clip_bounds.xy + clip_bounds.zw;
+        if clip_fade.x > 0.0 { alpha *= saturate((p.y - clip_min.y) / clip_fade.x); }  // top
+        if clip_fade.y > 0.0 { alpha *= saturate((clip_max.x - p.x) / clip_fade.y); }  // right
+        if clip_fade.z > 0.0 { alpha *= saturate((clip_max.y - p.y) / clip_fade.z); }  // bottom
+        if clip_fade.w > 0.0 { alpha *= saturate((p.x - clip_min.x) / clip_fade.w); }  // left
     }
+
+    return alpha;
 }
 
 // Polygon clip using winding number test with edge-distance anti-aliasing.
@@ -806,7 +882,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let clip_type = prim.type_info.z;
 
     // Early clip test - discard if completely outside clip region (screen space)
-    let clip_alpha = calculate_clip_alpha(p, prim.clip_bounds, prim.clip_radius, clip_type);
+    let clip_alpha = calculate_clip_alpha(p, prim.clip_bounds, prim.clip_radius, clip_type, prim.clip_fade);
     if clip_alpha < 0.001 {
         discard;
     }
@@ -1092,7 +1168,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var d: f32;
     switch prim_type {
         case PRIM_RECT: {
-            d = sd_rounded_rect(sp, origin, size, prim.corner_radius);
+            d = sd_shaped_rect(sp, origin, size, prim.corner_radius, prim.corner_shape);
         }
         case PRIM_CIRCLE: {
             let radius = min(size.x, size.y) * 0.5;
@@ -1105,7 +1181,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             // Shadow-only primitive - mask out the shape interior
             // Shadow should be visible starting from the shape boundary (d >= 0)
             // Use constant AA width to avoid discontinuities at triangle seams on Vulkan
-            let shape_d = sd_rounded_rect(sp, origin, size, prim.corner_radius);
+            let shape_d = sd_shaped_rect(sp, origin, size, prim.corner_radius, prim.corner_shape);
             let aa_width = 0.75;
             let shape_mask = smoothstep(-aa_width, aa_width, shape_d); // 0 inside, 1 outside, AA at edge
             result.a *= shape_mask;
@@ -1114,7 +1190,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
         case PRIM_INNER_SHADOW: {
             // Inner shadow - renders INSIDE the shape only
-            let shape_d = sd_rounded_rect(sp, origin, size, prim.corner_radius);
+            let shape_d = sd_shaped_rect(sp, origin, size, prim.corner_radius, prim.corner_shape);
 
             // Hard clip at shape boundary - only render where d < 0 (inside)
             if shape_d > 0.0 {
@@ -1237,7 +1313,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             return text_result;
         }
         default: {
-            d = sd_rounded_rect(sp, origin, size, prim.corner_radius);
+            d = sd_shaped_rect(sp, origin, size, prim.corner_radius, prim.corner_shape);
         }
     }
 
@@ -1461,7 +1537,8 @@ struct VertexOutput {
     @location(1) color: vec4<f32>,
     @location(2) world_pos: vec2<f32>,
     @location(3) @interpolate(flat) clip_bounds: vec4<f32>,
-    @location(4) @interpolate(flat) is_color: f32,
+    @location(4) @interpolate(flat) clip_fade: vec4<f32>,
+    @location(5) @interpolate(flat) is_color: f32,
 }
 
 struct TextUniforms {
@@ -1478,6 +1555,8 @@ struct GlyphInstance {
     color: vec4<f32>,
     // Clip bounds (x, y, width, height) - set to large values for no clip
     clip_bounds: vec4<f32>,
+    // Overflow fade distances (top, right, bottom, left) in pixels
+    clip_fade: vec4<f32>,
     // Flags: [is_color, unused, unused, unused]
     // is_color: 1.0 = color emoji (use color_atlas), 0.0 = grayscale (use glyph_atlas)
     flags: vec4<f32>,
@@ -1534,13 +1613,14 @@ fn vs_main(
     out.color = glyph.color;
     out.world_pos = pos;
     out.clip_bounds = glyph.clip_bounds;
+    out.clip_fade = glyph.clip_fade;
     out.is_color = glyph.flags.x;
 
     return out;
 }
 
 // Calculate clip alpha for rectangular clip region
-fn calculate_clip_alpha(p: vec2<f32>, clip_bounds: vec4<f32>) -> f32 {
+fn calculate_clip_alpha(p: vec2<f32>, clip_bounds: vec4<f32>, clip_fade: vec4<f32>) -> f32 {
     // Check if clipping is active (default bounds are very large negative values)
     if clip_bounds.x < -5000.0 {
         return 1.0;
@@ -1560,13 +1640,21 @@ fn calculate_clip_alpha(p: vec2<f32>, clip_bounds: vec4<f32>) -> f32 {
     let d = min(min(d_left, d_right), min(d_top, d_bottom));
 
     // Soft anti-aliased edge (1 pixel transition)
-    return clamp(d + 0.5, 0.0, 1.0);
+    var alpha = clamp(d + 0.5, 0.0, 1.0);
+
+    // Apply overflow fade
+    if clip_fade.x > 0.0 { alpha *= saturate(d_top / clip_fade.x); }
+    if clip_fade.y > 0.0 { alpha *= saturate(d_right / clip_fade.y); }
+    if clip_fade.z > 0.0 { alpha *= saturate(d_bottom / clip_fade.z); }
+    if clip_fade.w > 0.0 { alpha *= saturate(d_left / clip_fade.w); }
+
+    return alpha;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Calculate clip alpha first - discard if completely outside
-    let clip_alpha = calculate_clip_alpha(in.world_pos, in.clip_bounds);
+    let clip_alpha = calculate_clip_alpha(in.world_pos, in.clip_bounds, in.clip_fade);
     if clip_alpha < 0.001 {
         discard;
     }

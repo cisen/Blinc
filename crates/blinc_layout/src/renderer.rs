@@ -4498,6 +4498,12 @@ impl RenderTree {
         if let Some(ref cr) = style.corner_radius {
             props.border_radius = *cr;
         }
+        if let Some(cs) = style.corner_shape {
+            props.corner_shape = cs;
+        }
+        if let Some(fade) = style.overflow_fade {
+            props.overflow_fade = fade;
+        }
         if let Some(shadow) = style.shadow {
             props.shadow = Some(shadow);
         }
@@ -6704,6 +6710,8 @@ impl RenderTree {
         check_transition!(outline_width, "outline-width");
         check_transition!(outline_offset, "outline-offset");
         check_transition!(corner_radius, "border-radius");
+        check_transition!(corner_shape, "corner-shape");
+        check_transition!(overflow_fade, "overflow-fade");
         check_transition!(shadow_params, "box-shadow");
         check_transition!(shadow_color, "box-shadow");
         check_transition!(clip_inset, "clip-path");
@@ -7109,6 +7117,16 @@ impl RenderTree {
             };
         }
 
+        // Corner shape (superellipse)
+        if let Some([tl, tr, br, bl]) = anim_props.corner_shape {
+            props.corner_shape = blinc_core::CornerShape::new(tl, tr, br, bl);
+        }
+
+        // Overflow fade
+        if let Some([t, r, b, l]) = anim_props.overflow_fade {
+            props.overflow_fade = blinc_core::OverflowFade::new(t, r, b, l);
+        }
+
         // Border
         if let Some(bw) = anim_props.border_width {
             props.border_width = bw;
@@ -7437,6 +7455,12 @@ impl RenderTree {
         // Corner radius
         let cr = &props.border_radius;
         kp.corner_radius = Some([cr.top_left, cr.top_right, cr.bottom_right, cr.bottom_left]);
+
+        // Corner shape (superellipse) — always snapshot for transitions
+        kp.corner_shape = Some(props.corner_shape.to_array());
+
+        // Overflow fade — always snapshot for transitions
+        kp.overflow_fade = Some(props.overflow_fade.to_array());
 
         // Border
         kp.border_width = Some(props.border_width);
@@ -8536,6 +8560,10 @@ impl RenderTree {
             } else {
                 CornerRadius::default()
             };
+            // Set overflow fade before pushing clip
+            if !render_node.props.overflow_fade.is_none() {
+                ctx.set_overflow_fade(render_node.props.overflow_fade.to_array());
+            }
             let clip_shape = if inset_radius.top_left > 0.0 {
                 ClipShape::rounded_rect(clip_rect, inset_radius)
             } else {
@@ -9220,6 +9248,12 @@ impl RenderTree {
             }
         }
 
+        // Corner shape setup (superellipse per-corner)
+        let has_corner_shape = !render_node.props.corner_shape.is_round();
+        if has_corner_shape {
+            ctx.set_corner_shape(render_node.props.corner_shape.to_array());
+        }
+
         // 3D Group composition: collect child shapes into compound SDF
         // MUST happen before fill_rect so the primitive gets the group shape descriptors.
         let is_3d_group = render_node.props.shape_3d == Some(6.0);
@@ -9503,6 +9537,10 @@ impl RenderTree {
         // so that the border/outline SDF doesn't get double-AA'd by an overlapping clip.
         // Background and borders are SDF-constrained; only children need the overflow clip.
         if clips_content {
+            // Set overflow fade before pushing clip — fade distances consumed by push_clip
+            if !render_node.props.overflow_fade.is_none() {
+                ctx.set_overflow_fade(render_node.props.overflow_fade.to_array());
+            }
             let clip_rect = Rect::new(0.0, 0.0, bounds.width, bounds.height);
             let clip_shape = if radius.is_uniform() && radius.top_left > 0.0 {
                 ClipShape::rounded_rect(clip_rect, radius)
@@ -9768,6 +9806,11 @@ impl RenderTree {
             ctx.clear_mask_gradient();
         }
 
+        // Clear corner shape transient state
+        if has_corner_shape {
+            ctx.clear_corner_shape();
+        }
+
         // Restore z_layer after this subtree
         if has_z_index {
             ctx.set_z_layer(saved_z_layer);
@@ -9973,6 +10016,10 @@ impl RenderTree {
             } else {
                 CornerRadius::default()
             };
+            // Set overflow fade before pushing clip
+            if !render_node.props.overflow_fade.is_none() {
+                ctx.set_overflow_fade(render_node.props.overflow_fade.to_array());
+            }
             let clip_shape = if inset_radius.top_left > 0.0 {
                 ClipShape::rounded_rect(clip_rect, inset_radius)
             } else {
@@ -10475,6 +10522,10 @@ impl RenderTree {
             } else {
                 CornerRadius::default()
             };
+            // Set overflow fade before pushing clip
+            if !render_node.props.overflow_fade.is_none() {
+                ctx.set_overflow_fade(render_node.props.overflow_fade.to_array());
+            }
             let clip_shape = if inset_radius.top_left > 0.0 {
                 ClipShape::rounded_rect(clip_rect, inset_radius)
             } else {

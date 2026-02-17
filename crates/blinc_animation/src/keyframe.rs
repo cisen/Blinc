@@ -156,6 +156,8 @@ pub struct KeyframeProperties {
     // --- Geometric properties ---
     /// Corner radius [top_left, top_right, bottom_right, bottom_left]
     pub corner_radius: Option<[f32; 4]>,
+    /// Corner shape (superellipse n parameter) [top_left, top_right, bottom_right, bottom_left]
+    pub corner_shape: Option<[f32; 4]>,
     /// Border width in pixels
     pub border_width: Option<f32>,
     /// Outline width in pixels
@@ -168,6 +170,8 @@ pub struct KeyframeProperties {
     pub clip_circle_radius: Option<f32>,
     /// Clip-path ellipse radii [rx, ry] (percent)
     pub clip_ellipse_radii: Option<[f32; 2]>,
+    /// Overflow fade distances [top, right, bottom, left]
+    pub overflow_fade: Option<[f32; 4]>,
 
     // --- Shadow properties ---
     /// Shadow [offset_x, offset_y, blur, spread]
@@ -422,6 +426,7 @@ impl KeyframeProperties {
             text_color: lerp_opt_array4(self.text_color, other.text_color, t),
             // Geometric
             corner_radius: lerp_opt_array4(self.corner_radius, other.corner_radius, t),
+            corner_shape: lerp_opt_array4(self.corner_shape, other.corner_shape, t),
             border_width: lerp_opt(self.border_width, other.border_width, t),
             outline_width: lerp_opt(self.outline_width, other.outline_width, t),
             outline_color: lerp_opt_array4(self.outline_color, other.outline_color, t),
@@ -432,6 +437,7 @@ impl KeyframeProperties {
                 other.clip_ellipse_radii,
                 t,
             ),
+            overflow_fade: lerp_opt_array4(self.overflow_fade, other.overflow_fade, t),
             // Shadow
             shadow_params: lerp_opt_array4(self.shadow_params, other.shadow_params, t),
             shadow_color: lerp_opt_array4(self.shadow_color, other.shadow_color, t),

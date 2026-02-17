@@ -30,7 +30,8 @@
 use crate::calc::CalcExpr;
 use crate::element::CursorStyle;
 use blinc_core::{
-    BlendMode, Brush, ClipPath, Color, CornerRadius, PointerEvents, Shadow, Transform,
+    BlendMode, Brush, ClipPath, Color, CornerRadius, CornerShape, OverflowFade, PointerEvents,
+    Shadow, Transform,
 };
 
 /// A CSS property whose value is a dynamic `calc()` expression containing `env()` references.
@@ -400,6 +401,8 @@ pub struct ElementStyle {
     pub background: Option<Brush>,
     /// Corner radius
     pub corner_radius: Option<CornerRadius>,
+    /// Corner shape (superellipse parameter per corner)
+    pub corner_shape: Option<CornerShape>,
     /// Drop shadow
     pub shadow: Option<Shadow>,
     /// Transform (scale, rotate, translate)
@@ -526,6 +529,8 @@ pub struct ElementStyle {
     pub overflow_x: Option<StyleOverflow>,
     /// Overflow behavior for Y-axis only
     pub overflow_y: Option<StyleOverflow>,
+    /// Overflow fade distances (smooth alpha fade at clip edges)
+    pub overflow_fade: Option<OverflowFade>,
 
     /// Border width in pixels
     pub border_width: Option<f32>,
@@ -705,6 +710,40 @@ impl ElementStyle {
     /// Set corner radius directly
     pub fn corner_radius(mut self, radius: CornerRadius) -> Self {
         self.corner_radius = Some(radius);
+        self
+    }
+
+    // =========================================================================
+    // Corner Shape
+    // =========================================================================
+
+    /// Set uniform corner shape (superellipse n parameter)
+    pub fn corner_shape(mut self, n: f32) -> Self {
+        self.corner_shape = Some(CornerShape::uniform(n));
+        self
+    }
+
+    /// Set per-corner shape values (top-left, top-right, bottom-right, bottom-left)
+    pub fn corner_shapes(mut self, tl: f32, tr: f32, br: f32, bl: f32) -> Self {
+        self.corner_shape = Some(CornerShape::new(tl, tr, br, bl));
+        self
+    }
+
+    /// Bevel corners (straight diagonal)
+    pub fn corner_bevel(mut self) -> Self {
+        self.corner_shape = Some(CornerShape::BEVEL);
+        self
+    }
+
+    /// Squircle corners (smoother than round)
+    pub fn corner_squircle(mut self) -> Self {
+        self.corner_shape = Some(CornerShape::SQUIRCLE);
+        self
+    }
+
+    /// Scoop corners (concave inward)
+    pub fn corner_scoop(mut self) -> Self {
+        self.corner_shape = Some(CornerShape::SCOOP);
         self
     }
 
@@ -1261,6 +1300,34 @@ impl ElementStyle {
     }
 
     // =========================================================================
+    // Overflow Fade
+    // =========================================================================
+
+    /// Set uniform overflow fade distance (in pixels)
+    pub fn overflow_fade(mut self, distance: f32) -> Self {
+        self.overflow_fade = Some(OverflowFade::uniform(distance));
+        self
+    }
+
+    /// Set per-edge overflow fade (top, right, bottom, left)
+    pub fn overflow_fade_edges(mut self, top: f32, right: f32, bottom: f32, left: f32) -> Self {
+        self.overflow_fade = Some(OverflowFade::new(top, right, bottom, left));
+        self
+    }
+
+    /// Set vertical overflow fade only (top + bottom)
+    pub fn overflow_fade_y(mut self, distance: f32) -> Self {
+        self.overflow_fade = Some(OverflowFade::vertical(distance));
+        self
+    }
+
+    /// Set horizontal overflow fade only (left + right)
+    pub fn overflow_fade_x(mut self, distance: f32) -> Self {
+        self.overflow_fade = Some(OverflowFade::horizontal(distance));
+        self
+    }
+
+    // =========================================================================
     // Layout: Border
     // =========================================================================
 
@@ -1664,6 +1731,7 @@ impl ElementStyle {
             // Visual
             background: other.background.clone().or_else(|| self.background.clone()),
             corner_radius: other.corner_radius.or(self.corner_radius),
+            corner_shape: other.corner_shape.or(self.corner_shape),
             shadow: other.shadow.or(self.shadow),
             transform: other.transform.clone().or_else(|| self.transform.clone()),
             material: other.material.clone().or_else(|| self.material.clone()),
@@ -1722,6 +1790,7 @@ impl ElementStyle {
             overflow: other.overflow.or(self.overflow),
             overflow_x: other.overflow_x.or(self.overflow_x),
             overflow_y: other.overflow_y.or(self.overflow_y),
+            overflow_fade: other.overflow_fade.or(self.overflow_fade),
             border_width: other.border_width.or(self.border_width),
             border_color: other.border_color.or(self.border_color),
             outline_width: other.outline_width.or(self.outline_width),
@@ -1800,6 +1869,7 @@ impl ElementStyle {
     pub fn has_visual_props(&self) -> bool {
         self.background.is_some()
             || self.corner_radius.is_some()
+            || self.corner_shape.is_some()
             || self.shadow.is_some()
             || self.transform.is_some()
             || self.material.is_some()
@@ -1808,6 +1878,7 @@ impl ElementStyle {
             || self.animation.is_some()
             || self.z_index.is_some()
             || self.visibility.is_some()
+            || self.overflow_fade.is_some()
     }
 
     /// Check if any layout property is set
@@ -2048,6 +2119,71 @@ macro_rules! css_impl {
     };
     ($style:ident; border-radius: $value:expr) => {
         $style = $style.rounded($value);
+    };
+
+    // =========================================================================
+    // Corner Shape (CSS: corner-shape)
+    // =========================================================================
+    // corner-shape keyword values
+    ($style:ident; corner-shape: round; $($rest:tt)*) => {
+        $style = $style.corner_shape(1.0);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; corner-shape: round) => {
+        $style = $style.corner_shape(1.0);
+    };
+    ($style:ident; corner-shape: bevel; $($rest:tt)*) => {
+        $style = $style.corner_shape(0.0);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; corner-shape: bevel) => {
+        $style = $style.corner_shape(0.0);
+    };
+    ($style:ident; corner-shape: squircle; $($rest:tt)*) => {
+        $style = $style.corner_shape(2.0);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; corner-shape: squircle) => {
+        $style = $style.corner_shape(2.0);
+    };
+    ($style:ident; corner-shape: scoop; $($rest:tt)*) => {
+        $style = $style.corner_shape(-1.0);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; corner-shape: scoop) => {
+        $style = $style.corner_shape(-1.0);
+    };
+    ($style:ident; corner-shape: notch; $($rest:tt)*) => {
+        $style = $style.corner_shape(-100.0);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; corner-shape: notch) => {
+        $style = $style.corner_shape(-100.0);
+    };
+    ($style:ident; corner-shape: square; $($rest:tt)*) => {
+        $style = $style.corner_shape(100.0);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; corner-shape: square) => {
+        $style = $style.corner_shape(100.0);
+    };
+    ($style:ident; corner-shape: $value:expr; $($rest:tt)*) => {
+        $style = $style.corner_shape($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; corner-shape: $value:expr) => {
+        $style = $style.corner_shape($value);
+    };
+
+    // =========================================================================
+    // Overflow Fade (CSS: overflow-fade)
+    // =========================================================================
+    ($style:ident; overflow-fade: $value:expr; $($rest:tt)*) => {
+        $style = $style.overflow_fade($value);
+        $crate::css_impl!($style; $($rest)*);
+    };
+    ($style:ident; overflow-fade: $value:expr) => {
+        $style = $style.overflow_fade($value);
     };
 
     // =========================================================================
@@ -3267,6 +3403,46 @@ macro_rules! style_impl {
     };
     ($style:ident; rounded_full $(, $($rest:tt)*)?) => {
         $style = $style.rounded_full();
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+
+    // =========================================================================
+    // Corner Shape properties
+    // =========================================================================
+    ($style:ident; corner_shape: round $(, $($rest:tt)*)?) => {
+        $style = $style.corner_shape(1.0);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; corner_shape: bevel $(, $($rest:tt)*)?) => {
+        $style = $style.corner_shape(0.0);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; corner_shape: squircle $(, $($rest:tt)*)?) => {
+        $style = $style.corner_shape(2.0);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; corner_shape: scoop $(, $($rest:tt)*)?) => {
+        $style = $style.corner_shape(-1.0);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; corner_shape: notch $(, $($rest:tt)*)?) => {
+        $style = $style.corner_shape(-100.0);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; corner_shape: square $(, $($rest:tt)*)?) => {
+        $style = $style.corner_shape(100.0);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+    ($style:ident; corner_shape: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.corner_shape($value);
+        $crate::style_impl!($style; $($($rest)*)?);
+    };
+
+    // =========================================================================
+    // Overflow Fade properties
+    // =========================================================================
+    ($style:ident; overflow_fade: $value:expr $(, $($rest:tt)*)?) => {
+        $style = $style.overflow_fade($value);
         $crate::style_impl!($style; $($($rest)*)?);
     };
 

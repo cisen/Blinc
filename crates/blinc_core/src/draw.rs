@@ -1214,6 +1214,21 @@ pub trait DrawContext {
     /// Clear mask gradient state
     fn clear_mask_gradient(&mut self) {}
 
+    /// Set corner shape (superellipse n parameter) for the current element.
+    /// Values: [top_left, top_right, bottom_right, bottom_left].
+    /// n=1.0 = round (default), n=0.0 = bevel, n=2.0 = squircle, n=-1.0 = scoop.
+    fn set_corner_shape(&mut self, _shape: [f32; 4]) {}
+
+    /// Clear corner shape to default (round, n=1.0)
+    fn clear_corner_shape(&mut self) {}
+
+    /// Set overflow fade distances for the next push_clip.
+    /// Values: [top, right, bottom, left] in CSS pixels.
+    fn set_overflow_fade(&mut self, _fade: [f32; 4]) {}
+
+    /// Clear pending overflow fade
+    fn clear_overflow_fade(&mut self) {}
+
     // ─────────────────────────────────────────────────────────────────────────
     // 2D Drawing Operations
     // ─────────────────────────────────────────────────────────────────────────

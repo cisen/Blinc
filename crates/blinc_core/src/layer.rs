@@ -939,6 +939,195 @@ impl From<f32> for CornerRadius {
     }
 }
 
+/// Corner shape parameters for superellipse-based corners.
+///
+/// Each value is the CSS `superellipse(n)` parameter controlling corner curvature:
+/// - `1.0` = round (standard circular arc, default)
+/// - `0.0` = bevel (straight diagonal cut)
+/// - `2.0` = squircle (smoother than circular)
+/// - `-1.0` = scoop (concave inward curve)
+/// - `100.0` = square (sharp corner, ignores border-radius)
+/// - `-100.0` = notch (sharp 90° inward notch)
+///
+/// The CSS `n` value maps to Lamé exponent `p = 2^n`:
+/// `n=0→p=1 (L1/bevel)`, `n=1→p=2 (L2/circle)`, `n=2→p=4 (squircle)`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CornerShape {
+    pub top_left: f32,
+    pub top_right: f32,
+    pub bottom_right: f32,
+    pub bottom_left: f32,
+}
+
+impl Default for CornerShape {
+    fn default() -> Self {
+        Self::ROUND
+    }
+}
+
+impl CornerShape {
+    /// Standard circular corners (default)
+    pub const ROUND: CornerShape = CornerShape {
+        top_left: 1.0,
+        top_right: 1.0,
+        bottom_right: 1.0,
+        bottom_left: 1.0,
+    };
+
+    /// Straight diagonal cut corners
+    pub const BEVEL: CornerShape = CornerShape {
+        top_left: 0.0,
+        top_right: 0.0,
+        bottom_right: 0.0,
+        bottom_left: 0.0,
+    };
+
+    /// Smoother-than-circular corners
+    pub const SQUIRCLE: CornerShape = CornerShape {
+        top_left: 2.0,
+        top_right: 2.0,
+        bottom_right: 2.0,
+        bottom_left: 2.0,
+    };
+
+    /// Concave inward-curving corners
+    pub const SCOOP: CornerShape = CornerShape {
+        top_left: -1.0,
+        top_right: -1.0,
+        bottom_right: -1.0,
+        bottom_left: -1.0,
+    };
+
+    /// Sharp 90° inward notch corners
+    pub const NOTCH: CornerShape = CornerShape {
+        top_left: -100.0,
+        top_right: -100.0,
+        bottom_right: -100.0,
+        bottom_left: -100.0,
+    };
+
+    /// Sharp square corners (no rounding even with border-radius)
+    pub const SQUARE: CornerShape = CornerShape {
+        top_left: 100.0,
+        top_right: 100.0,
+        bottom_right: 100.0,
+        bottom_left: 100.0,
+    };
+
+    pub fn new(top_left: f32, top_right: f32, bottom_right: f32, bottom_left: f32) -> Self {
+        Self {
+            top_left,
+            top_right,
+            bottom_right,
+            bottom_left,
+        }
+    }
+
+    pub fn uniform(n: f32) -> Self {
+        Self {
+            top_left: n,
+            top_right: n,
+            bottom_right: n,
+            bottom_left: n,
+        }
+    }
+
+    pub fn to_array(&self) -> [f32; 4] {
+        [
+            self.top_left,
+            self.top_right,
+            self.bottom_right,
+            self.bottom_left,
+        ]
+    }
+
+    /// Check if all corners are standard round (n=1.0)
+    pub fn is_round(&self) -> bool {
+        (self.top_left - 1.0).abs() < 0.001
+            && (self.top_right - 1.0).abs() < 0.001
+            && (self.bottom_right - 1.0).abs() < 0.001
+            && (self.bottom_left - 1.0).abs() < 0.001
+    }
+}
+
+impl From<f32> for CornerShape {
+    fn from(n: f32) -> Self {
+        Self::uniform(n)
+    }
+}
+
+/// Per-edge fade distances for smooth overflow clipping.
+///
+/// Instead of hard-clipping at the overflow boundary, each edge can have a
+/// pixel distance over which content fades to transparent via a linear ramp.
+/// Zero means hard clip (default).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct OverflowFade {
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+    pub left: f32,
+}
+
+impl OverflowFade {
+    pub const NONE: OverflowFade = OverflowFade {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    };
+
+    pub fn uniform(distance: f32) -> Self {
+        Self {
+            top: distance,
+            right: distance,
+            bottom: distance,
+            left: distance,
+        }
+    }
+
+    pub fn vertical(distance: f32) -> Self {
+        Self {
+            top: distance,
+            right: 0.0,
+            bottom: distance,
+            left: 0.0,
+        }
+    }
+
+    pub fn horizontal(distance: f32) -> Self {
+        Self {
+            top: 0.0,
+            right: distance,
+            bottom: 0.0,
+            left: distance,
+        }
+    }
+
+    pub fn new(top: f32, right: f32, bottom: f32, left: f32) -> Self {
+        Self {
+            top,
+            right,
+            bottom,
+            left,
+        }
+    }
+
+    pub fn to_array(&self) -> [f32; 4] {
+        [self.top, self.right, self.bottom, self.left]
+    }
+
+    pub fn is_none(&self) -> bool {
+        self.top == 0.0 && self.right == 0.0 && self.bottom == 0.0 && self.left == 0.0
+    }
+}
+
+impl From<f32> for OverflowFade {
+    fn from(distance: f32) -> Self {
+        Self::uniform(distance)
+    }
+}
+
 /// Shadow configuration
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Shadow {

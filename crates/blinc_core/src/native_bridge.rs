@@ -744,7 +744,7 @@ mod tests {
         assert_eq!(NativeValue::Bool(true).as_bool(), Some(true));
         assert_eq!(NativeValue::Int32(42).as_i32(), Some(42));
         assert_eq!(NativeValue::Int64(100).as_i64(), Some(100));
-        assert_eq!(NativeValue::Float32(3.14).as_f32(), Some(3.14));
+        assert_eq!(NativeValue::Float32(3.25).as_f32(), Some(3.25));
         assert_eq!(
             NativeValue::String("hello".to_string()).as_str(),
             Some("hello")

@@ -419,6 +419,7 @@ impl TextRenderingContext {
                 color: g.color,
                 // Default: no clip (will be set by caller if needed)
                 clip_bounds: [-10000.0, -10000.0, 100000.0, 100000.0],
+                clip_fade: [0.0; 4],
                 // Set is_color flag for emoji glyphs
                 flags: [if g.is_color { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
             })
@@ -506,6 +507,7 @@ impl TextRenderingContext {
                 uv_bounds: g.uv_bounds,
                 color: g.color,
                 clip_bounds: [-10000.0, -10000.0, 100000.0, 100000.0],
+                clip_fade: [0.0; 4],
                 flags: [if g.is_color { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
             })
             .collect();

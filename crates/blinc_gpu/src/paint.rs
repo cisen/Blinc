@@ -125,7 +125,7 @@ pub struct GpuPaintContext<'a> {
     blend_mode_stack: Vec<BlendMode>,
     /// Clip stack (for tracking, actual clipping done in shader)
     /// Each entry: (shape, optional polygon aux_data metadata: (aux_offset, vertex_count))
-    clip_stack: Vec<(ClipShape, Option<(u32, u32)>)>,
+    clip_stack: Vec<(ClipShape, Option<(u32, u32)>, [f32; 4])>,
     /// Viewport size
     viewport: Size,
     /// Whether we're in a 3D context
@@ -161,6 +161,10 @@ pub struct GpuPaintContext<'a> {
     // Mask gradient transient fields (set per-element, reset after)
     current_mask_params: [f32; 4], // gradient geometry
     current_mask_info: [f32; 4],   // [mask_type, start_alpha, end_alpha, 0]
+    // Corner shape transient fields (set per-element, reset after)
+    current_corner_shape: [f32; 4], // superellipse n per corner (default [1.0; 4] = round)
+    // Overflow fade: pending value consumed by next push_clip
+    pending_overflow_fade: [f32; 4], // [top, right, bottom, left] in CSS pixels
 }
 
 impl<'a> GpuPaintContext<'a> {
@@ -196,6 +200,8 @@ impl<'a> GpuPaintContext<'a> {
             current_filter_b: [1.0, 1.0, 1.0, 0.0],
             current_mask_params: [0.0; 4],
             current_mask_info: [0.0; 4],
+            current_corner_shape: [1.0; 4],
+            pending_overflow_fade: [0.0; 4],
         }
     }
 
@@ -243,6 +249,8 @@ impl<'a> GpuPaintContext<'a> {
             current_filter_b: [1.0, 1.0, 1.0, 0.0],
             current_mask_params: [0.0; 4],
             current_mask_info: [0.0; 4],
+            current_corner_shape: [1.0; 4],
+            pending_overflow_fade: [0.0; 4],
         }
     }
 
@@ -477,6 +485,45 @@ impl<'a> GpuPaintContext<'a> {
     pub fn clear_mask_gradient(&mut self) {
         self.current_mask_params = [0.0; 4];
         self.current_mask_info = [0.0; 4];
+    }
+
+    /// Set corner shape (superellipse n per corner)
+    pub fn set_corner_shape_values(&mut self, shape: [f32; 4]) {
+        self.current_corner_shape = shape;
+    }
+
+    /// Reset corner shape to round (default)
+    pub fn clear_corner_shape_values(&mut self) {
+        self.current_corner_shape = [1.0; 4];
+    }
+
+    /// Set pending overflow fade distances (consumed by next push_clip)
+    pub fn set_overflow_fade_values(&mut self, fade: [f32; 4]) {
+        self.pending_overflow_fade = fade;
+    }
+
+    /// Get the current clip fade from the clip stack
+    /// Returns the topmost non-zero fade, scaled by DPI
+    fn get_clip_fade(&self) -> [f32; 4] {
+        for (_clip, _poly_meta, fade) in self.clip_stack.iter().rev() {
+            if fade[0] > 0.0 || fade[1] > 0.0 || fade[2] > 0.0 || fade[3] > 0.0 {
+                // Fade distances are in CSS pixels; scale by transform
+                let affine = self.current_affine();
+                let sx = (affine.elements[0] * affine.elements[0]
+                    + affine.elements[1] * affine.elements[1])
+                    .sqrt();
+                let sy = (affine.elements[2] * affine.elements[2]
+                    + affine.elements[3] * affine.elements[3])
+                    .sqrt();
+                return [
+                    fade[0] * sy, // top
+                    fade[1] * sx, // right
+                    fade[2] * sy, // bottom
+                    fade[3] * sx, // left
+                ];
+            }
+        }
+        [0.0; 4]
     }
 
     /// Scale corner radius by the current transform's average scale factor
@@ -855,7 +902,7 @@ impl<'a> GpuPaintContext<'a> {
         // Track whether the topmost clip is a plain Rect (not rounded)
         let mut topmost_is_plain_rect = false;
 
-        for (clip, _poly_meta) in &self.clip_stack {
+        for (clip, _poly_meta, _fade) in &self.clip_stack {
             match clip {
                 ClipShape::Rect(rect) => {
                     // Intersect with this rect
@@ -915,7 +962,7 @@ impl<'a> GpuPaintContext<'a> {
         // If so, the topmost non-rect clip takes priority over rect clip intersection,
         // since the GPU shader can only evaluate one clip type per primitive.
         let topmost_is_non_rect = matches!(
-            self.clip_stack.last().map(|(c, _)| c),
+            self.clip_stack.last().map(|(c, _, _)| c),
             Some(
                 ClipShape::Circle { .. }
                     | ClipShape::Ellipse { .. }
@@ -999,7 +1046,7 @@ impl<'a> GpuPaintContext<'a> {
             [-10000.0, -10000.0, 100000.0, 100000.0]
         };
 
-        let (clip, poly_meta) = self.clip_stack.last().unwrap();
+        let (clip, poly_meta, _fade) = self.clip_stack.last().unwrap();
         match clip {
             ClipShape::Rect(rect) => (
                 [rect.x(), rect.y(), rect.width(), rect.height()],
@@ -1246,7 +1293,8 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
         } else {
             None
         };
-        self.clip_stack.push((transformed_shape, poly_meta));
+        let fade = std::mem::replace(&mut self.pending_overflow_fade, [0.0; 4]);
+        self.clip_stack.push((transformed_shape, poly_meta, fade));
     }
 
     fn pop_clip(&mut self) {
@@ -1363,6 +1411,22 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
     fn clear_mask_gradient(&mut self) {
         self.current_mask_params = [0.0; 4];
         self.current_mask_info = [0.0; 4];
+    }
+
+    fn set_corner_shape(&mut self, shape: [f32; 4]) {
+        self.current_corner_shape = shape;
+    }
+
+    fn clear_corner_shape(&mut self) {
+        self.current_corner_shape = [1.0; 4];
+    }
+
+    fn set_overflow_fade(&mut self, fade: [f32; 4]) {
+        self.pending_overflow_fade = fade;
+    }
+
+    fn clear_overflow_fade(&mut self) {
+        self.pending_overflow_fade = [0.0; 4];
     }
 
     fn fill_path(&mut self, path: &Path, brush: Brush) {
@@ -1691,6 +1755,8 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             filter_b: self.current_filter_b,
             mask_params: self.current_mask_params,
             mask_info: self.current_mask_info,
+            corner_shape: self.current_corner_shape,
+            clip_fade: self.get_clip_fade(),
             type_info: [
                 PrimitiveType::Rect as u32,
                 fill_type as u32,
@@ -1783,6 +1849,8 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             filter_b: self.current_filter_b,
             mask_params: self.current_mask_params,
             mask_info: self.current_mask_info,
+            corner_shape: self.current_corner_shape,
+            clip_fade: self.get_clip_fade(),
             type_info: [
                 PrimitiveType::Rect as u32,
                 fill_type as u32,
@@ -1844,6 +1912,8 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             filter_b: self.current_filter_b,
             mask_params: self.current_mask_params,
             mask_info: self.current_mask_info,
+            corner_shape: self.current_corner_shape,
+            clip_fade: self.get_clip_fade(),
             type_info: [
                 PrimitiveType::Rect as u32,
                 fill_type as u32,
@@ -1940,6 +2010,8 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             filter_b: self.current_filter_b,
             mask_params: self.current_mask_params,
             mask_info: self.current_mask_info,
+            corner_shape: self.current_corner_shape,
+            clip_fade: self.get_clip_fade(),
             type_info: [
                 PrimitiveType::Circle as u32,
                 fill_type as u32,
@@ -2012,6 +2084,8 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             filter_b: self.current_filter_b,
             mask_params: self.current_mask_params,
             mask_info: self.current_mask_info,
+            corner_shape: self.current_corner_shape,
+            clip_fade: self.get_clip_fade(),
             type_info: [
                 PrimitiveType::Circle as u32,
                 fill_type as u32,
@@ -2081,9 +2155,11 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             None,  // No width constraint
             false, // No wrap for canvas text
         ) {
-            // Apply current clip bounds to all glyphs
+            // Apply current clip bounds and fade to all glyphs
+            let glyph_clip_fade = self.get_clip_fade();
             for glyph in &mut glyphs {
                 glyph.clip_bounds = clip_bounds;
+                glyph.clip_fade = glyph_clip_fade;
             }
 
             // Add glyphs to batch
@@ -2152,6 +2228,8 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             filter_b: self.current_filter_b,
             mask_params: self.current_mask_params,
             mask_info: self.current_mask_info,
+            corner_shape: self.current_corner_shape,
+            clip_fade: self.get_clip_fade(),
             type_info: [
                 PrimitiveType::Shadow as u32,
                 FillType::Solid as u32,
@@ -2217,6 +2295,8 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             filter_b: self.current_filter_b,
             mask_params: self.current_mask_params,
             mask_info: self.current_mask_info,
+            corner_shape: self.current_corner_shape,
+            clip_fade: self.get_clip_fade(),
             type_info: [
                 PrimitiveType::InnerShadow as u32,
                 FillType::Solid as u32,
@@ -2270,6 +2350,8 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             filter_b: self.current_filter_b,
             mask_params: self.current_mask_params,
             mask_info: self.current_mask_info,
+            corner_shape: self.current_corner_shape,
+            clip_fade: self.get_clip_fade(),
             type_info: [
                 PrimitiveType::CircleShadow as u32,
                 FillType::Solid as u32,
@@ -2322,6 +2404,8 @@ impl<'a> DrawContext for GpuPaintContext<'a> {
             filter_b: self.current_filter_b,
             mask_params: self.current_mask_params,
             mask_info: self.current_mask_info,
+            corner_shape: self.current_corner_shape,
+            clip_fade: self.get_clip_fade(),
             type_info: [
                 PrimitiveType::CircleInnerShadow as u32,
                 FillType::Solid as u32,

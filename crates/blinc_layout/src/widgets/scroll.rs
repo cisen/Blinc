@@ -2188,6 +2188,26 @@ impl Scroll {
         self
     }
 
+    pub fn overflow_fade(mut self, distance: f32) -> Self {
+        self.inner = std::mem::take(&mut self.inner).overflow_fade(distance);
+        self
+    }
+
+    pub fn overflow_fade_x(mut self, distance: f32) -> Self {
+        self.inner = std::mem::take(&mut self.inner).overflow_fade_x(distance);
+        self
+    }
+
+    pub fn overflow_fade_y(mut self, distance: f32) -> Self {
+        self.inner = std::mem::take(&mut self.inner).overflow_fade_y(distance);
+        self
+    }
+
+    pub fn overflow_fade_edges(mut self, top: f32, right: f32, bottom: f32, left: f32) -> Self {
+        self.inner = std::mem::take(&mut self.inner).overflow_fade_edges(top, right, bottom, left);
+        self
+    }
+
     /// Add scrollable child content (alias for content())
     pub fn child(self, child: impl ElementBuilder + 'static) -> Self {
         self.content(child)

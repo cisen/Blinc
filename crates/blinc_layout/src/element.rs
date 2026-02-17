@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use blinc_core::{
-    BlurQuality, Brush, ClipPath, Color, CornerRadius, DynFloat, DynValue, FlowGraph, LayerEffect,
-    Rect, Shadow, Transform, ValueContext,
+    BlurQuality, Brush, ClipPath, Color, CornerRadius, CornerShape, DynFloat, DynValue, FlowGraph,
+    LayerEffect, OverflowFade, Rect, Shadow, Transform, ValueContext,
 };
 use taffy::Layout;
 
@@ -993,6 +993,8 @@ pub struct RenderProps {
     pub background: Option<Brush>,
     /// Corner radius for rounded rectangles
     pub border_radius: CornerRadius,
+    /// Corner shape (superellipse n parameter per corner). Default is ROUND (n=1.0).
+    pub corner_shape: CornerShape,
     /// Border color (None = no border) - used for uniform borders
     pub border_color: Option<Color>,
     /// Border width in pixels - used for uniform borders
@@ -1019,6 +1021,8 @@ pub struct RenderProps {
     pub opacity: f32,
     /// Whether this element clips its children (for scroll containers)
     pub clips_content: bool,
+    /// Overflow fade distances (smooth alpha fade at clip edges). Applied when clips_content is true.
+    pub overflow_fade: OverflowFade,
     /// Motion animation configuration (enter/exit animations)
     pub motion: Option<MotionAnimation>,
     /// Stable ID for motion animation tracking across tree rebuilds
@@ -1164,6 +1168,7 @@ impl Default for RenderProps {
         Self {
             background: None,
             border_radius: CornerRadius::default(),
+            corner_shape: CornerShape::default(),
             border_color: None,
             border_width: 0.0,
             border_sides: BorderSides::default(),
@@ -1177,6 +1182,7 @@ impl Default for RenderProps {
             transform: None,
             opacity: 1.0,
             clips_content: false,
+            overflow_fade: OverflowFade::default(),
             motion: None,
             motion_stable_id: None,
             motion_should_replay: false,
@@ -1416,6 +1422,8 @@ pub struct DynRenderProps {
     pub background: Option<DynValue<Brush>>,
     /// Corner radius (typically static)
     pub border_radius: CornerRadius,
+    /// Corner shape (superellipse n parameter per corner)
+    pub corner_shape: CornerShape,
     /// Which layer this element renders in
     pub layer: RenderLayer,
     /// Material applied to this element
@@ -1430,6 +1438,8 @@ pub struct DynRenderProps {
     pub opacity: DynFloat,
     /// Whether this element clips its children
     pub clips_content: bool,
+    /// Overflow fade distances
+    pub overflow_fade: OverflowFade,
 }
 
 impl Default for DynRenderProps {
@@ -1437,6 +1447,7 @@ impl Default for DynRenderProps {
         Self {
             background: None,
             border_radius: CornerRadius::default(),
+            corner_shape: CornerShape::default(),
             layer: RenderLayer::default(),
             material: None,
             node_id: None,
@@ -1444,6 +1455,7 @@ impl Default for DynRenderProps {
             transform: None,
             opacity: DynFloat::Static(1.0),
             clips_content: false,
+            overflow_fade: OverflowFade::default(),
         }
     }
 }
@@ -1461,6 +1473,7 @@ impl DynRenderProps {
         ResolvedRenderProps {
             background: self.background.as_ref().map(|v| v.get(ctx)),
             border_radius: self.border_radius,
+            corner_shape: self.corner_shape,
             layer: self.layer,
             material: self.material.clone(),
             node_id: self.node_id,
@@ -1468,6 +1481,7 @@ impl DynRenderProps {
             transform: self.transform.clone(),
             opacity: self.opacity.get(ctx),
             clips_content: self.clips_content,
+            overflow_fade: self.overflow_fade,
         }
     }
 
@@ -1476,6 +1490,7 @@ impl DynRenderProps {
         Self {
             background: props.background.map(DynValue::Static),
             border_radius: props.border_radius,
+            corner_shape: props.corner_shape,
             layer: props.layer,
             material: props.material,
             node_id: props.node_id,
@@ -1483,6 +1498,7 @@ impl DynRenderProps {
             transform: props.transform,
             opacity: DynFloat::Static(props.opacity),
             clips_content: props.clips_content,
+            overflow_fade: props.overflow_fade,
         }
     }
 
@@ -1537,6 +1553,8 @@ pub struct ResolvedRenderProps {
     pub background: Option<Brush>,
     /// Corner radius
     pub border_radius: CornerRadius,
+    /// Corner shape (superellipse n parameter per corner)
+    pub corner_shape: CornerShape,
     /// Render layer
     pub layer: RenderLayer,
     /// Material
@@ -1551,6 +1569,8 @@ pub struct ResolvedRenderProps {
     pub opacity: f32,
     /// Whether this element clips its children
     pub clips_content: bool,
+    /// Overflow fade distances
+    pub overflow_fade: OverflowFade,
 }
 
 impl Default for ResolvedRenderProps {
@@ -1558,6 +1578,7 @@ impl Default for ResolvedRenderProps {
         Self {
             background: None,
             border_radius: CornerRadius::default(),
+            corner_shape: CornerShape::default(),
             layer: RenderLayer::default(),
             material: None,
             node_id: None,
@@ -1565,6 +1586,7 @@ impl Default for ResolvedRenderProps {
             transform: None,
             opacity: 1.0,
             clips_content: false,
+            overflow_fade: OverflowFade::default(),
         }
     }
 }

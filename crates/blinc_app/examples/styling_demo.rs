@@ -1163,6 +1163,31 @@ fn main() -> Result<()> {
                 fill: var(--warning);
             }
 
+            /* --- Corner Shape demos --- */
+
+            #cs-transition {
+                background: #3b82f6;
+                border-radius: 32px;
+                corner-shape: round;
+                transition: corner-shape 500ms ease;
+            }
+            #cs-transition:hover {
+                corner-shape: squircle;
+            }
+
+            @keyframes cs-morph {
+                0% { corner-shape: superellipse(1.0); }
+                25% { corner-shape: superellipse(0.0); }
+                50% { corner-shape: superellipse(2.0); }
+                75% { corner-shape: superellipse(-1.0); }
+                100% { corner-shape: superellipse(1.0); }
+            }
+            #cs-anim {
+                background: #8b5cf6;
+                border-radius: 32px;
+                animation: cs-morph 4000ms ease-in-out infinite;
+            }
+
             "#,
             );
             css_loaded = true;
@@ -1233,6 +1258,7 @@ fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
                     .child(style_merging_section())
                     .child(backgrounds_section())
                     .child(corner_radius_section())
+                    .child(corner_shape_section())
                     .child(shadows_section())
                     .child(transforms_section())
                     .child(opacity_section())
@@ -3731,6 +3757,203 @@ fn corner_radius_section() -> impl ElementBuilder {
                     "rounded: 20.0",
                     css! { background: Color::BLUE; border-radius: 20.0; },
                 )),
+        )
+}
+
+// ============================================================================
+// CORNER SHAPE SECTION (superellipse)
+// ============================================================================
+
+fn corner_shape_section() -> impl ElementBuilder {
+    section_container()
+        .child(section_title("Corner Shape (Superellipse)"))
+        .child(section_description(
+            "Control corner curvature via superellipse math. Works with border-radius. \
+             Values: round (1.0), bevel (0.0), squircle (2.0), scoop (-1.0), notch, square.",
+        ))
+        .child(
+            div()
+                .flex_col()
+                .gap(16.0)
+                // Static shapes via Div builder
+                .child(
+                    div()
+                        .flex_col()
+                        .gap(8.0)
+                        .child(code_label("Div builder: .rounded(32.0).corner_shape(n)"))
+                        .child(
+                            div()
+                                .flex_row()
+                                .flex_wrap()
+                                .gap(16.0)
+                                .child(
+                                    div()
+                                        .flex_col()
+                                        .gap(4.0)
+                                        .items_center()
+                                        .child(code_label("round (1.0)"))
+                                        .child(
+                                            div()
+                                                .w(80.0)
+                                                .h(80.0)
+                                                .rounded(32.0)
+                                                .corner_shape(1.0)
+                                                .bg(Color::rgba(0.23, 0.51, 0.96, 1.0)),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex_col()
+                                        .gap(4.0)
+                                        .items_center()
+                                        .child(code_label("bevel (0.0)"))
+                                        .child(
+                                            div()
+                                                .w(80.0)
+                                                .h(80.0)
+                                                .rounded(32.0)
+                                                .corner_bevel()
+                                                .bg(Color::rgba(0.13, 0.77, 0.37, 1.0)),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex_col()
+                                        .gap(4.0)
+                                        .items_center()
+                                        .child(code_label("squircle (2.0)"))
+                                        .child(
+                                            div()
+                                                .w(80.0)
+                                                .h(80.0)
+                                                .rounded(32.0)
+                                                .corner_squircle()
+                                                .bg(Color::rgba(0.66, 0.33, 0.97, 1.0)),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex_col()
+                                        .gap(4.0)
+                                        .items_center()
+                                        .child(code_label("scoop (-1.0)"))
+                                        .child(
+                                            div()
+                                                .w(80.0)
+                                                .h(80.0)
+                                                .rounded(32.0)
+                                                .corner_scoop()
+                                                .bg(Color::rgba(0.98, 0.45, 0.09, 1.0)),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex_col()
+                                        .gap(4.0)
+                                        .items_center()
+                                        .child(code_label("notch (-100)"))
+                                        .child(
+                                            div()
+                                                .w(80.0)
+                                                .h(80.0)
+                                                .rounded(10.0)
+                                                .corner_shape(-100.0)
+                                                .bg(Color::rgba(0.93, 0.27, 0.61, 1.0)),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex_col()
+                                        .gap(4.0)
+                                        .items_center()
+                                        .child(code_label("square (100)"))
+                                        .child(
+                                            div()
+                                                .w(80.0)
+                                                .h(80.0)
+                                                .rounded(32.0)
+                                                .corner_shape(100.0)
+                                                .bg(Color::rgba(0.07, 0.55, 0.45, 1.0)),
+                                        ),
+                                ),
+                        ),
+                )
+                // Per-corner shapes
+                .child(
+                    div()
+                        .flex_col()
+                        .gap(8.0)
+                        .child(code_label(
+                            ".corner_shapes(2.0, 0.0, 2.0, 0.0) — mixed per-corner",
+                        ))
+                        .child(
+                            div()
+                                .flex_row()
+                                .gap(16.0)
+                                .child(
+                                    div()
+                                        .w(80.0)
+                                        .h(80.0)
+                                        .rounded(32.0)
+                                        .corner_shapes(2.0, 0.0, 2.0, 0.0)
+                                        .bg(Color::rgba(0.39, 0.40, 0.95, 1.0)),
+                                )
+                                .child(
+                                    div()
+                                        .w(80.0)
+                                        .h(80.0)
+                                        .rounded(32.0)
+                                        .corner_shapes(0.0, 2.0, 0.0, 2.0)
+                                        .bg(Color::rgba(0.85, 0.53, 0.05, 1.0)),
+                                )
+                                .child(
+                                    div()
+                                        .w(80.0)
+                                        .h(80.0)
+                                        .rounded(32.0)
+                                        .corner_shapes(-1.0, 2.0, -1.0, 2.0)
+                                        .bg(Color::rgba(0.95, 0.24, 0.24, 1.0)),
+                                ),
+                        ),
+                )
+                // CSS transition demo
+                .child(
+                    div()
+                        .flex_col()
+                        .gap(8.0)
+                        .child(code_label(
+                            "CSS transition: corner-shape round → squircle on hover",
+                        ))
+                        .child(
+                            div()
+                                .id("cs-transition")
+                                .w(120.0)
+                                .h(80.0)
+                                .flex_col()
+                                .justify_center()
+                                .items_center()
+                                .child(text("Hover me").size(13.0).color(Color::WHITE)),
+                        ),
+                )
+                // CSS keyframe animation
+                .child(
+                    div()
+                        .flex_col()
+                        .gap(8.0)
+                        .child(code_label(
+                            "@keyframes cs-morph: round → bevel → squircle → scoop",
+                        ))
+                        .child(
+                            div()
+                                .id("cs-anim")
+                                .w(120.0)
+                                .h(80.0)
+                                .flex_col()
+                                .justify_center()
+                                .items_center()
+                                .child(text("Morphing").size(13.0).color(Color::WHITE)),
+                        ),
+                ),
         )
 }
 

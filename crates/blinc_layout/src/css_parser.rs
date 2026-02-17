@@ -52,10 +52,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use blinc_core::{
-    Brush, ChainLink, ClipLength, ClipPath, Color, CornerRadius, FlowChain, FlowError, FlowExpr,
-    FlowFunc, FlowGraph, FlowInput, FlowInputSource, FlowNode, FlowOutput, FlowOutputTarget,
-    FlowStep, FlowTarget, FlowType, FlowUse, Gradient, GradientSpace, GradientStop, ImageBrush,
-    Point, Shadow, StepParam, StepType, Transform,
+    Brush, ChainLink, ClipLength, ClipPath, Color, CornerRadius, CornerShape, FlowChain, FlowError,
+    FlowExpr, FlowFunc, FlowGraph, FlowInput, FlowInputSource, FlowNode, FlowOutput,
+    FlowOutputTarget, FlowStep, FlowTarget, FlowType, FlowUse, Gradient, GradientSpace,
+    GradientStop, ImageBrush, OverflowFade, Point, Shadow, StepParam, StepType, Transform,
 };
 use blinc_theme::{ColorToken, ThemeState};
 use nom::{
@@ -938,6 +938,16 @@ impl CssKeyframes {
         if let Some(cr) = &style.corner_radius {
             props.corner_radius =
                 Some([cr.top_left, cr.top_right, cr.bottom_right, cr.bottom_left]);
+        }
+
+        // Corner shape (superellipse)
+        if let Some(cs) = &style.corner_shape {
+            props.corner_shape = Some(cs.to_array());
+        }
+
+        // Overflow fade
+        if let Some(fade) = &style.overflow_fade {
+            props.overflow_fade = Some(fade.to_array());
         }
 
         // Border
@@ -4551,6 +4561,42 @@ fn apply_property(style: &mut ElementStyle, name: &str, value: &str) {
                 }
             }
         },
+        "corner-shape" => {
+            let value = value.trim();
+            if let Some(cs) = parse_corner_shape_value(value) {
+                style.corner_shape = Some(cs);
+            }
+        }
+        "overflow-fade" => {
+            let trimmed = value.trim();
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            let parse_fade_val =
+                |s: &str| -> Option<f32> { parse_length_value(s).map(|v| v.max(0.0)) };
+            match parts.len() {
+                1 => {
+                    if let Some(v) = parse_fade_val(parts[0]) {
+                        style.overflow_fade = Some(OverflowFade::uniform(v));
+                    }
+                }
+                2 => {
+                    if let (Some(v), Some(h)) = (parse_fade_val(parts[0]), parse_fade_val(parts[1]))
+                    {
+                        style.overflow_fade = Some(OverflowFade::new(v, h, v, h));
+                    }
+                }
+                4 => {
+                    if let (Some(t), Some(r), Some(b), Some(l)) = (
+                        parse_fade_val(parts[0]),
+                        parse_fade_val(parts[1]),
+                        parse_fade_val(parts[2]),
+                        parse_fade_val(parts[3]),
+                    ) {
+                        style.overflow_fade = Some(OverflowFade::new(t, r, b, l));
+                    }
+                }
+                _ => {}
+            }
+        }
         "box-shadow" => {
             if let Some(shadow) = parse_shadow(value) {
                 style.shadow = Some(shadow);
@@ -5547,6 +5593,52 @@ fn apply_property_with_errors(
                 }
             }
         },
+        "corner-shape" => {
+            let value = value.trim();
+            if let Some(cs) = parse_corner_shape_value(value) {
+                style.corner_shape = Some(cs);
+            } else {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        }
+        "overflow-fade" => {
+            let trimmed = value.trim();
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            let parse_fade_val =
+                |s: &str| -> Option<f32> { parse_length_value(s).map(|v| v.max(0.0)) };
+            match parts.len() {
+                1 => {
+                    if let Some(v) = parse_fade_val(parts[0]) {
+                        style.overflow_fade = Some(OverflowFade::uniform(v));
+                    } else {
+                        errors.push(ParseError::invalid_value(name, value, line, column));
+                    }
+                }
+                2 => {
+                    if let (Some(v), Some(h)) = (parse_fade_val(parts[0]), parse_fade_val(parts[1]))
+                    {
+                        style.overflow_fade = Some(OverflowFade::new(v, h, v, h));
+                    } else {
+                        errors.push(ParseError::invalid_value(name, value, line, column));
+                    }
+                }
+                4 => {
+                    if let (Some(t), Some(r), Some(b), Some(l)) = (
+                        parse_fade_val(parts[0]),
+                        parse_fade_val(parts[1]),
+                        parse_fade_val(parts[2]),
+                        parse_fade_val(parts[3]),
+                    ) {
+                        style.overflow_fade = Some(OverflowFade::new(t, r, b, l));
+                    } else {
+                        errors.push(ParseError::invalid_value(name, value, line, column));
+                    }
+                }
+                _ => {
+                    errors.push(ParseError::invalid_value(name, value, line, column));
+                }
+            }
+        }
         "box-shadow" => {
             if let Some(shadow) = parse_shadow(value) {
                 style.shadow = Some(shadow);
@@ -6623,6 +6715,54 @@ fn parse_radius(value: &str) -> Option<CornerRadius> {
 
     // Try parsing as numeric value
     parse_length_value(value).map(CornerRadius::uniform)
+}
+
+fn parse_corner_shape_value(value: &str) -> Option<CornerShape> {
+    let trimmed = value.trim();
+    let parse_one = |s: &str| -> Option<f32> {
+        match s.trim() {
+            "round" => Some(1.0),
+            "bevel" => Some(0.0),
+            "squircle" => Some(2.0),
+            "scoop" => Some(-1.0),
+            "notch" => Some(-100.0),
+            "square" => Some(100.0),
+            other => {
+                if let Some(inner) = other
+                    .strip_prefix("superellipse(")
+                    .and_then(|s| s.strip_suffix(')'))
+                {
+                    inner.trim().parse().ok()
+                } else {
+                    other.parse().ok()
+                }
+            }
+        }
+    };
+
+    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+    match parts.len() {
+        1 => Some(CornerShape::uniform(parse_one(parts[0])?)),
+        2 => {
+            let a = parse_one(parts[0])?;
+            let b = parse_one(parts[1])?;
+            Some(CornerShape::new(a, b, a, b))
+        }
+        3 => {
+            let a = parse_one(parts[0])?;
+            let b = parse_one(parts[1])?;
+            let c = parse_one(parts[2])?;
+            Some(CornerShape::new(a, b, c, b))
+        }
+        4 => {
+            let tl = parse_one(parts[0])?;
+            let tr = parse_one(parts[1])?;
+            let br = parse_one(parts[2])?;
+            let bl = parse_one(parts[3])?;
+            Some(CornerShape::new(tl, tr, br, bl))
+        }
+        _ => None,
+    }
 }
 
 /// Parse theme(radius-*) tokens

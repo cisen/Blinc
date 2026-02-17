@@ -854,6 +854,9 @@ pub struct GpuRenderer {
     blend_target_ptr: Option<*const wgpu::Texture>,
     /// Cached @flow GPU pipelines (compiled lazily from FlowGraph → WGSL)
     flow_pipeline_cache: crate::flow_pipeline::FlowPipelineCache,
+    /// Staging texture for scene capture (used by flow shaders with sample_scene()).
+    /// Lazily created/resized to match the render target.
+    scene_copy_texture: Option<(wgpu::Texture, wgpu::TextureView, u32, u32)>,
 }
 
 /// Image rendering pipeline (created lazily on first image render)
@@ -1442,6 +1445,7 @@ impl GpuRenderer {
             dummy_blend_dest_texture: dummy_blend_dest,
             blend_target_ptr: None,
             flow_pipeline_cache,
+            scene_copy_texture: None,
         })
     }
 
@@ -3150,10 +3154,81 @@ impl GpuRenderer {
         uniforms: &crate::flow_pipeline::FlowUniformData,
         viewport: Option<[f32; 4]>,
     ) -> bool {
+        // If this flow uses sample_scene(), copy the current framebuffer first
+        let scene_view: Option<&wgpu::TextureView> =
+            if self.flow_pipeline_cache.needs_scene_texture(flow_name) {
+                let (tw, th) = self.viewport_size;
+                // Ensure scene copy texture exists and matches render target size
+                let needs_recreate = match &self.scene_copy_texture {
+                    Some((_, _, w, h)) => *w != tw || *h != th,
+                    None => true,
+                };
+                if needs_recreate && tw > 0 && th > 0 {
+                    let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("Flow Scene Copy Texture"),
+                        size: wgpu::Extent3d {
+                            width: tw,
+                            height: th,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: self.texture_format,
+                        usage: wgpu::TextureUsages::COPY_DST
+                            | wgpu::TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    });
+                    let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                    self.scene_copy_texture = Some((tex, view, tw, th));
+                }
+
+                // Copy current render target → scene copy texture
+                if let Some((scene_tex, _, _, _)) = &self.scene_copy_texture {
+                    // We need to get the underlying texture from the target view.
+                    // Since we have the render target texture via blend_target_ptr, use that.
+                    // Otherwise, we need the texture passed in — use viewport_size to create a copy.
+                    let mut copy_encoder =
+                        self.device
+                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("Flow Scene Copy Encoder"),
+                            });
+
+                    // Use the blend_target_ptr if available (set during frame rendering)
+                    if let Some(tex_ptr) = self.blend_target_ptr {
+                        let src_tex = unsafe { &*tex_ptr };
+                        copy_encoder.copy_texture_to_texture(
+                            wgpu::ImageCopyTexture {
+                                texture: src_tex,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d::ZERO,
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            wgpu::ImageCopyTexture {
+                                texture: scene_tex,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d::ZERO,
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            wgpu::Extent3d {
+                                width: tw,
+                                height: th,
+                                depth_or_array_layers: 1,
+                            },
+                        );
+                        self.queue.submit(std::iter::once(copy_encoder.finish()));
+                    }
+                }
+
+                self.scene_copy_texture.as_ref().map(|(_, v, _, _)| v)
+            } else {
+                None
+            };
+
         let bind_group =
             match self
                 .flow_pipeline_cache
-                .prepare_render(&self.queue, flow_name, uniforms)
+                .prepare_render(&self.queue, flow_name, uniforms, scene_view)
             {
                 Some(bg) => bg,
                 None => return false,

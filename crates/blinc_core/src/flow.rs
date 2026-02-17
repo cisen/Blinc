@@ -133,7 +133,7 @@ pub enum FlowInputSource {
 /// Built-in variables available to flows
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuiltinVar {
-    /// Element UV coordinates [0,1]
+    /// Element UV coordinates `[0,1]`
     Uv,
     /// Frame time in seconds
     Time,
@@ -143,7 +143,7 @@ pub enum BuiltinVar {
     Sdf,
     /// Frame index (integer)
     FrameIndex,
-    /// Pointer position (vec2, from pointer query system)
+    /// Pointer position (`vec2`, from pointer query system)
     Pointer,
 }
 
@@ -347,6 +347,11 @@ pub enum FlowFunc {
     SpringEval,
     WaveStep,
     FluidStep,
+
+    // ── Scene sampling ──
+    /// Sample the background/scene texture at given UV coordinates.
+    /// Returns vec4 (RGBA). Enables refraction effects in flow shaders.
+    SampleScene,
 }
 
 impl FlowFunc {
@@ -410,6 +415,8 @@ impl FlowFunc {
             "spring_eval" | "spring-eval" => Some(Self::SpringEval),
             "wave_step" | "wave-step" => Some(Self::WaveStep),
             "fluid_step" | "fluid-step" => Some(Self::FluidStep),
+
+            "sample_scene" | "sample-scene" => Some(Self::SampleScene),
 
             _ => None,
         }
@@ -475,6 +482,9 @@ impl FlowFunc {
             // Checkerboard: (point, scale) — 1-2 args
             Self::Checkerboard => (1, 2),
 
+            // Scene sampling: sample_scene(uv)
+            Self::SampleScene => (1, 1),
+
             // Variable-arg functions
             Self::BufferRead => (1, 3),
             Self::SpringEval | Self::WaveStep | Self::FluidStep => (2, 5),
@@ -484,19 +494,8 @@ impl FlowFunc {
     /// Get the return type given argument types
     pub fn return_type(&self, arg_types: &[FlowType]) -> Option<FlowType> {
         match self {
-            // Scalar → Scalar
-            Self::Sin
-            | Self::Cos
-            | Self::Tan
-            | Self::Abs
-            | Self::Floor
-            | Self::Ceil
-            | Self::Fract
-            | Self::Sqrt
-            | Self::Exp
-            | Self::Log
-            | Self::Sign
-            | Self::Length
+            // Always scalar (reduce vector to scalar, or scalar→scalar)
+            Self::Length
             | Self::Distance
             | Self::Dot
             | Self::Sdf
@@ -513,8 +512,19 @@ impl FlowFunc {
             | Self::Step
             | Self::Atan2 => Some(FlowType::Float),
 
-            // Preserve input type
-            Self::Pow
+            // Component-wise: preserve input type (e.g. floor(vec2) → vec2)
+            Self::Sin
+            | Self::Cos
+            | Self::Tan
+            | Self::Abs
+            | Self::Floor
+            | Self::Ceil
+            | Self::Fract
+            | Self::Sqrt
+            | Self::Exp
+            | Self::Log
+            | Self::Sign
+            | Self::Pow
             | Self::Mod
             | Self::Min
             | Self::Max
@@ -546,7 +556,7 @@ impl FlowFunc {
                 arg_types.first().cloned().or(Some(FlowType::Float))
             }
 
-            Self::BufferRead => Some(FlowType::Vec4),
+            Self::BufferRead | Self::SampleScene => Some(FlowType::Vec4),
         }
     }
 }
@@ -1528,8 +1538,11 @@ fn expand_adjust_falloff(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
 }
 
 /// color-ramp: map scalar to color via stops
+///
+/// Optional `opacity` param (0.0–1.0) multiplies the final alpha channel.
 fn expand_color_ramp(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
     let source = param_expr(&step.params, "source", FlowExpr::Float(0.0));
+    let opacity = step.params.get("opacity");
 
     let stops = match step.params.get("stops") {
         Some(StepParam::ColorStops(stops)) if stops.len() >= 2 => stops,
@@ -1542,6 +1555,9 @@ fn expand_color_ramp(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
         }
     };
 
+    // When opacity is set, the ramp result goes to an intermediate name
+    let has_opacity = opacity.is_some();
+
     let mut nodes = Vec::new();
     let mut prev_mix_name: Option<String> = None;
 
@@ -1550,8 +1566,11 @@ fn expand_color_ramp(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
         let (ref color_b, pos_b) = stops[i + 1];
 
         let t_name = format!("_s_{}_t{}{}", step.name, i, i + 1);
-        let mix_name = if i == stops.len() - 2 {
-            step.name.clone() // Last segment uses the step name directly
+        let is_last = i == stops.len() - 2;
+        let mix_name = if is_last && !has_opacity {
+            step.name.clone()
+        } else if is_last && has_opacity {
+            format!("_s_{}_rgb", step.name)
         } else {
             format!("_s_{}_m{}{}", step.name, i, i + 1)
         };
@@ -1587,6 +1606,40 @@ fn expand_color_ramp(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
         });
 
         prev_mix_name = Some(mix_name);
+    }
+
+    // Apply opacity: vec4(rgb.x, rgb.y, rgb.z, rgb.w * opacity)
+    if let Some(opacity_param) = opacity {
+        let opacity_expr = match opacity_param {
+            StepParam::Expr(e) => e.clone(),
+            _ => FlowExpr::Float(1.0),
+        };
+        let rgb_ref = prev_mix_name.unwrap_or_else(|| step.name.clone());
+        nodes.push(FlowNode {
+            name: step.name.clone(),
+            expr: FlowExpr::Vec4(
+                Box::new(FlowExpr::Swizzle(
+                    Box::new(FlowExpr::Ref(rgb_ref.clone())),
+                    "x".to_string(),
+                )),
+                Box::new(FlowExpr::Swizzle(
+                    Box::new(FlowExpr::Ref(rgb_ref.clone())),
+                    "y".to_string(),
+                )),
+                Box::new(FlowExpr::Swizzle(
+                    Box::new(FlowExpr::Ref(rgb_ref.clone())),
+                    "z".to_string(),
+                )),
+                Box::new(FlowExpr::Mul(
+                    Box::new(FlowExpr::Swizzle(
+                        Box::new(FlowExpr::Ref(rgb_ref)),
+                        "w".to_string(),
+                    )),
+                    Box::new(opacity_expr),
+                )),
+            ),
+            inferred_type: None,
+        });
     }
 
     Ok(nodes)

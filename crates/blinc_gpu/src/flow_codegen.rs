@@ -32,6 +32,51 @@ pub fn flow_to_wgsl(graph: &FlowGraph) -> Result<String, FlowError> {
     ctx.generate()
 }
 
+/// Check if a flow graph uses the `sample_scene()` function,
+/// which requires binding a scene texture to the pipeline.
+pub fn flow_needs_scene_texture(graph: &FlowGraph) -> bool {
+    fn expr_uses_scene(expr: &FlowExpr) -> bool {
+        match expr {
+            FlowExpr::Call { func, args } => {
+                if *func == FlowFunc::SampleScene {
+                    return true;
+                }
+                args.iter().any(expr_uses_scene)
+            }
+            FlowExpr::Add(a, b)
+            | FlowExpr::Sub(a, b)
+            | FlowExpr::Mul(a, b)
+            | FlowExpr::Div(a, b)
+            | FlowExpr::Vec2(a, b) => expr_uses_scene(a) || expr_uses_scene(b),
+            FlowExpr::Vec3(a, b, c) => {
+                expr_uses_scene(a) || expr_uses_scene(b) || expr_uses_scene(c)
+            }
+            FlowExpr::Vec4(a, b, c, d) => {
+                expr_uses_scene(a)
+                    || expr_uses_scene(b)
+                    || expr_uses_scene(c)
+                    || expr_uses_scene(d)
+            }
+            FlowExpr::Neg(a) | FlowExpr::Swizzle(a, _) => expr_uses_scene(a),
+            _ => false,
+        }
+    }
+
+    for node in &graph.nodes {
+        if expr_uses_scene(&node.expr) {
+            return true;
+        }
+    }
+    for output in &graph.outputs {
+        if let Some(expr) = &output.expr {
+            if expr_uses_scene(expr) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 // ==========================================================================
 // Type Mapping
 // ==========================================================================
@@ -59,6 +104,7 @@ struct CodegenContext<'a> {
     need_lighting: bool,
     need_color: bool,
     need_simulation: bool,
+    need_scene: bool,
     /// Individual SDF primitives needed
     used_sdf_prims: HashSet<&'static str>,
     /// Individual SDF ops needed
@@ -79,6 +125,7 @@ impl<'a> CodegenContext<'a> {
             need_lighting: false,
             need_color: false,
             need_simulation: false,
+            need_scene: false,
             used_sdf_prims: HashSet::new(),
             used_sdf_ops: HashSet::new(),
             has_buffer_io: false,
@@ -206,6 +253,9 @@ impl<'a> CodegenContext<'a> {
             FlowFunc::Phong | FlowFunc::BlinnPhong => {
                 self.need_lighting = true;
             }
+            FlowFunc::SampleScene => {
+                self.need_scene = true;
+            }
             FlowFunc::SpringEval | FlowFunc::WaveStep | FlowFunc::FluidStep => {
                 self.need_simulation = true;
             }
@@ -227,7 +277,7 @@ impl<'a> CodegenContext<'a> {
         self.emit_uniforms(&mut out);
 
         // Bindings
-        self.emit_bindings(&mut out);
+        let _ = self.emit_bindings(&mut out);
 
         // Helper functions (only those needed)
         self.emit_helpers(&mut out);
@@ -278,13 +328,15 @@ impl<'a> CodegenContext<'a> {
     // Bindings
     // ======================================================================
 
-    fn emit_bindings(&self, out: &mut String) {
+    /// Returns the next available binding index after all bindings are emitted
+    fn emit_bindings(&self, out: &mut String) -> u32 {
         // group(0) binding(0) = uniforms
         let _ = writeln!(out, "@group(0) @binding(0) var<uniform> u: FlowUniforms;");
 
         // Storage buffers start at binding(1)
+        let mut next_binding = 1u32;
         for (i, (name, _ty, is_rw)) in self.buffer_bindings.iter().enumerate() {
-            let binding = i + 1;
+            let binding = i as u32 + 1;
             let access = if *is_rw { "read_write" } else { "read" };
             let safe_name = sanitize_name(name);
             let _ = writeln!(
@@ -292,9 +344,27 @@ impl<'a> CodegenContext<'a> {
                 "@group(0) @binding({}) var<storage, {}> buf_{}: array<vec4<f32>>;",
                 binding, access, safe_name
             );
+            next_binding = binding + 1;
+        }
+
+        // Scene texture + sampler (for sample_scene())
+        if self.need_scene {
+            let _ = writeln!(
+                out,
+                "@group(0) @binding({}) var scene_tex: texture_2d<f32>;",
+                next_binding
+            );
+            next_binding += 1;
+            let _ = writeln!(
+                out,
+                "@group(0) @binding({}) var scene_sampler: sampler;",
+                next_binding
+            );
+            next_binding += 1;
         }
 
         let _ = writeln!(out);
+        next_binding
     }
 
     // ======================================================================
@@ -1120,6 +1190,16 @@ fn func_to_wgsl(func: FlowFunc, args: &[String]) -> Result<String, FlowError> {
                 args[0],
                 args[1],
                 args.get(2).map(|s| s.as_str()).unwrap_or("0.0")
+            )
+        }
+
+        // Scene sampling — map element-local UV to framebuffer UV
+        // The scene texture is a copy of the full framebuffer, so we need:
+        //   framebuffer_uv = (element_bounds.xy + local_uv * element_bounds.zw) / viewport_size
+        FlowFunc::SampleScene => {
+            format!(
+                "textureSample(scene_tex, scene_sampler, (u.element_bounds.xy + ({}) * u.element_bounds.zw) / u.viewport_size)",
+                args[0]
             )
         }
     })

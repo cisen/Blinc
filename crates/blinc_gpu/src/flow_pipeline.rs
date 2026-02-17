@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use blinc_core::{FlowGraph, FlowInputSource, FlowTarget, FlowType};
 
-use crate::flow_codegen::flow_to_wgsl;
+use crate::flow_codegen::{flow_needs_scene_texture, flow_to_wgsl};
 
 // ==========================================================================
 // Uniform Data
@@ -75,6 +75,10 @@ struct CachedFlowPipeline {
     target: FlowTarget,
     /// Size of the uniform struct in bytes (base + dynamic CSS/env fields)
     uniform_size: u64,
+    /// Whether this flow uses sample_scene() and needs a scene texture binding
+    needs_scene: bool,
+    /// Binding index for the scene texture (if needs_scene)
+    scene_texture_binding: u32,
 }
 
 // ==========================================================================
@@ -89,15 +93,47 @@ pub struct FlowPipelineCache {
     device: Arc<wgpu::Device>,
     texture_format: wgpu::TextureFormat,
     pipelines: HashMap<String, CachedFlowPipeline>,
+    /// Sampler for scene texture sampling (linear filtering)
+    scene_sampler: wgpu::Sampler,
+    /// 1x1 transparent dummy texture for flows that don't use scene sampling
+    dummy_scene_view: wgpu::TextureView,
 }
 
 impl FlowPipelineCache {
     /// Create a new empty pipeline cache
     pub fn new(device: Arc<wgpu::Device>, texture_format: wgpu::TextureFormat) -> Self {
+        let scene_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Flow Scene Sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        // 1x1 transparent dummy texture for flows that don't use scene
+        let dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Flow Dummy Scene Texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: texture_format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let dummy_scene_view = dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
         Self {
             device,
             texture_format,
             pipelines: HashMap::new(),
+            scene_sampler,
+            dummy_scene_view,
         }
     }
 
@@ -245,6 +281,33 @@ impl FlowPipelineCache {
             });
         }
 
+        // Check if this flow uses sample_scene() and needs a scene texture
+        let needs_scene = flow_needs_scene_texture(graph);
+        let scene_texture_binding = binding_index; // next available binding
+        if needs_scene {
+            // Scene texture
+            layout_entries.push(wgpu::BindGroupLayoutEntry {
+                binding: binding_index,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            });
+            binding_index += 1;
+            // Scene sampler
+            layout_entries.push(wgpu::BindGroupLayoutEntry {
+                binding: binding_index,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            });
+            binding_index += 1;
+        }
+        let _ = binding_index; // suppress unused warning
+
         let bind_group_layout =
             self.device
                 .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -343,6 +406,8 @@ impl FlowPipelineCache {
                 storage_buffers,
                 target: graph.target,
                 uniform_size,
+                needs_scene,
+                scene_texture_binding,
             },
         );
 
@@ -361,12 +426,17 @@ impl FlowPipelineCache {
 
     /// Update the uniform buffer for a flow and return the bind group for rendering.
     ///
+    /// `scene_texture` is an optional texture view of the current framebuffer,
+    /// needed for flows that use `sample_scene()`. If None and the flow needs it,
+    /// a 1x1 dummy texture is used.
+    ///
     /// Returns None if the flow is not compiled.
     pub fn prepare_render(
         &self,
         queue: &wgpu::Queue,
         flow_name: &str,
         uniforms: &FlowUniformData,
+        scene_texture: Option<&wgpu::TextureView>,
     ) -> Option<wgpu::BindGroup> {
         let cached = self.pipelines.get(flow_name)?;
 
@@ -395,6 +465,19 @@ impl FlowPipelineCache {
             }
         }
 
+        // Add scene texture + sampler if needed
+        if cached.needs_scene {
+            let tex_view = scene_texture.unwrap_or(&self.dummy_scene_view);
+            entries.push(wgpu::BindGroupEntry {
+                binding: cached.scene_texture_binding,
+                resource: wgpu::BindingResource::TextureView(tex_view),
+            });
+            entries.push(wgpu::BindGroupEntry {
+                binding: cached.scene_texture_binding + 1,
+                resource: wgpu::BindingResource::Sampler(&self.scene_sampler),
+            });
+        }
+
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(&format!("Flow Bind Group: {}", flow_name)),
             layout: &cached.bind_group_layout,
@@ -402,6 +485,13 @@ impl FlowPipelineCache {
         });
 
         Some(bind_group)
+    }
+
+    /// Check if a compiled flow needs a scene texture for rendering.
+    pub fn needs_scene_texture(&self, flow_name: &str) -> bool {
+        self.pipelines
+            .get(flow_name)
+            .map_or(false, |c| c.needs_scene)
     }
 
     /// Render a fragment flow into a render pass.

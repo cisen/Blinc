@@ -58,7 +58,7 @@ const STYLESHEET: &str = r#"
         output color = tint;
     }
 
-    /* Mixed demo: raw math + semantic step */
+    /* Mixed demo: raw math + translucent step */
     @flow waves {
         target: fragment;
         input uv: builtin(uv);
@@ -72,10 +72,11 @@ const STYLESHEET: &str = r#"
         node wave2 = sin(uv.x * 15.0 + time * 1.5) * 0.5 + 0.5;
         node combined = wave1 * 0.6 + wave2 * 0.4;
 
-        /* Semantic color ramp on the combined wave */
+        /* Semantic color ramp with translucency */
         step colored: color-ramp {
             source: combined;
-            stops: #030221 0.0, #140d4c 0.3, #2c5ac7 0.6, #407dee 0.8, #d9eef2 1.0;
+            opacity: 0.50;
+            stops: #0c2b52 0.0, #5787da 0.2, #2c5ac7 0.4, #407dee 0.8, #d9eef2 1.0;
         }
 
         output color = colored;
@@ -129,6 +130,7 @@ fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
     let card_h = 280.0;
     let label_color = Color::rgba(0.85, 0.85, 0.90, 1.0);
     let sub_color = Color::rgba(0.55, 0.55, 0.60, 1.0);
+    let default_bg = Color::WHITE;
 
     div()
         .w(ctx.width)
@@ -148,6 +150,7 @@ fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
                     "step + node + step",
                     card_w,
                     card_h,
+                    default_bg,
                     label_color,
                     sub_color,
                 ))
@@ -157,15 +160,17 @@ fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
                     "chain + step",
                     card_w,
                     card_h,
+                    default_bg,
                     label_color,
                     sub_color,
                 ))
                 .child(card(
                     "waves-card",
                     "Waves",
-                    "node + step",
+                    "translucent",
                     card_w,
                     card_h,
+                    Color::rgba(0.85, 0.55, 0.15, 1.0),
                     label_color,
                     sub_color,
                 )),
@@ -178,6 +183,7 @@ fn card(
     subtitle: &str,
     w: f32,
     h: f32,
+    bg_color: Color,
     label_color: Color,
     sub_color: Color,
 ) -> impl ElementBuilder {
@@ -190,7 +196,7 @@ fn card(
                 .id(id)
                 .w(w)
                 .h(h)
-                .bg(Color::rgba(0.2, 0.2, 0.25, 1.0))
+                .bg(bg_color)
                 .shadow(Shadow::new(0.0, 4.0, 20.0, Color::rgba(0.0, 0.0, 0.0, 0.4))),
         )
         .child(

@@ -3263,7 +3263,10 @@ fn parse_step_params(body: &str, errors: &mut Vec<ParseError>) -> HashMap<String
                 .filter(|s| !s.is_empty())
                 .collect();
             if idents.len() == 1 {
-                params.insert(key.to_string(), StepParam::Ident(idents.into_iter().next().unwrap()));
+                params.insert(
+                    key.to_string(),
+                    StepParam::Ident(idents.into_iter().next().unwrap()),
+                );
             } else {
                 params.insert(key.to_string(), StepParam::IdentList(idents));
             }
@@ -3442,14 +3445,22 @@ fn parse_chain_link(input: &str) -> Result<ChainLink, String> {
                         .filter(|s| !s.is_empty())
                         .collect();
                     if idents.len() == 1 {
-                        params.insert(key.to_string(), StepParam::Ident(idents.into_iter().next().unwrap()));
+                        params.insert(
+                            key.to_string(),
+                            StepParam::Ident(idents.into_iter().next().unwrap()),
+                        );
                     } else {
                         params.insert(key.to_string(), StepParam::IdentList(idents));
                     }
                 } else if key == "weights" {
-                    if let Ok(list) = val_str.split(',').map(|s| s.trim().parse::<f32>()).collect::<Result<Vec<f32>, _>>() {
+                    if let Ok(list) = val_str
+                        .split(',')
+                        .map(|s| s.trim().parse::<f32>())
+                        .collect::<Result<Vec<f32>, _>>()
+                    {
                         if list.len() == 1 {
-                            params.insert(key.to_string(), StepParam::Expr(FlowExpr::Float(list[0])));
+                            params
+                                .insert(key.to_string(), StepParam::Expr(FlowExpr::Float(list[0])));
                         } else {
                             params.insert(key.to_string(), StepParam::FloatList(list));
                         }

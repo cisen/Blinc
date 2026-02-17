@@ -2448,24 +2448,26 @@ impl RenderContext {
         // Proper 3D text compositing requires layer-based rendering (render to texture, then
         // apply 3D transform to the composite). For now, text stays flat under 3D parents.
         let node_css_affine = if let Some(render_node) = tree.get_render_node(node) {
-            let has_non_identity_2d = if let Some(blinc_core::Transform::Affine2D(affine)) =
+            let has_non_identity = if let Some(blinc_core::Transform::Affine2D(affine)) =
                 &render_node.props.transform
             {
-                let [a, b, c, d, _tx, _ty] = affine.elements;
+                let [a, b, c, d, tx, ty] = affine.elements;
                 !((a - 1.0).abs() < 0.0001
                     && b.abs() < 0.0001
                     && c.abs() < 0.0001
-                    && (d - 1.0).abs() < 0.0001)
+                    && (d - 1.0).abs() < 0.0001
+                    && tx.abs() < 0.0001
+                    && ty.abs() < 0.0001)
             } else {
                 false
             };
 
-            if has_non_identity_2d {
+            if has_non_identity {
                 let affine = match &render_node.props.transform {
                     Some(blinc_core::Transform::Affine2D(a)) => a.elements,
                     _ => unreachable!(),
                 };
-                let [a, b, c, d, _tx, _ty] = affine;
+                let [a, b, c, d, tx, ty] = affine;
                 // Compute transform center in absolute layout coords
                 let (cx, cy) = if let Some([ox_pct, oy_pct]) = render_node.props.transform_origin {
                     (
@@ -2475,8 +2477,16 @@ impl RenderContext {
                 } else {
                     (abs_x + bounds.width / 2.0, abs_y + bounds.height / 2.0)
                 };
-                // Build full 6-element affine: T(center) * M * T(-center)
-                let this_affine = [a, b, c, d, cx * (1.0 - a) - cy * c, cy * (1.0 - d) - cx * b];
+                // Build full 6-element affine: T(center) * [a,b,c,d,tx,ty] * T(-center)
+                // = [a, b, c, d, cx*(1-a) - cy*c + tx, cy*(1-d) - cx*b + ty]
+                let this_affine = [
+                    a,
+                    b,
+                    c,
+                    d,
+                    cx * (1.0 - a) - cy * c + tx,
+                    cy * (1.0 - d) - cx * b + ty,
+                ];
                 match inherited_css_affine {
                     Some(parent) => {
                         let [pa, pb, pc, pd, ptx, pty] = parent;
@@ -3756,14 +3766,31 @@ impl RenderContext {
             }
             self.render_images_ref(target, &fg_images);
 
-            // Render z>0 primitives as overlays for z-index support
-            // The main batch rendered all primitives in tree order; z>0 elements
-            // need a second pass to appear on top of z=0 elements.
-            // Exclude effect/blend layer primitives (already composited correctly).
+            // Interleaved z-layer rendering for proper text z-ordering in glass path
             let max_z = batch.max_z_layer();
-            if max_z > 0 {
+            let max_text_z = glyphs_by_layer.keys().cloned().max().unwrap_or(0);
+            let decorations_by_layer = generate_text_decoration_primitives_by_layer(&texts);
+            let max_decoration_z = decorations_by_layer.keys().cloned().max().unwrap_or(0);
+            let max_glass_layer = max_z.max(max_text_z).max(max_decoration_z);
+
+            // Render z=0 text first (before any z>0 primitives)
+            {
+                let mut scratch = std::mem::take(&mut self.scratch_glyphs);
+                scratch.clear();
+                if let Some(glyphs) = glyphs_by_layer.get(&0) {
+                    scratch.extend_from_slice(glyphs);
+                }
+                if !scratch.is_empty() {
+                    self.render_text(target, &scratch);
+                }
+                self.scratch_glyphs = scratch;
+            }
+            self.render_text_decorations_for_layer(target, &decorations_by_layer, 0);
+
+            if max_glass_layer > 0 {
                 let effect_indices = batch.effect_layer_indices();
-                for z in 1..=max_z {
+                for z in 1..=max_glass_layer {
+                    // Render primitives for this layer
                     let layer_primitives = if effect_indices.is_empty() {
                         batch.primitives_for_layer(z)
                     } else {
@@ -3773,27 +3800,20 @@ impl RenderContext {
                         self.renderer
                             .render_primitives_overlay(target, &layer_primitives);
                     }
-                }
-            }
 
-            // Collect all glyphs for glass path using scratch buffer to avoid allocation
-            // (TODO: implement interleaved glass rendering)
-            // Take ownership temporarily to avoid borrow conflict with self.render_text
-            let mut scratch = std::mem::take(&mut self.scratch_glyphs);
-            scratch.clear();
-            for glyphs in glyphs_by_layer.values() {
-                scratch.extend_from_slice(glyphs);
-            }
-            if !scratch.is_empty() {
-                self.render_text(target, &scratch);
-            }
-            self.scratch_glyphs = scratch; // Restore for next frame
-
-            // Render text decorations for glass path (all layers)
-            let decorations_by_layer = generate_text_decoration_primitives_by_layer(&texts);
-            for primitives in decorations_by_layer.values() {
-                if !primitives.is_empty() {
-                    self.renderer.render_primitives_overlay(target, primitives);
+                    // Render text for this layer (interleaved for proper z-order)
+                    {
+                        let mut scratch = std::mem::take(&mut self.scratch_glyphs);
+                        scratch.clear();
+                        if let Some(glyphs) = glyphs_by_layer.get(&z) {
+                            scratch.extend_from_slice(glyphs);
+                        }
+                        if !scratch.is_empty() {
+                            self.render_text(target, &scratch);
+                        }
+                        self.scratch_glyphs = scratch;
+                    }
+                    self.render_text_decorations_for_layer(target, &decorations_by_layer, z);
                 }
             }
 
@@ -3843,7 +3863,15 @@ impl RenderContext {
                     self.render_images_ref(target, z0_images);
                 }
 
-                // Render subsequent layers interleaved (primitives and images)
+                // Render z=0 text (must render before z=1 primitives for proper z-ordering)
+                if let Some(glyphs) = glyphs_by_layer.get(&0) {
+                    if !glyphs.is_empty() {
+                        self.render_text(target, glyphs);
+                    }
+                }
+                self.render_text_decorations_for_layer(target, &decorations_by_layer, 0);
+
+                // Render subsequent layers interleaved (primitives, images, text per layer)
                 for z in 1..=max_layer {
                     // Render primitives for this layer
                     let layer_primitives = batch.primitives_for_layer(z);
@@ -3856,6 +3884,14 @@ impl RenderContext {
                     if let Some(layer_images) = images_by_layer.get(&z) {
                         self.render_images_ref(target, layer_images);
                     }
+
+                    // Render text for this layer (interleaved with primitives for proper z-order)
+                    if let Some(glyphs) = glyphs_by_layer.get(&z) {
+                        if !glyphs.is_empty() {
+                            self.render_text(target, glyphs);
+                        }
+                    }
+                    self.render_text_decorations_for_layer(target, &decorations_by_layer, z);
                 }
 
                 // Render SVGs as rasterized images for high-quality anti-aliasing
@@ -3867,16 +3903,6 @@ impl RenderContext {
                 if !batch.foreground_primitives.is_empty() {
                     self.renderer
                         .render_primitives_overlay(target, &batch.foreground_primitives);
-                }
-
-                // Render text on top (all z-layers)
-                for z in 0..=max_layer {
-                    if let Some(glyphs) = glyphs_by_layer.get(&z) {
-                        if !glyphs.is_empty() {
-                            self.render_text(target, glyphs);
-                        }
-                    }
-                    self.render_text_decorations_for_layer(target, &decorations_by_layer, z);
                 }
             } else {
                 // Fast path: render full batch (handles layer effects like backdrop-filter)
@@ -3902,15 +3928,19 @@ impl RenderContext {
                     self.render_rasterized_svgs(target, &svgs, scale_factor);
                 }
 
-                // If we have z-layers (e.g. z-index elements) but also layer effects,
-                // render z>0 primitives as overlays on top of the main batch.
-                // The main batch rendered ALL primitives in tree order (including z>0),
-                // but z>0 elements need to appear on top of z=0 elements.
-                // IMPORTANT: exclude primitives that belong to effect/blend layers,
-                // as those were already composited correctly by render_with_layer_effects.
+                // Interleaved z-layer rendering for proper text z-ordering
+                // Render z=0 text before any z>0 primitive overlays
+                if let Some(glyphs) = glyphs_by_layer.get(&0) {
+                    if !glyphs.is_empty() {
+                        self.render_text(target, glyphs);
+                    }
+                }
+                self.render_text_decorations_for_layer(target, &decorations_by_layer, 0);
+
                 if max_layer > 0 {
                     let effect_indices = batch.effect_layer_indices();
                     for z in 1..=max_layer {
+                        // Render primitives for this z-layer
                         let layer_primitives = if effect_indices.is_empty() {
                             batch.primitives_for_layer(z)
                         } else {
@@ -3920,19 +3950,15 @@ impl RenderContext {
                             self.renderer
                                 .render_primitives_overlay(target, &layer_primitives);
                         }
+
+                        // Render text for this z-layer (interleaved for proper z-order)
+                        if let Some(glyphs) = glyphs_by_layer.get(&z) {
+                            if !glyphs.is_empty() {
+                                self.render_text(target, glyphs);
+                            }
+                        }
+                        self.render_text_decorations_for_layer(target, &decorations_by_layer, z);
                     }
-                }
-
-                // Collect all glyphs for flat rendering
-                let all_glyphs: Vec<_> = glyphs_by_layer.values().flatten().cloned().collect();
-                if !all_glyphs.is_empty() {
-                    self.render_text(target, &all_glyphs);
-                }
-
-                // Render text decorations for all z-layers
-                let max_decoration_z = decorations_by_layer.keys().cloned().max().unwrap_or(0);
-                for z in 0..=max_decoration_z {
-                    self.render_text_decorations_for_layer(target, &decorations_by_layer, z);
                 }
             }
         }

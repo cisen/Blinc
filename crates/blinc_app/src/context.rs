@@ -254,6 +254,8 @@ struct SvgElement {
 struct FlowElement {
     /// Name referencing a @flow DAG in the stylesheet
     flow_name: String,
+    /// Direct FlowGraph (from `flow!` macro), bypasses stylesheet lookup
+    flow_graph: Option<std::sync::Arc<blinc_core::FlowGraph>>,
     /// Bounds in physical pixels (DPI-scaled)
     x: f32,
     y: f32,
@@ -3199,6 +3201,7 @@ impl RenderContext {
             if let Some(ref flow_name) = render_node.props.flow {
                 flows.push(FlowElement {
                     flow_name: flow_name.clone(),
+                    flow_graph: render_node.props.flow_graph.clone(),
                     x: abs_x * scale,
                     y: abs_y * scale,
                     width: bounds.width * scale,
@@ -3954,43 +3957,48 @@ impl RenderContext {
         // Render @flow shader elements on top of their SDF base
         self.has_active_flows = !flow_elements.is_empty();
         if !flow_elements.is_empty() {
-            if let Some(stylesheet) = tree.stylesheet() {
-                // Use monotonic time for smooth animation
-                static START_TIME: std::sync::OnceLock<std::time::Instant> =
-                    std::sync::OnceLock::new();
-                let start = START_TIME.get_or_init(std::time::Instant::now);
-                let elapsed_secs = start.elapsed().as_secs_f32();
+            let stylesheet = tree.stylesheet();
 
-                for flow_el in &flow_elements {
-                    if let Some(graph) = stylesheet.get_flow(&flow_el.flow_name) {
-                        // Compile on first use (no-op if already cached)
-                        if let Err(e) = self.renderer.flow_pipeline_cache().compile(graph) {
-                            tracing::warn!("@flow '{}' compile error: {}", flow_el.flow_name, e);
-                            continue;
-                        }
+            // Use monotonic time for smooth animation
+            static START_TIME: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+            let start = START_TIME.get_or_init(std::time::Instant::now);
+            let elapsed_secs = start.elapsed().as_secs_f32();
 
-                        let uniforms = blinc_gpu::FlowUniformData {
-                            viewport_size: [width as f32, height as f32],
-                            time: elapsed_secs,
-                            frame_index: 0.0, // TODO: track frame counter
-                            element_bounds: [flow_el.x, flow_el.y, flow_el.width, flow_el.height],
-                            pointer: [
-                                (self.cursor_pos[0] - flow_el.x) / flow_el.width.max(1.0),
-                                (self.cursor_pos[1] - flow_el.y) / flow_el.height.max(1.0),
-                            ],
-                            corner_radius: flow_el.corner_radius,
-                            _padding: 0.0,
-                        };
+            for flow_el in &flow_elements {
+                // Resolve FlowGraph: direct graph first, then stylesheet lookup
+                let graph = flow_el
+                    .flow_graph
+                    .as_deref()
+                    .or_else(|| stylesheet.and_then(|s| s.get_flow(&flow_el.flow_name)));
 
-                        let viewport = [flow_el.x, flow_el.y, flow_el.width, flow_el.height];
-                        if !self.renderer.render_flow(
-                            target,
-                            &flow_el.flow_name,
-                            &uniforms,
-                            Some(viewport),
-                        ) {
-                            tracing::warn!("@flow '{}' render failed", flow_el.flow_name);
-                        }
+                if let Some(graph) = graph {
+                    // Compile on first use (no-op if already cached)
+                    if let Err(e) = self.renderer.flow_pipeline_cache().compile(graph) {
+                        tracing::warn!("@flow '{}' compile error: {}", flow_el.flow_name, e);
+                        continue;
+                    }
+
+                    let uniforms = blinc_gpu::FlowUniformData {
+                        viewport_size: [width as f32, height as f32],
+                        time: elapsed_secs,
+                        frame_index: 0.0, // TODO: track frame counter
+                        element_bounds: [flow_el.x, flow_el.y, flow_el.width, flow_el.height],
+                        pointer: [
+                            (self.cursor_pos[0] - flow_el.x) / flow_el.width.max(1.0),
+                            (self.cursor_pos[1] - flow_el.y) / flow_el.height.max(1.0),
+                        ],
+                        corner_radius: flow_el.corner_radius,
+                        _padding: 0.0,
+                    };
+
+                    let viewport = [flow_el.x, flow_el.y, flow_el.width, flow_el.height];
+                    if !self.renderer.render_flow(
+                        target,
+                        &flow_el.flow_name,
+                        &uniforms,
+                        Some(viewport),
+                    ) {
+                        tracing::warn!("@flow '{}' render failed", flow_el.flow_name);
                     }
                 }
             }

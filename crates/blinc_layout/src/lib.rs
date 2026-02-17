@@ -93,7 +93,7 @@ pub use key::{reset_call_counters, InstanceKey};
 
 // Core types
 pub use element::{
-    BorderBuilder, BorderSide, BorderSides, CursorStyle, DynRenderProps, ElementBounds,
+    BorderBuilder, BorderSide, BorderSides, CursorStyle, DynRenderProps, ElementBounds, FlowRef,
     MotionAnimation, MotionKeyframe, RenderLayer, RenderProps, ResolvedRenderProps,
 };
 

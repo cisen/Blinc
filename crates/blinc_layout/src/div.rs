@@ -405,6 +405,10 @@ pub struct Div {
     pub(crate) blend_3d: Option<f32>,
     /// CSS clip-path shape function
     pub(crate) clip_path: Option<ClipPath>,
+    /// @flow shader name (references a FlowGraph in the stylesheet)
+    pub(crate) flow_name: Option<String>,
+    /// Direct @flow graph (from `flow!` macro), bypasses stylesheet lookup
+    pub(crate) flow_graph: Option<std::sync::Arc<blinc_core::FlowGraph>>,
     /// Fixed positioning (stays in place when ancestors scroll)
     pub(crate) is_fixed: bool,
     /// Sticky positioning (sticks when scrolled past threshold)
@@ -474,6 +478,8 @@ impl Div {
             op_3d: None,
             blend_3d: None,
             clip_path: None,
+            flow_name: None,
+            flow_graph: None,
             outline_width: 0.0,
             outline_color: None,
             outline_offset: 0.0,
@@ -526,6 +532,8 @@ impl Div {
             op_3d: None,
             blend_3d: None,
             clip_path: None,
+            flow_name: None,
+            flow_graph: None,
             outline_width: 0.0,
             outline_color: None,
             outline_offset: 0.0,
@@ -1165,6 +1173,9 @@ impl Div {
         if let Some(ref cp) = style.clip_path {
             self.clip_path = Some(cp.clone());
         }
+        if let Some(ref f) = style.flow {
+            self.flow_name = Some(f.clone());
+        }
     }
 
     /// Merge properties from another Div into this one
@@ -1277,6 +1288,10 @@ impl Div {
         }
         if other.clip_path.is_some() {
             self.clip_path = other.clip_path;
+        }
+        if other.flow_name.is_some() {
+            self.flow_name = other.flow_name;
+            self.flow_graph = other.flow_graph;
         }
 
         // Note: event_handlers are NOT merged - they're set on the base element
@@ -2819,6 +2834,31 @@ impl Div {
         self.opacity(1.0)
     }
 
+    /// Set a @flow shader on this element.
+    ///
+    /// Accepts either a `FlowGraph` (from the `flow!` macro) or a `&str` name
+    /// referencing a flow defined in a CSS stylesheet.
+    ///
+    /// ```rust,ignore
+    /// // Direct flow graph
+    /// div().flow(flow!(ripple, fragment, { ... }))
+    ///
+    /// // Name reference to CSS-defined flow
+    /// div().flow("ripple")
+    /// ```
+    pub fn flow(mut self, f: impl Into<crate::element::FlowRef>) -> Self {
+        match f.into() {
+            crate::element::FlowRef::Name(name) => {
+                self.flow_name = Some(name);
+            }
+            crate::element::FlowRef::Graph(g) => {
+                self.flow_name = Some(g.name.clone());
+                self.flow_graph = Some(g);
+            }
+        }
+        self
+    }
+
     /// Semi-transparent (opacity = 0.5)
     pub fn translucent(self) -> Self {
         self.opacity(0.5)
@@ -3824,6 +3864,8 @@ impl ElementBuilder for Div {
             op_3d: self.op_3d,
             blend_3d: self.blend_3d,
             clip_path: self.clip_path.clone(),
+            flow: self.flow_name.clone(),
+            flow_graph: self.flow_graph.clone(),
             outline_color: self.outline_color,
             outline_width: self.outline_width,
             outline_offset: self.outline_offset,

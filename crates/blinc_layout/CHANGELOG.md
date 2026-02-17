@@ -6,6 +6,19 @@ All notable changes to `blinc_layout` will be documented in this file.
 
 ### Added
 
+#### Flow Shader Macro & Builders
+
+- `flow!` macro for defining `@flow` shaders using Rust identifiers and primitives (no raw strings)
+- `parse_flow_string()` public API for parsing `@flow` block strings into `FlowGraph`
+- `FlowRef` enum (`Name`/`Graph`) with `From` impls for `&str`, `String`, and `FlowGraph`
+- `.flow()` builder on `Div` accepting both `FlowRef::Name` (CSS reference) and `FlowRef::Graph` (direct)
+- `.flow()` builder on `ElementStyle` for stylesheet-based flow references
+- `flow:` property in `css!` and `style!` macros
+- `flow_graph: Option<Arc<FlowGraph>>` field on `RenderProps` for direct graph attachment
+- Flow parser: swizzle tolerance for `stringify!()` spaces (`uv . x` → `uv.x`)
+- Flow parser: hex color tolerance for space after `#` (`# ff0000` → `#ff0000`)
+- Flow parser: newline normalization in `parse_flow_string()` for `stringify!()` multi-line output
+
 #### SVG Animation Properties
 
 - `fill`, `stroke`, `stroke-width` as animatable CSS properties for SVG elements

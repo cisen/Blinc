@@ -4,11 +4,15 @@
 //! Uses `step`, `chain`, and raw `node` syntax together to create a
 //! layered noise visualization with pointer-reactive color ramping.
 //!
+//! The fourth card ("Plasma") uses the `flow!` macro to define a flow
+//! shader entirely in Rust — no CSS strings needed.
+//!
 //! Run with: cargo run -p blinc_app --example semantic_flow_demo --features windowed
 
 use blinc_app::prelude::*;
 use blinc_app::windowed::{WindowedApp, WindowedContext};
 use blinc_core::{Color, Shadow};
+use blinc_layout::flow;
 
 const STYLESHEET: &str = r#"
     /* ====== Semantic flow: steps + chains + raw nodes ====== */
@@ -107,7 +111,7 @@ fn main() -> Result<()> {
 
     let config = WindowConfig {
         title: "Semantic Flow Demo".to_string(),
-        width: 1100,
+        width: 1400,
         height: 600,
         resizable: true,
         ..Default::default()
@@ -131,6 +135,22 @@ fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
     let label_color = Color::rgba(0.85, 0.85, 0.90, 1.0);
     let sub_color = Color::rgba(0.55, 0.55, 0.60, 1.0);
     let default_bg = Color::WHITE;
+
+    // Define a flow shader using the flow! macro — pure Rust, no CSS strings
+    let plasma = flow!(plasma, fragment, {
+        input uv: builtin(uv);
+        input time: builtin(time);
+        node cx = uv.x - 0.5;
+        node cy = uv.y - 0.5;
+        node d = length(vec2(cx, cy));
+        node w1 = sin(d * 25.0 - time * 3.0) * 0.5 + 0.5;
+        node w2 = sin(uv.x * 15.0 + uv.y * 10.0 + time * 2.0) * 0.5 + 0.5;
+        node blend = w1 * 0.6 + w2 * 0.4;
+        node r = blend * 0.8 + 0.1;
+        node g = sin(blend * 3.14159) * 0.6;
+        node b = 1.0 - blend * 0.7;
+        output color = vec4(r, g, b, 1.0);
+    });
 
     div()
         .w(ctx.width)
@@ -173,6 +193,15 @@ fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
                     Color::rgba(0.85, 0.55, 0.15, 1.0),
                     label_color,
                     sub_color,
+                ))
+                .child(flow_macro_card(
+                    plasma,
+                    "Plasma",
+                    "flow! macro",
+                    card_w,
+                    card_h,
+                    label_color,
+                    sub_color,
                 )),
         )
 }
@@ -197,6 +226,39 @@ fn card(
             20.0,
             Color::rgba(0.0, 0.0, 0.0, 0.4),
         )))
+        .child(
+            text(title)
+                .size(20.0)
+                .weight(FontWeight::Bold)
+                .color(label_color),
+        )
+        .child(text(subtitle).size(14.0).color(sub_color))
+}
+
+/// Card that uses a flow! macro-defined shader — no CSS string, no stylesheet registration.
+/// The FlowGraph is passed directly to the div via `.flow(graph)`.
+fn flow_macro_card(
+    graph: blinc_core::FlowGraph,
+    title: &str,
+    subtitle: &str,
+    w: f32,
+    h: f32,
+    label_color: Color,
+    sub_color: Color,
+) -> impl ElementBuilder {
+    div()
+        .flex_col()
+        .items_center()
+        .gap(12.0)
+        .child(
+            div()
+                .w(w)
+                .h(h)
+                .bg(Color::BLACK)
+                .rounded(24.0)
+                .flow(graph)
+                .shadow(Shadow::new(0.0, 4.0, 20.0, Color::rgba(0.0, 0.0, 0.0, 0.4))),
+        )
         .child(
             text(title)
                 .size(20.0)

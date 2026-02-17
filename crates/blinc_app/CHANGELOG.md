@@ -6,6 +6,12 @@ All notable changes to `blinc_app` will be documented in this file.
 
 ### Added
 
+#### Flow Shader Direct Graph Support
+
+- `FlowElement` carries optional `Arc<FlowGraph>` for direct graph rendering (bypasses stylesheet lookup)
+- Render loop prefers direct graph over stylesheet-defined flow when both are available
+- `semantic_flow_demo` example: added `flow!` macro plasma card demonstrating direct `div().flow(graph)` API
+
 #### SVG CSS Animations
 
 - SVG fill, stroke, stroke-width animatable via `@keyframes` and CSS transitions

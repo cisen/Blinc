@@ -62,6 +62,7 @@
 - [Overlay System](./advanced/overlays.md)
 - [Custom State Machines](./advanced/state-machines.md)
 - [Performance Tips](./advanced/performance.md)
+- [Flow Shaders](./advanced/flow-shaders.md)
 
 # Architecture
 

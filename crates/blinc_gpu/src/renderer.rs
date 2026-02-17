@@ -3235,12 +3235,10 @@ impl GpuRenderer {
         // SAFETY: scene_copy_texture is owned by self and lives for the duration of this call
         let scene_view = scene_view_owned.map(|ptr| unsafe { &*ptr });
 
-        if !self.flow_pipeline_cache.prepare_render(
-            &self.queue,
-            flow_name,
-            uniforms,
-            scene_view,
-        ) {
+        if !self
+            .flow_pipeline_cache
+            .prepare_render(&self.queue, flow_name, uniforms, scene_view)
+        {
             return false;
         }
 

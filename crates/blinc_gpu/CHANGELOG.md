@@ -4,6 +4,12 @@ All notable changes to `blinc_gpu` will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+#### Flow Codegen
+
+- Underscore variants for all `StepType` identifiers (e.g. `pattern_noise` alongside `pattern-noise`) for `flow!` macro compatibility
+
 ### Changed
 
 - `GpuImageInstance` params layout: `params[2..3]` changed from sin_rot/cos_rot to border_width/packed_border_color; rotation now uses the `transform` field

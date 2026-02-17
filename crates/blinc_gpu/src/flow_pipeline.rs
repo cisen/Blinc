@@ -604,11 +604,7 @@ impl FlowPipelineCache {
     ///
     /// The caller must have already called `prepare_render()`.
     /// Draws a fullscreen quad (6 vertices from the flow's vertex shader).
-    pub fn render_fragment<'a>(
-        &'a self,
-        pass: &mut wgpu::RenderPass<'a>,
-        flow_name: &str,
-    ) -> bool {
+    pub fn render_fragment<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, flow_name: &str) -> bool {
         let cached = match self.pipelines.get(flow_name) {
             Some(c) => c,
             None => return false,

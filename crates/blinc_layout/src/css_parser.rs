@@ -2777,6 +2777,35 @@ fn flow_block<'a>(
     Ok((input, graph))
 }
 
+/// Parse a standalone `@flow name { ... }` string into a validated FlowGraph.
+///
+/// Used by the `flow!` macro to convert stringified Rust tokens into a FlowGraph at runtime.
+pub fn parse_flow_string(src: &str) -> Result<FlowGraph, String> {
+    // Normalize: stringify!() may insert literal \n between tokens when
+    // the macro body spans multiple source lines. Replace them with spaces
+    // so the parser sees a single continuous line of declarations.
+    let normalized = src.replace('\n', " ");
+    let mut errors = Vec::new();
+    match flow_block(&normalized, &mut errors, None) {
+        Ok((_, graph)) => {
+            let fatal: Vec<_> = errors
+                .iter()
+                .filter(|e| e.severity == Severity::Error)
+                .map(|e| e.message.clone())
+                .collect();
+            if fatal.is_empty() {
+                Ok(graph)
+            } else {
+                Err(fatal.join("; "))
+            }
+        }
+        Err(_) => Err(format!(
+            "failed to parse @flow block: {:?}",
+            src.chars().take(80).collect::<String>()
+        )),
+    }
+}
+
 /// Parse a single declaration inside a @flow block.
 /// Returns the remaining input, or None if parsing failed.
 fn parse_flow_declaration<'a>(
@@ -3719,16 +3748,18 @@ fn parse_flow_primary(input: &str) -> Result<(FlowExpr, &str), String> {
 }
 
 /// Check for and consume a swizzle suffix like `.x`, `.xy`, `.rgb`
+/// Tolerates whitespace around the dot (e.g. `uv . x` from stringify!())
 fn try_parse_flow_swizzle<'a>(expr: FlowExpr, rest: &'a str) -> (FlowExpr, &'a str) {
-    if !rest.starts_with('.') {
-        return (expr, rest);
+    let trimmed = rest.trim_start();
+    if !trimmed.starts_with('.') {
+        return (expr, trimmed);
     }
-    let after_dot = &rest[1..];
+    let after_dot = trimmed[1..].trim_start();
     let swizzle_end = after_dot
         .find(|c: char| !matches!(c, 'x' | 'y' | 'z' | 'w' | 'r' | 'g' | 'b' | 'a'))
         .unwrap_or(after_dot.len());
     if swizzle_end == 0 || swizzle_end > 4 {
-        return (expr, rest);
+        return (expr, trimmed);
     }
     // Make sure we're not accidentally consuming an identifier that starts with x/y/z/w
     // e.g. "uv.xyz_thing" — 'xyz' is valid swizzle but '_thing' shouldn't be left
@@ -3736,7 +3767,7 @@ fn try_parse_flow_swizzle<'a>(expr: FlowExpr, rest: &'a str) -> (FlowExpr, &'a s
     if swizzle_end < after_dot.len() {
         let next = after_dot.as_bytes()[swizzle_end];
         if next.is_ascii_alphanumeric() || next == b'_' {
-            return (expr, rest);
+            return (expr, trimmed);
         }
     }
     let components = &after_dot[..swizzle_end];
@@ -3987,7 +4018,7 @@ fn parse_flow_color(input: &str) -> Result<(FlowExpr, &str), String> {
         return Err("expected '#' for color literal".to_string());
     }
 
-    let hex_start = &trimmed[1..];
+    let hex_start = trimmed[1..].trim_start();
     let hex_end = hex_start
         .find(|c: char| !c.is_ascii_hexdigit())
         .unwrap_or(hex_start.len());

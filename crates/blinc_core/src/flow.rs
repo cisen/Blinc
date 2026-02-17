@@ -336,6 +336,9 @@ pub enum FlowFunc {
     Perlin,
     Simplex,
     Worley,
+    /// Worley noise with analytic gradient — returns vec3(distance, grad_x, grad_y)
+    /// in a single 3×3 grid pass. 5× faster than finite-difference gradient.
+    WorleyGrad,
     /// Fractal Brownian Motion (layered noise)
     Fbm,
     /// Extended FBM with configurable persistence (roughness)
@@ -408,6 +411,7 @@ impl FlowFunc {
             "perlin" => Some(Self::Perlin),
             "simplex" => Some(Self::Simplex),
             "worley" => Some(Self::Worley),
+            "worley_grad" | "worley-grad" => Some(Self::WorleyGrad),
             "fbm" => Some(Self::Fbm),
             "fbm_ex" | "fbm-ex" => Some(Self::FbmEx),
             "checkerboard" => Some(Self::Checkerboard),
@@ -475,6 +479,9 @@ impl FlowFunc {
             | Self::Simplex
             | Self::Worley
             | Self::Fbm => (2, 4),
+
+            // WorleyGrad: single arg (already-scaled position) → vec3
+            Self::WorleyGrad => (1, 1),
 
             // FbmEx: (point, octaves, persistence) — 3 args
             Self::FbmEx => (3, 3),
@@ -544,6 +551,9 @@ impl FlowFunc {
             | Self::Fbm
             | Self::FbmEx
             | Self::Checkerboard => Some(FlowType::Float),
+
+            // WorleyGrad → Vec3 (distance, grad_x, grad_y)
+            Self::WorleyGrad => Some(FlowType::Vec3),
 
             // Sobel → Vec3 (normal)
             Self::Sobel => Some(FlowType::Vec3),
@@ -1940,10 +1950,10 @@ fn expand_pattern_worley(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
     let mask = param_expr(&step.params, "mask", FlowExpr::Float(1.0));
 
     let sc_name = format!("_s_{}_sc", step.name);
+    let wg_name = format!("_s_{}_wg", step.name);
     let eval_name = format!("_s_{}_eval", step.name);
     let gx_name = format!("_s_{}_gx", step.name);
     let gy_name = format!("_s_{}_gy", step.name);
-    let eps = 0.002_f32;
 
     let mut nodes = Vec::new();
 
@@ -1954,13 +1964,24 @@ fn expand_pattern_worley(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
         inferred_type: None,
     });
 
-    // _s_{name}_eval = worley(_s_{name}_sc, scale)
+    // _s_{name}_wg = worley_grad(_s_{name}_sc * scale) → vec3(dist, grad_x, grad_y)
+    // Single pass: replaces 5 separate worley() calls (1 eval + 4 finite-difference).
+    nodes.push(FlowNode {
+        name: wg_name.clone(),
+        expr: FlowExpr::Call {
+            func: FlowFunc::WorleyGrad,
+            args: vec![FlowExpr::Mul(
+                Box::new(FlowExpr::Ref(sc_name)),
+                Box::new(scale),
+            )],
+        },
+        inferred_type: None,
+    });
+
+    // _s_{name}_eval = _s_{name}_wg.x  (raw Worley distance)
     nodes.push(FlowNode {
         name: eval_name.clone(),
-        expr: FlowExpr::Call {
-            func: FlowFunc::Worley,
-            args: vec![FlowExpr::Ref(sc_name.clone()), scale.clone()],
-        },
+        expr: FlowExpr::Swizzle(Box::new(FlowExpr::Ref(wg_name.clone())), "x".to_string()),
         inferred_type: None,
     });
 
@@ -1970,81 +1991,24 @@ fn expand_pattern_worley(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
         expr: FlowExpr::Mul(
             Box::new(FlowExpr::Call {
                 func: FlowFunc::Smoothstep,
-                args: vec![threshold, edge, FlowExpr::Ref(eval_name.clone())],
+                args: vec![threshold, edge, FlowExpr::Ref(eval_name)],
             }),
             Box::new(mask),
         ),
         inferred_type: None,
     });
 
-    // Gradient for refraction (fully normalized — unit direction in UV space):
-    // _s_{name}_gx = (worley(sc+eps, scale) - worley(sc-eps, scale)) / (2 * eps * scale)
-    // Dividing by scale cancels the chain rule factor, giving magnitude ~1.0 regardless of cell density.
-    // This lets effect-refract `strength` directly control the UV offset (e.g. 0.02 = 2% of element).
-    let norm = FlowExpr::Mul(
-        Box::new(FlowExpr::Float(2.0 * eps)),
-        Box::new(scale.clone()),
-    );
-    let eps_x = FlowExpr::Vec2(
-        Box::new(FlowExpr::Float(eps)),
-        Box::new(FlowExpr::Float(0.0)),
-    );
+    // _s_{name}_gx = _s_{name}_wg.y  (analytic gradient x)
     nodes.push(FlowNode {
         name: gx_name,
-        expr: FlowExpr::Div(
-            Box::new(FlowExpr::Sub(
-                Box::new(FlowExpr::Call {
-                    func: FlowFunc::Worley,
-                    args: vec![
-                        FlowExpr::Add(
-                            Box::new(FlowExpr::Ref(sc_name.clone())),
-                            Box::new(eps_x.clone()),
-                        ),
-                        scale.clone(),
-                    ],
-                }),
-                Box::new(FlowExpr::Call {
-                    func: FlowFunc::Worley,
-                    args: vec![
-                        FlowExpr::Sub(Box::new(FlowExpr::Ref(sc_name.clone())), Box::new(eps_x)),
-                        scale.clone(),
-                    ],
-                }),
-            )),
-            Box::new(norm.clone()),
-        ),
+        expr: FlowExpr::Swizzle(Box::new(FlowExpr::Ref(wg_name.clone())), "y".to_string()),
         inferred_type: None,
     });
 
-    // _s_{name}_gy — same normalization
-    let eps_y = FlowExpr::Vec2(
-        Box::new(FlowExpr::Float(0.0)),
-        Box::new(FlowExpr::Float(eps)),
-    );
+    // _s_{name}_gy = _s_{name}_wg.z  (analytic gradient y)
     nodes.push(FlowNode {
         name: gy_name,
-        expr: FlowExpr::Div(
-            Box::new(FlowExpr::Sub(
-                Box::new(FlowExpr::Call {
-                    func: FlowFunc::Worley,
-                    args: vec![
-                        FlowExpr::Add(
-                            Box::new(FlowExpr::Ref(sc_name.clone())),
-                            Box::new(eps_y.clone()),
-                        ),
-                        scale.clone(),
-                    ],
-                }),
-                Box::new(FlowExpr::Call {
-                    func: FlowFunc::Worley,
-                    args: vec![
-                        FlowExpr::Sub(Box::new(FlowExpr::Ref(sc_name)), Box::new(eps_y)),
-                        scale,
-                    ],
-                }),
-            )),
-            Box::new(norm),
-        ),
+        expr: FlowExpr::Swizzle(Box::new(FlowExpr::Ref(wg_name)), "z".to_string()),
         inferred_type: None,
     });
 

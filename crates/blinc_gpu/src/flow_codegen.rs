@@ -242,6 +242,7 @@ impl<'a> CodegenContext<'a> {
             FlowFunc::Perlin
             | FlowFunc::Simplex
             | FlowFunc::Worley
+            | FlowFunc::WorleyGrad
             | FlowFunc::Fbm
             | FlowFunc::FbmEx
             | FlowFunc::Checkerboard => {
@@ -585,6 +586,37 @@ impl<'a> CodegenContext<'a> {
         let _ = writeln!(out, "        }}");
         let _ = writeln!(out, "    }}");
         let _ = writeln!(out, "    return min_dist;");
+        let _ = writeln!(out, "}}");
+        let _ = writeln!(out);
+
+        // Worley with analytic gradient — returns vec3(distance, grad_x, grad_y)
+        // Gradient is the direction away from the closest cell center (unit length).
+        // Single pass replaces 5 separate worley() calls for finite-difference gradients.
+        let _ = writeln!(out, "fn flow_worley_grad(p: vec2<f32>) -> vec3<f32> {{");
+        let _ = writeln!(out, "    let i = floor(p);");
+        let _ = writeln!(out, "    let f = fract(p);");
+        let _ = writeln!(out, "    var min_dist = 1.0;");
+        let _ = writeln!(out, "    var closest_delta = vec2<f32>(0.0);");
+        let _ = writeln!(out, "    for (var y = -1; y <= 1; y = y + 1) {{");
+        let _ = writeln!(out, "        for (var x = -1; x <= 1; x = x + 1) {{");
+        let _ = writeln!(out, "            let neighbor = vec2<f32>(f32(x), f32(y));");
+        let _ = writeln!(
+            out,
+            "            let point = flow_hash22(i + neighbor) * 0.5 + vec2<f32>(0.5);"
+        );
+        let _ = writeln!(out, "            let delta = neighbor + point - f;");
+        let _ = writeln!(out, "            let d = length(delta);");
+        let _ = writeln!(out, "            if (d < min_dist) {{");
+        let _ = writeln!(out, "                min_dist = d;");
+        let _ = writeln!(out, "                closest_delta = delta;");
+        let _ = writeln!(out, "            }}");
+        let _ = writeln!(out, "        }}");
+        let _ = writeln!(out, "    }}");
+        let _ = writeln!(
+            out,
+            "    let grad = -closest_delta / max(min_dist, 0.0001);"
+        );
+        let _ = writeln!(out, "    return vec3<f32>(min_dist, grad.x, grad.y);");
         let _ = writeln!(out, "}}");
         let _ = writeln!(out);
 
@@ -1127,6 +1159,7 @@ fn func_to_wgsl(func: FlowFunc, args: &[String]) -> Result<String, FlowError> {
                 format!("flow_worley({})", args[0])
             }
         }
+        FlowFunc::WorleyGrad => format!("flow_worley_grad({})", args[0]),
         FlowFunc::Fbm => {
             let octaves = if args.len() >= 2 {
                 args[1].clone()

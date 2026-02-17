@@ -3175,8 +3175,7 @@ impl GpuRenderer {
                         sample_count: 1,
                         dimension: wgpu::TextureDimension::D2,
                         format: self.texture_format,
-                        usage: wgpu::TextureUsages::COPY_DST
-                            | wgpu::TextureUsages::TEXTURE_BINDING,
+                        usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
                         view_formats: &[],
                     });
                     let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
@@ -3225,14 +3224,15 @@ impl GpuRenderer {
                 None
             };
 
-        let bind_group =
-            match self
-                .flow_pipeline_cache
-                .prepare_render(&self.queue, flow_name, uniforms, scene_view)
-            {
-                Some(bg) => bg,
-                None => return false,
-            };
+        let bind_group = match self.flow_pipeline_cache.prepare_render(
+            &self.queue,
+            flow_name,
+            uniforms,
+            scene_view,
+        ) {
+            Some(bg) => bg,
+            None => return false,
+        };
 
         let mut encoder = self
             .device

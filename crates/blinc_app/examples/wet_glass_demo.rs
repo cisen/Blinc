@@ -13,15 +13,15 @@ use blinc_core::Color;
 const STYLESHEET: &str = r#"
     /* ====== Wet glass with real refraction ======
 
-       Physical model:
-       - Condensation fog: thin semi-transparent haze over the whole surface
-       - Water drops: convex lenses that REFRACT the background (via sample_scene)
-       - Running streaks: vertical trails cleared by gravity
-       - Specular highlights: tiny bright points on curved water surfaces
+       Semantic step version — uses pattern-worley, effect-refract,
+       effect-frost, effect-specular, and effect-fog steps to compose
+       a wet-window effect with real light refraction through water drops.
 
-       Key: drops are opaque in the shader (alpha=1) so they REPLACE the
-       un-refracted background with a UV-shifted version from sample_scene().
-       Fog areas use low alpha → background shows through with haze.
+       Physical model:
+       - Condensation fog: semi-transparent haze (effect-fog)
+       - Water drops: convex lenses that refract background (effect-refract + sample_scene)
+       - Running streaks: vertical trails cleared by gravity
+       - Specular highlights: bright points on curved water surfaces (effect-specular)
     */
 
     @flow wetglass {
@@ -30,119 +30,66 @@ const STYLESHEET: &str = r#"
         input time: builtin(time);
         input resolution: builtin(resolution);
 
-        node aspect = resolution.x / max(resolution.y, 1.0);
-        node uv_a = vec2(uv.x * aspect, uv.y);
-
-        /* ── Moisture field (controls where drops appear) ── */
-        step mist: pattern-noise {
-            scale: 3.0;
-            detail: 5;
-            animation: time * 0.008;
-        }
+        /* ── Moisture field (evolves slowly) ── */
+        step mist: pattern-noise { scale: 3.0; detail: 5; animation: time * 0.02; }
         node grav = smoothstep(0.0, 1.0, uv.y);
-        node moist = mist * (0.3 + grav * 0.7);
+        node moist = mist * (0.35 + grav * 0.65);
 
-        /* ── Drop distance fields (denser, smaller drops) ── */
-        node w1 = worley(uv_a, 18.0);
-        node drop1 = smoothstep(0.055, 0.004, w1) * step(0.32, moist);
+        /* ── Animated wetness UVs — aspect-corrected gravity scroll ── */
+        step uv1: transform-wet { speed: 0.001; }
+        step uv2: transform-wet { speed: 0.0015; offset: vec2(0.38, 0.21); }
+        step uv3: transform-wet { speed: 0.002;  offset: vec2(0.17, 0.63); }
+        step uvs: transform-wet { speed: 0.025;  x_scale: 3.0; y_scale: 0.5; }
 
-        node uv2 = uv_a + vec2(0.38, 0.21);
-        node w2 = worley(uv2, 35.0);
-        node drop2 = smoothstep(0.035, 0.003, w2) * step(0.22, moist);
-
-        node uv3 = uv_a + vec2(0.17, 0.63);
-        node w3 = worley(uv3, 60.0);
-        node drop3 = smoothstep(0.022, 0.002, w3) * step(0.15, moist);
-
-        /* Running streaks — stretched Worley */
-        node uv_s = vec2(uv.x * aspect * 12.0, uv.y * 2.0);
-        node ws = worley(uv_s, 1.0);
-        node streak = smoothstep(0.05, 0.002, ws) * step(0.30, moist) * grav;
-
-        node drops = clamp(drop1 + drop2 * 0.8 + drop3 * 0.5
-                           + streak * 0.7, 0.0, 1.0);
-
-        /* ── Refraction: gradient × distance = convex lens ── */
-        /* For a dome-shaped drop, the UV offset should grow
-           from center (0) to edge (max).  gradient ≈ unit dir,
-           distance = 0 at center → offset ∝ distance. */
-        node eps = 0.002;
-
-        /* Large drops gradient */
-        node w1_px = worley(uv_a + vec2(eps, 0.0), 18.0);
-        node w1_nx = worley(uv_a - vec2(eps, 0.0), 18.0);
-        node w1_py = worley(uv_a + vec2(0.0, eps), 18.0);
-        node w1_ny = worley(uv_a - vec2(0.0, eps), 18.0);
-        node nx1 = w1_px - w1_nx;
-        node ny1 = w1_py - w1_ny;
-
-        /* Medium drops gradient */
-        node w2_px = worley(uv2 + vec2(eps, 0.0), 35.0);
-        node w2_nx = worley(uv2 - vec2(eps, 0.0), 35.0);
-        node w2_py = worley(uv2 + vec2(0.0, eps), 35.0);
-        node w2_ny = worley(uv2 - vec2(0.0, eps), 35.0);
-        node nx2 = w2_px - w2_nx;
-        node ny2 = w2_py - w2_ny;
-
-        /* Streak gradient */
-        node ws_px = worley(uv_s + vec2(eps, 0.0), 1.0);
-        node ws_nx = worley(uv_s - vec2(eps, 0.0), 1.0);
-        node ws_py = worley(uv_s + vec2(0.0, eps), 1.0);
-        node ws_ny = worley(uv_s - vec2(0.0, eps), 1.0);
-        node nxs = ws_px - ws_nx;
-        node nys = ws_py - ws_ny;
-
-        /* Lens offset = gradient_dir × distance × strength × mask */
-        node lens = 0.15;
-        node ox = nx1 * w1 * lens * drop1
-                + nx2 * w2 * lens * 0.5 * drop2
-                + nxs * ws * lens * 0.3 * streak;
-        node oy = ny1 * w1 * lens * drop1
-                + ny2 * w2 * lens * 0.5 * drop2
-                + nys * ws * lens * 0.3 * streak;
-
-        /* Frost distortion in fog areas (noise-based UV jitter) */
-        step frost_x: pattern-noise {
-            scale: 30.0;
-            detail: 2;
-            animation: 0.0;
+        /* ── Drop layers at different scales ── */
+        step drops1: pattern-worley {
+            uv: uv1; scale: 7.0; threshold: 0.22; edge: 0.05;
+            mask: step(0.30, moist);
         }
-        step frost_y: pattern-noise {
-            scale: 30.0;
-            detail: 2;
-            animation: 100.0;
+        step drops2: pattern-worley {
+            uv: uv2; scale: 12.0; threshold: 0.18; edge: 0.04;
+            mask: step(0.20, moist);
         }
-        node frost = 0.003 * (1.0 - drops);
-        node fx = (frost_x - 0.5) * frost;
-        node fy = (frost_y - 0.5) * frost;
+        step drops3: pattern-worley {
+            uv: uv3; scale: 20.0; threshold: 0.13; edge: 0.03;
+            mask: step(0.12, moist);
+        }
+        step streaks: pattern-worley {
+            uv: uvs; scale: 2.0; threshold: 0.12; edge: 0.03;
+            mask: step(0.28, moist) * grav;
+        }
 
-        /* ── Sample scene with combined offset ──────────── */
-        node scene = sample_scene(uv + vec2(ox + fx, oy + fy));
+        /* Combine and sharpen to binary mask */
+        node drops_raw = clamp(drops1 + drops2 * 0.6 + drops3 * 0.3
+                               + streaks * 0.5, 0.0, 1.0);
+        node drops = smoothstep(0.05, 0.4, drops_raw);
 
-        /* ── Specular highlight (one scale, drop-only) ──── */
-        node gs1 = vec2(uv.x * aspect * 20.0, uv.y * 20.0);
-        node cs1 = floor(gs1);
-        node fs1 = fract(gs1) - vec2(0.5, 0.5);
-        node h1a = fract(sin(dot(cs1, vec2(127.1, 311.7))) * 43758.5);
-        node h1b = fract(sin(dot(cs1, vec2(269.5, 183.3))) * 43758.5);
-        node h1c = fract(sin(dot(cs1, vec2(97.3, 157.1))) * 43758.5);
-        node d1 = fs1 - vec2(h1a - 0.5, h1b - 0.5) * 0.4;
-        node spec = smoothstep(0.025, 0.0, length(d1))
-                    * step(0.5, h1c) * drops;
+        /* ── Refraction: noise-based UV distortion INSIDE drops ── */
+        step lens: effect-frost { strength: 0.025; mask: drops; scale: 12.0; }
 
-        /* ── Composite ──────────────────────────────────── */
-        /* Everywhere: sample_scene (refracted in drops, frosted in fog).
-           Fog areas: very thin white tint at low alpha.
-           Drop areas: opaque (alpha=1) refracted scene + spec. */
-        node fog_a = 0.06 + mist * 0.04;
-        node tint = (1.0 - drops) * 0.1;
+        /* ── Directional light: tight specular glints on drop edges ── */
+        step highlight: effect-light {
+            sources: drops1, drops2, drops3, streaks;
+            weights: 1.0, 0.6, 0.3, 0.5;
+            angle: 225.0;
+            shininess: 64.0;
+            intensity: 0.25;
+            mask: drops;
+        }
 
-        node out_r = scene.x * (1.0 - tint) + tint + spec * 0.5;
-        node out_g = scene.y * (1.0 - tint) + tint + spec * 0.5;
-        node out_b = scene.z * (1.0 - tint) + tint + spec * 0.5;
-        node out_a = mix(fog_a, 1.0, drops);
+        /* ── Scene: sample with refracted UVs where drops are ── */
+        node scene = sample_scene(uv + lens);
 
-        output color = vec4(out_r, out_g, out_b, out_a);
+        /* ── Composite ──
+           - Fog areas (no drops): light condensation haze
+           - Drop areas: clear refracted windows + subtle specular glint
+        */
+        node fog = (1.0 - drops) * (0.12 + mist * 0.05);
+        node out_r = scene.x * (1.0 - fog) + fog + highlight;
+        node out_g = scene.y * (1.0 - fog) + fog + highlight;
+        node out_b = scene.z * (1.0 - fog) + fog + highlight;
+
+        output color = vec4(out_r, out_g, out_b, 0.97);
     }
 
     #glass-layer {
@@ -197,10 +144,12 @@ fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
                 .rounded(16.0)
                 // Background image
                 .child(
-                    img("crates/blinc_app/examples/assets/stormy-plains-illuminated-stockcake.webp")
-                        .size(800.0, 550.0)
-                        .cover()
-                        .rounded(16.0),
+                    img(
+                        "crates/blinc_app/examples/assets/stormy-plains-illuminated-stockcake.webp",
+                    )
+                    .size(800.0, 550.0)
+                    .cover()
+                    .rounded(16.0),
                 )
                 // Glass overlay with rain drops flow shader
                 .child(
@@ -227,7 +176,7 @@ fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
                                 .color(Color::rgba(1.0, 1.0, 1.0, 0.85)),
                         )
                         .child(
-                            text("light refraction through water drops + condensation fog")
+                            text("transform-wet + pattern-worley + effect-frost + effect-light")
                                 .size(14.0)
                                 .color(Color::rgba(1.0, 1.0, 1.0, 0.55)),
                         ),

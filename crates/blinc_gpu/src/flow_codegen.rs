@@ -52,10 +52,7 @@ pub fn flow_needs_scene_texture(graph: &FlowGraph) -> bool {
                 expr_uses_scene(a) || expr_uses_scene(b) || expr_uses_scene(c)
             }
             FlowExpr::Vec4(a, b, c, d) => {
-                expr_uses_scene(a)
-                    || expr_uses_scene(b)
-                    || expr_uses_scene(c)
-                    || expr_uses_scene(d)
+                expr_uses_scene(a) || expr_uses_scene(b) || expr_uses_scene(c) || expr_uses_scene(d)
             }
             FlowExpr::Neg(a) | FlowExpr::Swizzle(a, _) => expr_uses_scene(a),
             _ => false,

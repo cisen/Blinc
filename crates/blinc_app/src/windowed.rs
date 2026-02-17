@@ -3110,7 +3110,10 @@ impl WindowedApp {
                             // Check if pointer query elements need continuous redraws
                             let pointer_query_active = !windowed_ctx.pointer_query.is_empty();
 
-                            if needs_animation_redraw || needs_cursor_redraw || needs_motion_redraw || scroll_animating || needs_overlay_redraw || theme_animating || css_needs_redraw || pointer_query_active {
+                            // @flow shaders using time/animation builtins need continuous redraws
+                            let flow_needs_redraw = blinc_app.has_active_flows();
+
+                            if needs_animation_redraw || needs_cursor_redraw || needs_motion_redraw || scroll_animating || needs_overlay_redraw || theme_animating || css_needs_redraw || pointer_query_active || flow_needs_redraw {
                                 // Request another frame to render updated animation values
                                 // For cursor blink, also re-request continuous redraw for next frame
                                 if needs_cursor_redraw {

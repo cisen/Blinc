@@ -84,6 +84,8 @@ pub struct RenderContext {
     scratch_images: Vec<ImageElement>,
     // Current cursor position in physical pixels (for @flow pointer input)
     cursor_pos: [f32; 2],
+    // Whether the last render contained @flow shader elements (triggers continuous redraw)
+    has_active_flows: bool,
 }
 
 struct CachedTexture {
@@ -305,12 +307,19 @@ impl RenderContext {
             scratch_svgs: Vec::with_capacity(32),     // Pre-allocate for SVG elements
             scratch_images: Vec::with_capacity(32),   // Pre-allocate for image elements
             cursor_pos: [0.0; 2],
+            has_active_flows: false,
         }
     }
 
     /// Update the current cursor position in physical pixels (for @flow pointer input)
     pub fn set_cursor_position(&mut self, x: f32, y: f32) {
         self.cursor_pos = [x, y];
+    }
+
+    /// Whether the last render frame contained @flow shader elements.
+    /// Used to trigger continuous redraws for animated flow shaders.
+    pub fn has_active_flows(&self) -> bool {
+        self.has_active_flows
     }
 
     /// Set the current render target texture for blend mode two-pass compositing.
@@ -3943,6 +3952,7 @@ impl RenderContext {
         }
 
         // Render @flow shader elements on top of their SDF base
+        self.has_active_flows = !flow_elements.is_empty();
         if !flow_elements.is_empty() {
             if let Some(stylesheet) = tree.stylesheet() {
                 // Use monotonic time for smooth animation

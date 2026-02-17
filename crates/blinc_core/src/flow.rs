@@ -583,6 +583,8 @@ pub enum StepType {
     PatternGrid,
     /// Multi-frequency sine interference
     PatternPlasma,
+    /// Worley noise with built-in SDF masking and gradient computation
+    PatternWorley,
 
     // ── transform-* — spatial distortions ──
     /// Distort UV space using a pattern or direction
@@ -597,6 +599,8 @@ pub enum StepType {
     TransformMirror,
     /// Cartesian to polar coordinates
     TransformPolar,
+    /// Animated wetness UV: aspect-corrected gravity scroll with offset
+    TransformWet,
 
     // ── surface-* — 3D appearance from 2D patterns ──
     /// Compute normals from height + apply diffuse lighting
@@ -605,6 +609,18 @@ pub enum StepType {
     SurfaceDepth,
     /// Fresnel/rim glow effect
     SurfaceGlow,
+
+    // ── effect-* — composite post-processing effects ──
+    /// UV offset from Worley gradient for lens refraction
+    EffectRefract,
+    /// Noise-based UV jitter for frost/ice distortion
+    EffectFrost,
+    /// Hash-scatter specular highlights on masked areas
+    EffectSpecular,
+    /// Fog/haze composite with tint, density, highlights, and clear mask
+    EffectFog,
+    /// Directional specular highlights from surface normals (Worley gradients)
+    EffectLight,
 
     // ── color-* — color mapping & manipulation ──
     /// Map scalar to color gradient via stops
@@ -647,6 +663,7 @@ impl StepType {
             "pattern-gradient" => Some(Self::PatternGradient),
             "pattern-grid" => Some(Self::PatternGrid),
             "pattern-plasma" => Some(Self::PatternPlasma),
+            "pattern-worley" => Some(Self::PatternWorley),
 
             "transform-warp" => Some(Self::TransformWarp),
             "transform-rotate" => Some(Self::TransformRotate),
@@ -654,10 +671,17 @@ impl StepType {
             "transform-tile" => Some(Self::TransformTile),
             "transform-mirror" => Some(Self::TransformMirror),
             "transform-polar" => Some(Self::TransformPolar),
+            "transform-wet" => Some(Self::TransformWet),
 
             "surface-light" => Some(Self::SurfaceLight),
             "surface-depth" => Some(Self::SurfaceDepth),
             "surface-glow" => Some(Self::SurfaceGlow),
+
+            "effect-refract" => Some(Self::EffectRefract),
+            "effect-frost" => Some(Self::EffectFrost),
+            "effect-specular" => Some(Self::EffectSpecular),
+            "effect-fog" => Some(Self::EffectFog),
+            "effect-light" => Some(Self::EffectLight),
 
             "color-ramp" => Some(Self::ColorRamp),
             "color-shift" => Some(Self::ColorShift),
@@ -682,9 +706,11 @@ impl StepType {
     pub fn output_type(&self) -> FlowType {
         match self {
             // Pattern generators → float (scalar field)
-            Self::PatternNoise | Self::PatternRipple | Self::PatternWaves | Self::PatternGrid => {
-                FlowType::Float
-            }
+            Self::PatternNoise
+            | Self::PatternRipple
+            | Self::PatternWaves
+            | Self::PatternGrid
+            | Self::PatternWorley => FlowType::Float,
 
             // Gradient/plasma → vec4 (color)
             Self::PatternGradient | Self::PatternPlasma => FlowType::Vec4,
@@ -696,6 +722,8 @@ impl StepType {
             | Self::TransformTile
             | Self::TransformMirror
             | Self::TransformPolar => FlowType::Float,
+            // transform-wet → vec2 (UV coordinate)
+            Self::TransformWet => FlowType::Vec2,
 
             // Surface steps → float (shading value) or vec4
             Self::SurfaceLight | Self::SurfaceDepth | Self::SurfaceGlow => FlowType::Float,
@@ -707,6 +735,11 @@ impl StepType {
 
             // Compositing → vec4
             Self::ComposeBlend | Self::ComposeMask | Self::ComposeLayer => FlowType::Vec4,
+
+            // Effects → vec2 (UV offset) or vec4 (composited color) or float (scalar)
+            Self::EffectRefract | Self::EffectFrost => FlowType::Vec2,
+            Self::EffectSpecular | Self::EffectLight => FlowType::Float,
+            Self::EffectFog => FlowType::Vec4,
 
             // Adjustments → float (value modifier)
             Self::AdjustFalloff
@@ -726,6 +759,13 @@ impl StepType {
             Self::PatternGradient => &[],
             Self::PatternGrid => &[],
             Self::PatternPlasma => &[],
+            Self::PatternWorley => &["scale"],
+
+            Self::EffectRefract => &["sources"],
+            Self::EffectFrost => &[],
+            Self::EffectSpecular => &[],
+            Self::EffectFog => &["source"],
+            Self::EffectLight => &["sources"],
 
             Self::TransformWarp => &["source"],
             Self::TransformRotate => &["source"],
@@ -733,6 +773,7 @@ impl StepType {
             Self::TransformTile => &["source"],
             Self::TransformMirror => &["source"],
             Self::TransformPolar => &[],
+            Self::TransformWet => &[],
 
             Self::SurfaceLight => &["source"],
             Self::SurfaceDepth => &["source"],
@@ -765,12 +806,19 @@ impl fmt::Display for StepType {
             Self::PatternGradient => "pattern-gradient",
             Self::PatternGrid => "pattern-grid",
             Self::PatternPlasma => "pattern-plasma",
+            Self::PatternWorley => "pattern-worley",
+            Self::EffectRefract => "effect-refract",
+            Self::EffectFrost => "effect-frost",
+            Self::EffectSpecular => "effect-specular",
+            Self::EffectFog => "effect-fog",
+            Self::EffectLight => "effect-light",
             Self::TransformWarp => "transform-warp",
             Self::TransformRotate => "transform-rotate",
             Self::TransformScale => "transform-scale",
             Self::TransformTile => "transform-tile",
             Self::TransformMirror => "transform-mirror",
             Self::TransformPolar => "transform-polar",
+            Self::TransformWet => "transform-wet",
             Self::SurfaceLight => "surface-light",
             Self::SurfaceDepth => "surface-depth",
             Self::SurfaceGlow => "surface-glow",
@@ -806,6 +854,10 @@ pub enum StepParam {
     Ident(String),
     /// Integer value (e.g., detail/octaves count)
     Int(i32),
+    /// Comma-separated identifiers (e.g., sources: drops1, drops2, streaks)
+    IdentList(Vec<String>),
+    /// Comma-separated floats (e.g., weights: 1.0, 0.5, 0.3)
+    FloatList(Vec<f32>),
 }
 
 /// A semantic step declaration within a @flow block
@@ -1354,6 +1406,13 @@ fn expand_step(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
         StepType::TransformWarp => expand_transform_warp(step),
         StepType::ComposeBlend => expand_compose_blend(step),
         StepType::SurfaceLight => expand_surface_light(step),
+        StepType::PatternWorley => expand_pattern_worley(step),
+        StepType::EffectRefract => expand_effect_refract(step),
+        StepType::EffectFrost => expand_effect_frost(step),
+        StepType::EffectSpecular => expand_effect_specular(step),
+        StepType::EffectFog => expand_effect_fog(step),
+        StepType::EffectLight => expand_effect_light(step),
+        StepType::TransformWet => expand_transform_wet(step),
         // Remaining types — return a placeholder identity node for now
         _ => Ok(vec![FlowNode {
             name: step.name.clone(),
@@ -1864,6 +1923,851 @@ fn expand_surface_light(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
             inferred_type: None,
         },
     ];
+
+    Ok(nodes)
+}
+
+/// pattern-worley: Worley noise with SDF masking and gradient computation
+///
+/// Emits `_s_{name}_sc` (scaled UV), `_s_{name}_eval` (raw Worley distance),
+/// `_s_{name}_gx/gy` (finite-difference gradient for refraction),
+/// and `{name}` (masked drop field).
+fn expand_pattern_worley(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
+    let uv_input = param_expr(&step.params, "uv", FlowExpr::Ref("uv".to_string()));
+    let scale = param_expr(&step.params, "scale", FlowExpr::Float(10.0));
+    let threshold = param_expr(&step.params, "threshold", FlowExpr::Float(0.05));
+    let edge = param_expr(&step.params, "edge", FlowExpr::Float(0.005));
+    let mask = param_expr(&step.params, "mask", FlowExpr::Float(1.0));
+
+    let sc_name = format!("_s_{}_sc", step.name);
+    let eval_name = format!("_s_{}_eval", step.name);
+    let gx_name = format!("_s_{}_gx", step.name);
+    let gy_name = format!("_s_{}_gy", step.name);
+    let eps = 0.002_f32;
+
+    let mut nodes = Vec::new();
+
+    // _s_{name}_sc = uv_input  (the user-provided UV, already scaled if needed)
+    nodes.push(FlowNode {
+        name: sc_name.clone(),
+        expr: uv_input,
+        inferred_type: None,
+    });
+
+    // _s_{name}_eval = worley(_s_{name}_sc, scale)
+    nodes.push(FlowNode {
+        name: eval_name.clone(),
+        expr: FlowExpr::Call {
+            func: FlowFunc::Worley,
+            args: vec![FlowExpr::Ref(sc_name.clone()), scale.clone()],
+        },
+        inferred_type: None,
+    });
+
+    // {name} = smoothstep(threshold, edge, _s_{name}_eval) * mask
+    nodes.push(FlowNode {
+        name: step.name.clone(),
+        expr: FlowExpr::Mul(
+            Box::new(FlowExpr::Call {
+                func: FlowFunc::Smoothstep,
+                args: vec![
+                    threshold,
+                    edge,
+                    FlowExpr::Ref(eval_name.clone()),
+                ],
+            }),
+            Box::new(mask),
+        ),
+        inferred_type: None,
+    });
+
+    // Gradient for refraction (fully normalized — unit direction in UV space):
+    // _s_{name}_gx = (worley(sc+eps, scale) - worley(sc-eps, scale)) / (2 * eps * scale)
+    // Dividing by scale cancels the chain rule factor, giving magnitude ~1.0 regardless of cell density.
+    // This lets effect-refract `strength` directly control the UV offset (e.g. 0.02 = 2% of element).
+    let norm = FlowExpr::Mul(
+        Box::new(FlowExpr::Float(2.0 * eps)),
+        Box::new(scale.clone()),
+    );
+    let eps_x = FlowExpr::Vec2(Box::new(FlowExpr::Float(eps)), Box::new(FlowExpr::Float(0.0)));
+    nodes.push(FlowNode {
+        name: gx_name,
+        expr: FlowExpr::Div(
+            Box::new(FlowExpr::Sub(
+                Box::new(FlowExpr::Call {
+                    func: FlowFunc::Worley,
+                    args: vec![
+                        FlowExpr::Add(
+                            Box::new(FlowExpr::Ref(sc_name.clone())),
+                            Box::new(eps_x.clone()),
+                        ),
+                        scale.clone(),
+                    ],
+                }),
+                Box::new(FlowExpr::Call {
+                    func: FlowFunc::Worley,
+                    args: vec![
+                        FlowExpr::Sub(
+                            Box::new(FlowExpr::Ref(sc_name.clone())),
+                            Box::new(eps_x),
+                        ),
+                        scale.clone(),
+                    ],
+                }),
+            )),
+            Box::new(norm.clone()),
+        ),
+        inferred_type: None,
+    });
+
+    // _s_{name}_gy — same normalization
+    let eps_y = FlowExpr::Vec2(Box::new(FlowExpr::Float(0.0)), Box::new(FlowExpr::Float(eps)));
+    nodes.push(FlowNode {
+        name: gy_name,
+        expr: FlowExpr::Div(
+            Box::new(FlowExpr::Sub(
+                Box::new(FlowExpr::Call {
+                    func: FlowFunc::Worley,
+                    args: vec![
+                        FlowExpr::Add(
+                            Box::new(FlowExpr::Ref(sc_name.clone())),
+                            Box::new(eps_y.clone()),
+                        ),
+                        scale.clone(),
+                    ],
+                }),
+                Box::new(FlowExpr::Call {
+                    func: FlowFunc::Worley,
+                    args: vec![
+                        FlowExpr::Sub(
+                            Box::new(FlowExpr::Ref(sc_name)),
+                            Box::new(eps_y),
+                        ),
+                        scale,
+                    ],
+                }),
+            )),
+            Box::new(norm),
+        ),
+        inferred_type: None,
+    });
+
+    // Public gradient accessors: {name}_gx, {name}_gy
+    // Lets user reference drop surface normals in manual nodes or other steps.
+    nodes.push(FlowNode {
+        name: format!("{}_gx", step.name),
+        expr: FlowExpr::Ref(format!("_s_{}_gx", step.name)),
+        inferred_type: None,
+    });
+    nodes.push(FlowNode {
+        name: format!("{}_gy", step.name),
+        expr: FlowExpr::Ref(format!("_s_{}_gy", step.name)),
+        inferred_type: None,
+    });
+
+    Ok(nodes)
+}
+
+/// effect-refract: UV offset from Worley gradients for lens refraction
+///
+/// Reads `_s_{src}_gx/gy` and `_s_{src}_eval` from pattern-worley steps
+/// via naming convention. Produces a vec2 UV offset.
+fn expand_effect_refract(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
+    let sources = match step.params.get("sources") {
+        Some(StepParam::IdentList(list)) => list.clone(),
+        // Allow a single ident too
+        Some(StepParam::Ident(s)) => vec![s.clone()],
+        _ => {
+            return Err(FlowError::InvalidStepParam {
+                step_name: step.name.clone(),
+                param: "sources".to_string(),
+                message: "effect-refract requires 'sources' as a comma-separated list of pattern-worley step names".to_string(),
+            });
+        }
+    };
+
+    let weights = match step.params.get("weights") {
+        Some(StepParam::FloatList(list)) => list.clone(),
+        Some(StepParam::Expr(FlowExpr::Float(f))) => vec![*f],
+        _ => vec![1.0; sources.len()],
+    };
+
+    let strength = param_expr(&step.params, "strength", FlowExpr::Float(0.1));
+
+    // Build sum: for each source, add gx * eval * strength * weight * mask
+    let mut nodes = Vec::new();
+
+    let ox_name = format!("_s_{}_ox", step.name);
+    let oy_name = format!("_s_{}_oy", step.name);
+
+    let mut ox_expr: Option<FlowExpr> = None;
+    let mut oy_expr: Option<FlowExpr> = None;
+
+    for (i, src) in sources.iter().enumerate() {
+        let w = weights.get(i).copied().unwrap_or(1.0);
+        let gx_ref = format!("_s_{}_gx", src);
+        let gy_ref = format!("_s_{}_gy", src);
+
+        // term_x = _s_{src}_gx * strength * weight * {src}
+        // Gradients are already normalized (divided by 2*eps) in pattern-worley,
+        // so strength directly controls UV offset magnitude.
+        let term_x = FlowExpr::Mul(
+            Box::new(FlowExpr::Mul(
+                Box::new(FlowExpr::Mul(
+                    Box::new(FlowExpr::Ref(gx_ref)),
+                    Box::new(strength.clone()),
+                )),
+                Box::new(FlowExpr::Float(w)),
+            )),
+            Box::new(FlowExpr::Ref(src.clone())),
+        );
+
+        let term_y = FlowExpr::Mul(
+            Box::new(FlowExpr::Mul(
+                Box::new(FlowExpr::Mul(
+                    Box::new(FlowExpr::Ref(gy_ref)),
+                    Box::new(strength.clone()),
+                )),
+                Box::new(FlowExpr::Float(w)),
+            )),
+            Box::new(FlowExpr::Ref(src.clone())),
+        );
+
+        ox_expr = Some(match ox_expr {
+            None => term_x,
+            Some(prev) => FlowExpr::Add(Box::new(prev), Box::new(term_x)),
+        });
+        oy_expr = Some(match oy_expr {
+            None => term_y,
+            Some(prev) => FlowExpr::Add(Box::new(prev), Box::new(term_y)),
+        });
+    }
+
+    let ox_final = ox_expr.unwrap_or(FlowExpr::Float(0.0));
+    let oy_final = oy_expr.unwrap_or(FlowExpr::Float(0.0));
+
+    nodes.push(FlowNode {
+        name: ox_name.clone(),
+        expr: ox_final,
+        inferred_type: None,
+    });
+    nodes.push(FlowNode {
+        name: oy_name.clone(),
+        expr: oy_final,
+        inferred_type: None,
+    });
+
+    // {name} = vec2(ox, oy)
+    nodes.push(FlowNode {
+        name: step.name.clone(),
+        expr: FlowExpr::Vec2(
+            Box::new(FlowExpr::Ref(ox_name)),
+            Box::new(FlowExpr::Ref(oy_name)),
+        ),
+        inferred_type: None,
+    });
+
+    Ok(nodes)
+}
+
+/// effect-frost: noise-based UV jitter for frost/ice distortion
+fn expand_effect_frost(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
+    let strength = param_expr(&step.params, "strength", FlowExpr::Float(0.003));
+    let mask = param_expr(&step.params, "mask", FlowExpr::Float(1.0));
+    let scale = param_expr(&step.params, "scale", FlowExpr::Float(30.0));
+
+    let nx_name = format!("_s_{}_nx", step.name);
+    let ny_name = format!("_s_{}_ny", step.name);
+    let nx_p = format!("_s_{}_nxp", step.name);
+    let ny_p = format!("_s_{}_nyp", step.name);
+    let s_name = format!("_s_{}_s", step.name);
+
+    let mut nodes = Vec::new();
+
+    // Noise X: uv * scale
+    nodes.push(FlowNode {
+        name: nx_p.clone(),
+        expr: FlowExpr::Mul(
+            Box::new(FlowExpr::Ref("uv".to_string())),
+            Box::new(scale.clone()),
+        ),
+        inferred_type: None,
+    });
+    nodes.push(FlowNode {
+        name: nx_name.clone(),
+        expr: FlowExpr::Call {
+            func: FlowFunc::Fbm,
+            args: vec![FlowExpr::Ref(nx_p), FlowExpr::Float(2.0)],
+        },
+        inferred_type: None,
+    });
+
+    // Noise Y: uv * scale + vec2(100, 0)
+    nodes.push(FlowNode {
+        name: ny_p.clone(),
+        expr: FlowExpr::Add(
+            Box::new(FlowExpr::Mul(
+                Box::new(FlowExpr::Ref("uv".to_string())),
+                Box::new(scale),
+            )),
+            Box::new(FlowExpr::Vec2(
+                Box::new(FlowExpr::Float(100.0)),
+                Box::new(FlowExpr::Float(0.0)),
+            )),
+        ),
+        inferred_type: None,
+    });
+    nodes.push(FlowNode {
+        name: ny_name.clone(),
+        expr: FlowExpr::Call {
+            func: FlowFunc::Fbm,
+            args: vec![FlowExpr::Ref(ny_p), FlowExpr::Float(2.0)],
+        },
+        inferred_type: None,
+    });
+
+    // _s_{name}_s = strength * mask
+    nodes.push(FlowNode {
+        name: s_name.clone(),
+        expr: FlowExpr::Mul(Box::new(strength), Box::new(mask)),
+        inferred_type: None,
+    });
+
+    // {name} = vec2((nx - 0.5) * s, (ny - 0.5) * s)
+    nodes.push(FlowNode {
+        name: step.name.clone(),
+        expr: FlowExpr::Vec2(
+            Box::new(FlowExpr::Mul(
+                Box::new(FlowExpr::Sub(
+                    Box::new(FlowExpr::Ref(nx_name)),
+                    Box::new(FlowExpr::Float(0.5)),
+                )),
+                Box::new(FlowExpr::Ref(s_name.clone())),
+            )),
+            Box::new(FlowExpr::Mul(
+                Box::new(FlowExpr::Sub(
+                    Box::new(FlowExpr::Ref(ny_name)),
+                    Box::new(FlowExpr::Float(0.5)),
+                )),
+                Box::new(FlowExpr::Ref(s_name)),
+            )),
+        ),
+        inferred_type: None,
+    });
+
+    Ok(nodes)
+}
+
+/// effect-specular: hash-scatter specular highlights on masked areas
+fn expand_effect_specular(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
+    let scale = param_expr(&step.params, "scale", FlowExpr::Float(20.0));
+    let mask = param_expr(&step.params, "mask", FlowExpr::Float(1.0));
+    let density = param_expr(&step.params, "density", FlowExpr::Float(0.5));
+    let size = param_expr(&step.params, "size", FlowExpr::Float(0.025));
+
+    let gs_name = format!("_s_{}_gs", step.name);
+    let cs_name = format!("_s_{}_cs", step.name);
+    let fs_name = format!("_s_{}_fs", step.name);
+    let ha_name = format!("_s_{}_ha", step.name);
+    let hb_name = format!("_s_{}_hb", step.name);
+    let hc_name = format!("_s_{}_hc", step.name);
+    let d_name = format!("_s_{}_d", step.name);
+
+    let mut nodes = Vec::new();
+
+    // gs = uv * scale
+    nodes.push(FlowNode {
+        name: gs_name.clone(),
+        expr: FlowExpr::Mul(
+            Box::new(FlowExpr::Ref("uv".to_string())),
+            Box::new(scale),
+        ),
+        inferred_type: None,
+    });
+
+    // cs = floor(gs)
+    nodes.push(FlowNode {
+        name: cs_name.clone(),
+        expr: FlowExpr::Call {
+            func: FlowFunc::Floor,
+            args: vec![FlowExpr::Ref(gs_name.clone())],
+        },
+        inferred_type: None,
+    });
+
+    // fs = fract(gs) - vec2(0.5, 0.5)
+    nodes.push(FlowNode {
+        name: fs_name.clone(),
+        expr: FlowExpr::Sub(
+            Box::new(FlowExpr::Call {
+                func: FlowFunc::Fract,
+                args: vec![FlowExpr::Ref(gs_name)],
+            }),
+            Box::new(FlowExpr::Vec2(
+                Box::new(FlowExpr::Float(0.5)),
+                Box::new(FlowExpr::Float(0.5)),
+            )),
+        ),
+        inferred_type: None,
+    });
+
+    // ha = fract(sin(dot(cs, vec2(127.1, 311.7))) * 43758.5)
+    nodes.push(FlowNode {
+        name: ha_name.clone(),
+        expr: FlowExpr::Call {
+            func: FlowFunc::Fract,
+            args: vec![FlowExpr::Mul(
+                Box::new(FlowExpr::Call {
+                    func: FlowFunc::Sin,
+                    args: vec![FlowExpr::Call {
+                        func: FlowFunc::Dot,
+                        args: vec![
+                            FlowExpr::Ref(cs_name.clone()),
+                            FlowExpr::Vec2(
+                                Box::new(FlowExpr::Float(127.1)),
+                                Box::new(FlowExpr::Float(311.7)),
+                            ),
+                        ],
+                    }],
+                }),
+                Box::new(FlowExpr::Float(43758.5)),
+            )],
+        },
+        inferred_type: None,
+    });
+
+    // hb = fract(sin(dot(cs, vec2(269.5, 183.3))) * 43758.5)
+    nodes.push(FlowNode {
+        name: hb_name.clone(),
+        expr: FlowExpr::Call {
+            func: FlowFunc::Fract,
+            args: vec![FlowExpr::Mul(
+                Box::new(FlowExpr::Call {
+                    func: FlowFunc::Sin,
+                    args: vec![FlowExpr::Call {
+                        func: FlowFunc::Dot,
+                        args: vec![
+                            FlowExpr::Ref(cs_name.clone()),
+                            FlowExpr::Vec2(
+                                Box::new(FlowExpr::Float(269.5)),
+                                Box::new(FlowExpr::Float(183.3)),
+                            ),
+                        ],
+                    }],
+                }),
+                Box::new(FlowExpr::Float(43758.5)),
+            )],
+        },
+        inferred_type: None,
+    });
+
+    // hc = fract(sin(dot(cs, vec2(97.3, 157.1))) * 43758.5)
+    nodes.push(FlowNode {
+        name: hc_name.clone(),
+        expr: FlowExpr::Call {
+            func: FlowFunc::Fract,
+            args: vec![FlowExpr::Mul(
+                Box::new(FlowExpr::Call {
+                    func: FlowFunc::Sin,
+                    args: vec![FlowExpr::Call {
+                        func: FlowFunc::Dot,
+                        args: vec![
+                            FlowExpr::Ref(cs_name),
+                            FlowExpr::Vec2(
+                                Box::new(FlowExpr::Float(97.3)),
+                                Box::new(FlowExpr::Float(157.1)),
+                            ),
+                        ],
+                    }],
+                }),
+                Box::new(FlowExpr::Float(43758.5)),
+            )],
+        },
+        inferred_type: None,
+    });
+
+    // d = fs - vec2(ha - 0.5, hb - 0.5) * 0.4
+    nodes.push(FlowNode {
+        name: d_name.clone(),
+        expr: FlowExpr::Sub(
+            Box::new(FlowExpr::Ref(fs_name)),
+            Box::new(FlowExpr::Mul(
+                Box::new(FlowExpr::Vec2(
+                    Box::new(FlowExpr::Sub(
+                        Box::new(FlowExpr::Ref(ha_name)),
+                        Box::new(FlowExpr::Float(0.5)),
+                    )),
+                    Box::new(FlowExpr::Sub(
+                        Box::new(FlowExpr::Ref(hb_name)),
+                        Box::new(FlowExpr::Float(0.5)),
+                    )),
+                )),
+                Box::new(FlowExpr::Float(0.4)),
+            )),
+        ),
+        inferred_type: None,
+    });
+
+    // {name} = smoothstep(size, 0.0, length(d)) * step(density, hc) * mask
+    nodes.push(FlowNode {
+        name: step.name.clone(),
+        expr: FlowExpr::Mul(
+            Box::new(FlowExpr::Mul(
+                Box::new(FlowExpr::Call {
+                    func: FlowFunc::Smoothstep,
+                    args: vec![
+                        size,
+                        FlowExpr::Float(0.0),
+                        FlowExpr::Call {
+                            func: FlowFunc::Length,
+                            args: vec![FlowExpr::Ref(d_name)],
+                        },
+                    ],
+                }),
+                Box::new(FlowExpr::Call {
+                    func: FlowFunc::Step,
+                    args: vec![density, FlowExpr::Ref(hc_name)],
+                }),
+            )),
+            Box::new(mask),
+        ),
+        inferred_type: None,
+    });
+
+    Ok(nodes)
+}
+
+/// effect-fog: fog/haze composite with tint, density, highlights, and clear mask
+fn expand_effect_fog(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
+    let source = param_expr(&step.params, "source", FlowExpr::Float(0.0));
+    let fog_density = param_expr(&step.params, "fog_density", FlowExpr::Float(0.1));
+    let tint_strength = param_expr(&step.params, "tint_strength", FlowExpr::Float(0.1));
+    let clear_mask = param_expr(&step.params, "clear_mask", FlowExpr::Float(0.0));
+    let highlights = param_expr(&step.params, "highlights", FlowExpr::Float(0.0));
+
+    let tint_name = format!("_s_{}_tint", step.name);
+    let r_name = format!("_s_{}_r", step.name);
+    let g_name = format!("_s_{}_g", step.name);
+    let b_name = format!("_s_{}_b", step.name);
+    let a_name = format!("_s_{}_a", step.name);
+
+    let mut nodes = Vec::new();
+
+    // _s_{name}_tint = (1.0 - clear_mask) * tint_strength
+    nodes.push(FlowNode {
+        name: tint_name.clone(),
+        expr: FlowExpr::Mul(
+            Box::new(FlowExpr::Sub(
+                Box::new(FlowExpr::Float(1.0)),
+                Box::new(clear_mask.clone()),
+            )),
+            Box::new(tint_strength),
+        ),
+        inferred_type: None,
+    });
+
+    // r = source.x * (1.0 - tint) + tint + highlights
+    nodes.push(FlowNode {
+        name: r_name.clone(),
+        expr: FlowExpr::Add(
+            Box::new(FlowExpr::Add(
+                Box::new(FlowExpr::Mul(
+                    Box::new(FlowExpr::Swizzle(
+                        Box::new(source.clone()),
+                        "x".to_string(),
+                    )),
+                    Box::new(FlowExpr::Sub(
+                        Box::new(FlowExpr::Float(1.0)),
+                        Box::new(FlowExpr::Ref(tint_name.clone())),
+                    )),
+                )),
+                Box::new(FlowExpr::Ref(tint_name.clone())),
+            )),
+            Box::new(highlights.clone()),
+        ),
+        inferred_type: None,
+    });
+
+    // g = source.y * (1.0 - tint) + tint + highlights
+    nodes.push(FlowNode {
+        name: g_name.clone(),
+        expr: FlowExpr::Add(
+            Box::new(FlowExpr::Add(
+                Box::new(FlowExpr::Mul(
+                    Box::new(FlowExpr::Swizzle(
+                        Box::new(source.clone()),
+                        "y".to_string(),
+                    )),
+                    Box::new(FlowExpr::Sub(
+                        Box::new(FlowExpr::Float(1.0)),
+                        Box::new(FlowExpr::Ref(tint_name.clone())),
+                    )),
+                )),
+                Box::new(FlowExpr::Ref(tint_name.clone())),
+            )),
+            Box::new(highlights.clone()),
+        ),
+        inferred_type: None,
+    });
+
+    // b = source.z * (1.0 - tint) + tint + highlights
+    nodes.push(FlowNode {
+        name: b_name.clone(),
+        expr: FlowExpr::Add(
+            Box::new(FlowExpr::Add(
+                Box::new(FlowExpr::Mul(
+                    Box::new(FlowExpr::Swizzle(
+                        Box::new(source),
+                        "z".to_string(),
+                    )),
+                    Box::new(FlowExpr::Sub(
+                        Box::new(FlowExpr::Float(1.0)),
+                        Box::new(FlowExpr::Ref(tint_name.clone())),
+                    )),
+                )),
+                Box::new(FlowExpr::Ref(tint_name)),
+            )),
+            Box::new(highlights),
+        ),
+        inferred_type: None,
+    });
+
+    // a = mix(fog_density, 1.0, clear_mask)
+    nodes.push(FlowNode {
+        name: a_name.clone(),
+        expr: FlowExpr::Call {
+            func: FlowFunc::Mix,
+            args: vec![fog_density, FlowExpr::Float(1.0), clear_mask],
+        },
+        inferred_type: None,
+    });
+
+    // {name} = vec4(r, g, b, a)
+    nodes.push(FlowNode {
+        name: step.name.clone(),
+        expr: FlowExpr::Vec4(
+            Box::new(FlowExpr::Ref(r_name)),
+            Box::new(FlowExpr::Ref(g_name)),
+            Box::new(FlowExpr::Ref(b_name)),
+            Box::new(FlowExpr::Ref(a_name)),
+        ),
+        inferred_type: None,
+    });
+
+    Ok(nodes)
+}
+
+/// transform-wet: animated wetness UV with aspect correction, gravity scroll, and offset
+///
+/// Generates: `vec2(uv.x * aspect * x_scale, uv.y * y_scale - time * speed) + offset`
+/// where `aspect = resolution.x / max(resolution.y, 1.0)`.
+///
+/// Params:
+///   - speed: gravity scroll speed (default 0.02)
+///   - offset: vec2 spatial offset (default vec2(0,0))
+///   - x_scale: horizontal scale multiplier (default 1.0)
+///   - y_scale: vertical scale multiplier (default 1.0)
+/// Requires inputs: uv, time, resolution
+fn expand_transform_wet(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
+    let speed = param_expr(&step.params, "speed", FlowExpr::Float(0.02));
+    let offset = param_expr(
+        &step.params,
+        "offset",
+        FlowExpr::Vec2(Box::new(FlowExpr::Float(0.0)), Box::new(FlowExpr::Float(0.0))),
+    );
+    let x_scale = param_expr(&step.params, "x_scale", FlowExpr::Float(1.0));
+    let y_scale = param_expr(&step.params, "y_scale", FlowExpr::Float(1.0));
+
+    let aspect_name = format!("_s_{}_aspect", step.name);
+    let scroll_name = format!("_s_{}_scroll", step.name);
+
+    let mut nodes = Vec::new();
+
+    // _s_{name}_aspect = resolution.x / max(resolution.y, 1.0)
+    nodes.push(FlowNode {
+        name: aspect_name.clone(),
+        expr: FlowExpr::Div(
+            Box::new(FlowExpr::Swizzle(
+                Box::new(FlowExpr::Ref("resolution".to_string())),
+                "x".to_string(),
+            )),
+            Box::new(FlowExpr::Call {
+                func: FlowFunc::Max,
+                args: vec![
+                    FlowExpr::Swizzle(
+                        Box::new(FlowExpr::Ref("resolution".to_string())),
+                        "y".to_string(),
+                    ),
+                    FlowExpr::Float(1.0),
+                ],
+            }),
+        ),
+        inferred_type: None,
+    });
+
+    // _s_{name}_scroll = time * speed
+    nodes.push(FlowNode {
+        name: scroll_name.clone(),
+        expr: FlowExpr::Mul(
+            Box::new(FlowExpr::Ref("time".to_string())),
+            Box::new(speed),
+        ),
+        inferred_type: None,
+    });
+
+    // {name} = vec2(uv.x * aspect * x_scale, uv.y * y_scale - scroll) + offset
+    nodes.push(FlowNode {
+        name: step.name.clone(),
+        expr: FlowExpr::Add(
+            Box::new(FlowExpr::Vec2(
+                Box::new(FlowExpr::Mul(
+                    Box::new(FlowExpr::Mul(
+                        Box::new(FlowExpr::Swizzle(
+                            Box::new(FlowExpr::Ref("uv".to_string())),
+                            "x".to_string(),
+                        )),
+                        Box::new(FlowExpr::Ref(aspect_name)),
+                    )),
+                    Box::new(x_scale),
+                )),
+                Box::new(FlowExpr::Sub(
+                    Box::new(FlowExpr::Mul(
+                        Box::new(FlowExpr::Swizzle(
+                            Box::new(FlowExpr::Ref("uv".to_string())),
+                            "y".to_string(),
+                        )),
+                        Box::new(y_scale),
+                    )),
+                    Box::new(FlowExpr::Ref(scroll_name)),
+                )),
+            )),
+            Box::new(offset),
+        ),
+        inferred_type: None,
+    });
+
+    Ok(nodes)
+}
+
+/// effect-light: directional specular highlights from Worley surface normals
+///
+/// Reads `_s_{src}_gx/gy` from pattern-worley steps (same convention as effect-refract).
+/// Computes `pow(max(dot(normal, light_dir), 0), shininess) * intensity * mask`.
+///
+/// Params:
+///   - sources: ident-list of pattern-worley step names (required)
+///   - weights: float-list of per-source weights (default all 1.0)
+///   - angle: light direction angle in degrees, 0=right, 90=down (default 225 = upper-left)
+///   - shininess: specular exponent (default 32.0)
+///   - intensity: brightness multiplier (default 0.6)
+///   - mask: mask expression (default 1.0)
+fn expand_effect_light(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
+    let sources = match step.params.get("sources") {
+        Some(StepParam::IdentList(list)) => list.clone(),
+        _ => {
+            return Err(FlowError::MissingStepParam {
+                step_name: step.name.clone(),
+                param: "sources".to_string(),
+            });
+        }
+    };
+    let weights: Vec<f32> = match step.params.get("weights") {
+        Some(StepParam::FloatList(list)) => list.clone(),
+        _ => vec![1.0; sources.len()],
+    };
+    let angle_deg = match step.params.get("angle") {
+        Some(StepParam::Expr(FlowExpr::Float(f))) => *f,
+        _ => 225.0,
+    };
+    let shininess = param_expr(&step.params, "shininess", FlowExpr::Float(32.0));
+    let intensity = param_expr(&step.params, "intensity", FlowExpr::Float(0.6));
+    let mask = param_expr(&step.params, "mask", FlowExpr::Float(1.0));
+
+    let angle_rad = angle_deg * std::f32::consts::PI / 180.0;
+    let lx = angle_rad.cos();
+    let ly = angle_rad.sin();
+
+    let gx_sum_name = format!("_s_{}_gx_sum", step.name);
+    let gy_sum_name = format!("_s_{}_gy_sum", step.name);
+    let dot_name = format!("_s_{}_dot", step.name);
+    let spec_name = format!("_s_{}_spec", step.name);
+
+    let mut nodes = Vec::new();
+
+    // Sum weighted gradients from all sources: gx_sum = sum(w_i * _s_{src}_gx)
+    let mut gx_expr: Option<FlowExpr> = None;
+    let mut gy_expr: Option<FlowExpr> = None;
+    for (i, src) in sources.iter().enumerate() {
+        let w = if i < weights.len() { weights[i] } else { 1.0 };
+        let gx_ref = FlowExpr::Ref(format!("_s_{}_gx", src));
+        let gy_ref = FlowExpr::Ref(format!("_s_{}_gy", src));
+        let weighted_gx = FlowExpr::Mul(Box::new(gx_ref), Box::new(FlowExpr::Float(w)));
+        let weighted_gy = FlowExpr::Mul(Box::new(gy_ref), Box::new(FlowExpr::Float(w)));
+        gx_expr = Some(match gx_expr {
+            None => weighted_gx,
+            Some(prev) => FlowExpr::Add(Box::new(prev), Box::new(weighted_gx)),
+        });
+        gy_expr = Some(match gy_expr {
+            None => weighted_gy,
+            Some(prev) => FlowExpr::Add(Box::new(prev), Box::new(weighted_gy)),
+        });
+    }
+
+    nodes.push(FlowNode {
+        name: gx_sum_name.clone(),
+        expr: gx_expr.unwrap_or(FlowExpr::Float(0.0)),
+        inferred_type: None,
+    });
+    nodes.push(FlowNode {
+        name: gy_sum_name.clone(),
+        expr: gy_expr.unwrap_or(FlowExpr::Float(0.0)),
+        inferred_type: None,
+    });
+
+    // dot = gx_sum * lx + gy_sum * ly
+    nodes.push(FlowNode {
+        name: dot_name.clone(),
+        expr: FlowExpr::Add(
+            Box::new(FlowExpr::Mul(
+                Box::new(FlowExpr::Ref(gx_sum_name)),
+                Box::new(FlowExpr::Float(lx)),
+            )),
+            Box::new(FlowExpr::Mul(
+                Box::new(FlowExpr::Ref(gy_sum_name)),
+                Box::new(FlowExpr::Float(ly)),
+            )),
+        ),
+        inferred_type: None,
+    });
+
+    // spec = pow(max(dot, 0.0), shininess)
+    nodes.push(FlowNode {
+        name: spec_name.clone(),
+        expr: FlowExpr::Call {
+            func: FlowFunc::Pow,
+            args: vec![
+                FlowExpr::Call {
+                    func: FlowFunc::Max,
+                    args: vec![FlowExpr::Ref(dot_name), FlowExpr::Float(0.0)],
+                },
+                shininess,
+            ],
+        },
+        inferred_type: None,
+    });
+
+    // {name} = spec * intensity * mask
+    nodes.push(FlowNode {
+        name: step.name.clone(),
+        expr: FlowExpr::Mul(
+            Box::new(FlowExpr::Mul(
+                Box::new(FlowExpr::Ref(spec_name)),
+                Box::new(intensity),
+            )),
+            Box::new(mask),
+        ),
+        inferred_type: None,
+    });
 
     Ok(nodes)
 }
@@ -3401,5 +4305,278 @@ mod tests {
 
         graph.validate(None).unwrap();
         assert!(graph.nodes.iter().any(|n| n.name == "blended"));
+    }
+
+    // ===================================================================
+    // New semantic step expansion tests
+    // ===================================================================
+
+    #[test]
+    fn test_step_expansion_pattern_worley() {
+        let mut graph = FlowGraph::new("test_worley");
+        graph.inputs.push(FlowInput {
+            name: "uv".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Uv),
+            ty: Some(FlowType::Vec2),
+        });
+
+        let mut params = HashMap::new();
+        params.insert("scale".to_string(), StepParam::Expr(FlowExpr::Float(18.0)));
+        params.insert(
+            "threshold".to_string(),
+            StepParam::Expr(FlowExpr::Float(0.05)),
+        );
+        params.insert(
+            "mask".to_string(),
+            StepParam::Expr(FlowExpr::Float(1.0)),
+        );
+
+        graph.steps.push(FlowStep {
+            name: "w".to_string(),
+            step_type: StepType::PatternWorley,
+            params,
+        });
+
+        graph.outputs.push(FlowOutput {
+            name: "color".to_string(),
+            target: FlowOutputTarget::Color,
+            expr: Some(FlowExpr::Vec4(
+                Box::new(FlowExpr::Ref("w".to_string())),
+                Box::new(FlowExpr::Ref("w".to_string())),
+                Box::new(FlowExpr::Ref("w".to_string())),
+                Box::new(FlowExpr::Float(1.0)),
+            )),
+        });
+
+        graph.validate(None).unwrap();
+        assert!(graph.steps.is_empty());
+        assert!(graph.nodes.iter().any(|n| n.name == "w"));
+        assert!(graph.nodes.iter().any(|n| n.name == "_s_w_eval"));
+        assert!(graph.nodes.iter().any(|n| n.name == "_s_w_gx"));
+        assert!(graph.nodes.iter().any(|n| n.name == "_s_w_gy"));
+        assert!(graph.nodes.iter().any(|n| n.name == "_s_w_sc"));
+    }
+
+    #[test]
+    fn test_step_expansion_effect_refract() {
+        let mut graph = FlowGraph::new("test_refract");
+        graph.inputs.push(FlowInput {
+            name: "uv".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Uv),
+            ty: Some(FlowType::Vec2),
+        });
+
+        // First add a pattern-worley step
+        let mut wp = HashMap::new();
+        wp.insert("scale".to_string(), StepParam::Expr(FlowExpr::Float(18.0)));
+        graph.steps.push(FlowStep {
+            name: "d1".to_string(),
+            step_type: StepType::PatternWorley,
+            params: wp,
+        });
+
+        // Then add effect-refract referencing it
+        let mut rp = HashMap::new();
+        rp.insert("sources".to_string(), StepParam::IdentList(vec!["d1".to_string()]));
+        rp.insert("strength".to_string(), StepParam::Expr(FlowExpr::Float(0.15)));
+        graph.steps.push(FlowStep {
+            name: "r".to_string(),
+            step_type: StepType::EffectRefract,
+            params: rp,
+        });
+
+        graph.outputs.push(FlowOutput {
+            name: "color".to_string(),
+            target: FlowOutputTarget::Color,
+            expr: Some(FlowExpr::Vec4(
+                Box::new(FlowExpr::Swizzle(
+                    Box::new(FlowExpr::Ref("r".to_string())),
+                    "x".to_string(),
+                )),
+                Box::new(FlowExpr::Swizzle(
+                    Box::new(FlowExpr::Ref("r".to_string())),
+                    "y".to_string(),
+                )),
+                Box::new(FlowExpr::Float(0.0)),
+                Box::new(FlowExpr::Float(1.0)),
+            )),
+        });
+
+        graph.validate(None).unwrap();
+        assert!(graph.nodes.iter().any(|n| n.name == "r"));
+        assert!(graph.nodes.iter().any(|n| n.name == "_s_r_ox"));
+        assert!(graph.nodes.iter().any(|n| n.name == "_s_r_oy"));
+    }
+
+    #[test]
+    fn test_step_expansion_effect_frost() {
+        let mut graph = FlowGraph::new("test_frost");
+        graph.inputs.push(FlowInput {
+            name: "uv".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Uv),
+            ty: Some(FlowType::Vec2),
+        });
+
+        let mut params = HashMap::new();
+        params.insert(
+            "strength".to_string(),
+            StepParam::Expr(FlowExpr::Float(0.003)),
+        );
+        params.insert(
+            "scale".to_string(),
+            StepParam::Expr(FlowExpr::Float(30.0)),
+        );
+
+        graph.steps.push(FlowStep {
+            name: "f".to_string(),
+            step_type: StepType::EffectFrost,
+            params,
+        });
+
+        graph.outputs.push(FlowOutput {
+            name: "color".to_string(),
+            target: FlowOutputTarget::Color,
+            expr: Some(FlowExpr::Vec4(
+                Box::new(FlowExpr::Swizzle(
+                    Box::new(FlowExpr::Ref("f".to_string())),
+                    "x".to_string(),
+                )),
+                Box::new(FlowExpr::Swizzle(
+                    Box::new(FlowExpr::Ref("f".to_string())),
+                    "y".to_string(),
+                )),
+                Box::new(FlowExpr::Float(0.0)),
+                Box::new(FlowExpr::Float(1.0)),
+            )),
+        });
+
+        graph.validate(None).unwrap();
+        assert!(graph.steps.is_empty());
+        assert!(graph.nodes.iter().any(|n| n.name == "f"));
+        assert!(graph.nodes.iter().any(|n| n.name == "_s_f_nx"));
+        assert!(graph.nodes.iter().any(|n| n.name == "_s_f_ny"));
+    }
+
+    #[test]
+    fn test_step_expansion_effect_specular() {
+        let mut graph = FlowGraph::new("test_spec");
+        graph.inputs.push(FlowInput {
+            name: "uv".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Uv),
+            ty: Some(FlowType::Vec2),
+        });
+
+        let mut params = HashMap::new();
+        params.insert(
+            "scale".to_string(),
+            StepParam::Expr(FlowExpr::Float(20.0)),
+        );
+        params.insert(
+            "mask".to_string(),
+            StepParam::Expr(FlowExpr::Float(1.0)),
+        );
+
+        graph.steps.push(FlowStep {
+            name: "s".to_string(),
+            step_type: StepType::EffectSpecular,
+            params,
+        });
+
+        graph.outputs.push(FlowOutput {
+            name: "color".to_string(),
+            target: FlowOutputTarget::Color,
+            expr: Some(FlowExpr::Vec4(
+                Box::new(FlowExpr::Ref("s".to_string())),
+                Box::new(FlowExpr::Ref("s".to_string())),
+                Box::new(FlowExpr::Ref("s".to_string())),
+                Box::new(FlowExpr::Float(1.0)),
+            )),
+        });
+
+        graph.validate(None).unwrap();
+        assert!(graph.steps.is_empty());
+        assert!(graph.nodes.iter().any(|n| n.name == "s"));
+        assert!(graph.nodes.iter().any(|n| n.name == "_s_s_gs"));
+        assert!(graph.nodes.iter().any(|n| n.name == "_s_s_ha"));
+        assert!(graph.nodes.iter().any(|n| n.name == "_s_s_d"));
+    }
+
+    #[test]
+    fn test_step_expansion_effect_fog() {
+        let mut graph = FlowGraph::new("test_fog");
+        graph.inputs.push(FlowInput {
+            name: "uv".to_string(),
+            source: FlowInputSource::Builtin(BuiltinVar::Uv),
+            ty: Some(FlowType::Vec2),
+        });
+
+        // Source scene as a vec4 node
+        graph.nodes.push(FlowNode {
+            name: "sc".to_string(),
+            expr: FlowExpr::Vec4(
+                Box::new(FlowExpr::Float(0.5)),
+                Box::new(FlowExpr::Float(0.5)),
+                Box::new(FlowExpr::Float(0.5)),
+                Box::new(FlowExpr::Float(1.0)),
+            ),
+            inferred_type: None,
+        });
+
+        let mut params = HashMap::new();
+        params.insert(
+            "source".to_string(),
+            StepParam::Expr(FlowExpr::Ref("sc".to_string())),
+        );
+        params.insert(
+            "fog_density".to_string(),
+            StepParam::Expr(FlowExpr::Float(0.1)),
+        );
+        params.insert(
+            "clear_mask".to_string(),
+            StepParam::Expr(FlowExpr::Float(0.5)),
+        );
+
+        graph.steps.push(FlowStep {
+            name: "fg".to_string(),
+            step_type: StepType::EffectFog,
+            params,
+        });
+
+        graph.outputs.push(FlowOutput {
+            name: "color".to_string(),
+            target: FlowOutputTarget::Color,
+            expr: Some(FlowExpr::Ref("fg".to_string())),
+        });
+
+        graph.validate(None).unwrap();
+        assert!(graph.steps.is_empty());
+        assert!(graph.nodes.iter().any(|n| n.name == "fg"));
+        assert!(graph.nodes.iter().any(|n| n.name == "_s_fg_tint"));
+        assert!(graph.nodes.iter().any(|n| n.name == "_s_fg_r"));
+        assert!(graph.nodes.iter().any(|n| n.name == "_s_fg_a"));
+    }
+
+    #[test]
+    fn test_step_type_from_str_new_types() {
+        assert_eq!(
+            StepType::from_str("pattern-worley"),
+            Some(StepType::PatternWorley)
+        );
+        assert_eq!(
+            StepType::from_str("effect-refract"),
+            Some(StepType::EffectRefract)
+        );
+        assert_eq!(
+            StepType::from_str("effect-frost"),
+            Some(StepType::EffectFrost)
+        );
+        assert_eq!(
+            StepType::from_str("effect-specular"),
+            Some(StepType::EffectSpecular)
+        );
+        assert_eq!(
+            StepType::from_str("effect-fog"),
+            Some(StepType::EffectFog)
+        );
     }
 }

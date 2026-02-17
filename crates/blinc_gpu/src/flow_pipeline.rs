@@ -154,6 +154,13 @@ impl FlowPipelineCache {
         // Generate WGSL
         let wgsl = flow_to_wgsl(graph).map_err(|e| format!("codegen error: {}", e))?;
 
+        // Dump generated WGSL for debugging
+        if let Ok(path) = std::env::var("BLINC_DUMP_WGSL") {
+            let file = format!("{}/flow_{}.wgsl", path, graph.name);
+            let _ = std::fs::write(&file, &wgsl);
+            tracing::info!("Dumped @flow '{}' WGSL to {}", graph.name, file);
+        }
+
         // Create shader module
         let shader = self
             .device

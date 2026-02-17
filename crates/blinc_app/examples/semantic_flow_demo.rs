@@ -191,14 +191,12 @@ fn card(
         .flex_col()
         .items_center()
         .gap(12.0)
-        .child(
-            div()
-                .id(id)
-                .w(w)
-                .h(h)
-                .bg(bg_color)
-                .shadow(Shadow::new(0.0, 4.0, 20.0, Color::rgba(0.0, 0.0, 0.0, 0.4))),
-        )
+        .child(div().id(id).w(w).h(h).bg(bg_color).shadow(Shadow::new(
+            0.0,
+            4.0,
+            20.0,
+            Color::rgba(0.0, 0.0, 0.0, 0.4),
+        )))
         .child(
             text(title)
                 .size(20.0)

@@ -3255,7 +3255,38 @@ fn parse_step_params(body: &str, errors: &mut Vec<ParseError>) -> HashMap<String
         }
 
         // Parse value based on key name or content
-        if key == "stops" {
+        if key == "sources" {
+            // Comma-separated identifiers: sources: drops1, drops2, streaks;
+            let idents: Vec<String> = value_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if idents.len() == 1 {
+                params.insert(key.to_string(), StepParam::Ident(idents.into_iter().next().unwrap()));
+            } else {
+                params.insert(key.to_string(), StepParam::IdentList(idents));
+            }
+        } else if key == "weights" {
+            // Comma-separated floats: weights: 1.0, 0.5, 0.3;
+            let floats: Result<Vec<f32>, _> = value_str
+                .split(',')
+                .map(|s| s.trim().parse::<f32>())
+                .collect();
+            match floats {
+                Ok(list) if list.len() == 1 => {
+                    params.insert(key.to_string(), StepParam::Expr(FlowExpr::Float(list[0])));
+                }
+                Ok(list) => {
+                    params.insert(key.to_string(), StepParam::FloatList(list));
+                }
+                Err(_) => {
+                    if let Ok(expr) = parse_flow_expr(value_str) {
+                        params.insert(key.to_string(), StepParam::Expr(expr));
+                    }
+                }
+            }
+        } else if key == "stops" {
             match parse_color_stop_list(value_str) {
                 Ok(stops) => {
                     params.insert(key.to_string(), StepParam::ColorStops(stops));
@@ -3404,7 +3435,28 @@ fn parse_chain_link(input: &str) -> Result<ChainLink, String> {
                 let key = param_str[..colon].trim();
                 let val_str = param_str[colon + 1..].trim();
 
-                if key == "stops" {
+                if key == "sources" {
+                    let idents: Vec<String> = val_str
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    if idents.len() == 1 {
+                        params.insert(key.to_string(), StepParam::Ident(idents.into_iter().next().unwrap()));
+                    } else {
+                        params.insert(key.to_string(), StepParam::IdentList(idents));
+                    }
+                } else if key == "weights" {
+                    if let Ok(list) = val_str.split(',').map(|s| s.trim().parse::<f32>()).collect::<Result<Vec<f32>, _>>() {
+                        if list.len() == 1 {
+                            params.insert(key.to_string(), StepParam::Expr(FlowExpr::Float(list[0])));
+                        } else {
+                            params.insert(key.to_string(), StepParam::FloatList(list));
+                        }
+                    } else if let Ok(expr) = parse_flow_expr(val_str) {
+                        params.insert(key.to_string(), StepParam::Expr(expr));
+                    }
+                } else if key == "stops" {
                     match parse_color_stop_list(val_str) {
                         Ok(stops) => {
                             params.insert(key.to_string(), StepParam::ColorStops(stops));

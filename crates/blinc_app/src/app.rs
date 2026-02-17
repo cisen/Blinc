@@ -269,6 +269,11 @@ impl BlincApp {
         self.ctx.clear_blend_target();
     }
 
+    /// Whether the last render frame contained @flow shader elements.
+    pub fn has_active_flows(&self) -> bool {
+        self.ctx.has_active_flows()
+    }
+
     /// Get the configuration
     pub fn config(&self) -> &BlincConfig {
         &self.config

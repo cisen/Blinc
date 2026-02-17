@@ -426,6 +426,7 @@ impl IOSRenderContext {
             tree.apply_stylesheet_base_styles();
             tree.apply_stylesheet_layout_overrides();
             tree.compute_layout(self.windowed_ctx.width, self.windowed_ctx.height);
+            tree.update_flip_bounds();
             tree.start_all_css_animations();
             self.render_tree = Some(tree);
         } else if let Some(ref mut tree) = self.render_tree {
@@ -439,6 +440,7 @@ impl IOSRenderContext {
             tree.apply_stylesheet_base_styles();
             tree.apply_stylesheet_layout_overrides();
             tree.compute_layout(self.windowed_ctx.width, self.windowed_ctx.height);
+            tree.update_flip_bounds();
             tree.start_all_css_animations();
         }
 
@@ -455,15 +457,18 @@ impl IOSRenderContext {
                 let mut s = store.lock().unwrap();
                 s.tick(dt_ms);
             }
-            let css_active = tree.css_has_active();
+            let flip_active = tree.tick_flip_animations(dt_ms);
+            let css_active = tree.css_has_active() || flip_active;
             if tree.stylesheet().is_some() {
                 tree.apply_stylesheet_state_styles(&self.windowed_ctx.event_router);
             }
-            if css_active || !tree.css_transitions_empty() {
+            if css_active || !tree.css_transitions_empty() || tree.has_active_flip_animations() {
                 tree.apply_all_css_animation_props();
                 tree.apply_all_css_transition_props();
+                tree.apply_flip_animation_props();
                 if tree.apply_animated_layout_props() {
                     tree.compute_layout(self.width, self.height);
+                    tree.update_flip_bounds();
                 }
             }
             self.last_frame_time_ms = current_time;
@@ -785,6 +790,7 @@ where
         tree.apply_stylesheet_base_styles();
         tree.apply_stylesheet_layout_overrides();
         tree.compute_layout(ctx.width, ctx.height);
+        tree.update_flip_bounds();
         tree.start_all_css_animations();
         tree
     });
@@ -890,6 +896,8 @@ pub extern "C" fn blinc_build_frame(ctx: *mut IOSRenderContext) {
                 if let Some(ref mut tree) = ctx.render_tree {
                     tree.apply_stylesheet_layout_overrides();
                     tree.compute_layout(ctx.windowed_ctx.width, ctx.windowed_ctx.height);
+                    tree.apply_flip_transitions();
+                    tree.update_flip_bounds();
                 }
             }
         }
@@ -1085,15 +1093,18 @@ pub extern "C" fn blinc_tick_animations(ctx: *mut IOSRenderContext) -> bool {
                 let mut s = store.lock().unwrap();
                 s.tick(dt_ms);
             }
-            let active = tree.css_has_active();
+            let flip_active = tree.tick_flip_animations(dt_ms);
+            let active = tree.css_has_active() || flip_active;
             if tree.stylesheet().is_some() {
                 tree.apply_stylesheet_state_styles(&ctx.windowed_ctx.event_router);
             }
-            if active || !tree.css_transitions_empty() {
+            if active || !tree.css_transitions_empty() || tree.has_active_flip_animations() {
                 tree.apply_all_css_animation_props();
                 tree.apply_all_css_transition_props();
+                tree.apply_flip_animation_props();
                 if tree.apply_animated_layout_props() {
                     tree.compute_layout(ctx.width, ctx.height);
+                    tree.update_flip_bounds();
                 }
             }
             ctx.last_frame_time_ms = current_time;

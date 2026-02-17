@@ -1066,6 +1066,12 @@ pub struct StatefulInner<S: StateTransitions> {
     /// Animation keys used by this stateful (for animation-driven refresh)
     /// Updated after each callback invocation with keys of active animations.
     pub(crate) animation_keys: Vec<String>,
+
+    /// Structural hash of the previous callback output.
+    /// Used to detect whether a re-invocation changed structure (children/layout)
+    /// or only visual props (transform, opacity, bg). When structure is unchanged,
+    /// we skip the expensive subtree rebuild and use the fast visual-only update path.
+    pub(crate) previous_structural_hash: Option<crate::diff::DivHash>,
 }
 
 impl<S: StateTransitions> StatefulInner<S> {
@@ -1083,6 +1089,7 @@ impl<S: StateTransitions> StatefulInner<S> {
             current_event: None,
             refresh_callback: None,
             animation_keys: Vec::new(),
+            previous_structural_hash: None,
         }
     }
 }
@@ -2261,6 +2268,7 @@ impl<S: StateTransitions> Stateful<S> {
                 current_event: None,
                 refresh_callback: None,
                 animation_keys: Vec::new(),
+                previous_structural_hash: None,
             })),
             children_cache: RefCell::new(Vec::new()),
             event_handlers_cache: RefCell::new(crate::event_handler::EventHandlers::new()),
@@ -2692,19 +2700,33 @@ impl<S: StateTransitions> Stateful<S> {
         // Queue the prop update for this node
         queue_prop_update(cached_node_id, final_props);
 
-        // Check if children were set OR if layout style changed - if so, queue a subtree rebuild
-        // This is necessary because the callback may have modified height, overflow, etc.
+        // Check if children were set OR if layout style changed
         let children = temp_div.children_builders();
         let style_changed = temp_div.layout_style() != base_style_clone.as_ref();
 
-        tracing::trace!(
-            "refresh_props_internal: children={}, style_changed={}",
-            !children.is_empty(),
-            style_changed
-        );
-
         if !children.is_empty() || style_changed {
-            queue_subtree_rebuild(cached_node_id, temp_div);
+            // Compute structural hash (excludes visual-only props like transform, opacity, bg).
+            // If structure hasn't changed, use fast visual-only update path.
+            let new_structural_hash = crate::diff::DivHash::compute_structural_tree(
+                &temp_div as &dyn crate::div::ElementBuilder,
+            );
+            let prev_hash = shared.lock().unwrap().previous_structural_hash;
+
+            let structure_changed = prev_hash != Some(new_structural_hash);
+
+            // Store new hash for next comparison
+            shared.lock().unwrap().previous_structural_hash = Some(new_structural_hash);
+
+            if structure_changed {
+                // Full structural rebuild (children added/removed/reordered, or layout changed)
+                tracing::trace!("refresh_props_internal: structural change, full rebuild");
+                queue_subtree_rebuild(cached_node_id, temp_div);
+            } else {
+                // Visual-only change (transform, opacity, bg, etc.) — skip expensive rebuild.
+                // Just update render props of existing children in-place.
+                tracing::trace!("refresh_props_internal: visual-only change, fast update");
+                queue_visual_subtree_rebuild(cached_node_id, temp_div);
+            }
         }
 
         // Register for animation-driven refresh if there are active animations

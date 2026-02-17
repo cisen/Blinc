@@ -29,6 +29,7 @@
 - [Spring Physics](./animation/springs.md)
 - [Keyframe Timelines](./animation/timelines.md)
 - [Motion Containers](./animation/motion.md)
+- [Layout Animations (FLIP)](./animation/layout-animations.md)
 
 # Components
 

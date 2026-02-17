@@ -2676,6 +2676,10 @@ impl WindowedApp {
                                         tracing::debug!("Subtree rebuilds processed, recomputing layout");
                                         tree.apply_stylesheet_layout_overrides();
                                         tree.compute_layout(windowed_ctx.width, windowed_ctx.height);
+                                        // FLIP: detect position changes and start CSS transitions
+                                        tree.apply_flip_transitions();
+                                        // Update FLIP bounds cache for next rebuild
+                                        tree.update_flip_bounds();
                                         // Begin/end motion frame to track which motions are still in tree
                                         rs.begin_stable_motion_frame();
                                         tree.initialize_motion_animations(rs);
@@ -2771,6 +2775,7 @@ impl WindowedApp {
 
                                         // Compute layout with new viewport dimensions
                                         tree.compute_layout(windowed_ctx.width, windowed_ctx.height);
+                                        tree.update_flip_bounds();
 
                                         // Initialize motion animations for any nodes wrapped in motion() containers
                                         tree.initialize_motion_animations(rs);
@@ -2810,6 +2815,7 @@ impl WindowedApp {
                                                 tracing::debug!("Incremental update: LayoutChanged - recomputing layout");
                                                 existing_tree.apply_stylesheet_layout_overrides();
                                                 existing_tree.compute_layout(windowed_ctx.width, windowed_ctx.height);
+                                                existing_tree.update_flip_bounds();
                                             }
                                             UpdateResult::ChildrenChanged => {
                                                 // Children changed - subtrees were rebuilt in place
@@ -2818,6 +2824,9 @@ impl WindowedApp {
                                                 // Recompute layout since structure changed
                                                 existing_tree.apply_stylesheet_layout_overrides();
                                                 existing_tree.compute_layout(windowed_ctx.width, windowed_ctx.height);
+                                                // FLIP: detect position changes and start CSS transitions
+                                                existing_tree.apply_flip_transitions();
+                                                existing_tree.update_flip_bounds();
 
                                                 // Re-register pointer-space elements (new elements may have pointer-space)
                                                 if let Some(ref stylesheet) = windowed_ctx.stylesheet {
@@ -2869,6 +2878,7 @@ impl WindowedApp {
 
                                     // Compute layout in logical pixels
                                     tree.compute_layout(windowed_ctx.width, windowed_ctx.height);
+                                    tree.update_flip_bounds();
 
                                     // Initialize motion animations for any nodes wrapped in motion() containers
                                     tree.initialize_motion_animations(rs);
@@ -2936,12 +2946,13 @@ impl WindowedApp {
                             } else {
                                 16.0
                             };
-                            let css_active = if let Some(ref tree) = render_tree {
+                            let css_active = if let Some(ref mut tree) = render_tree {
                                 let store = tree.css_anim_store();
                                 let mut s = store.lock().unwrap();
                                 let (anim, trans) = s.tick(dt_ms);
                                 drop(s);
-                                anim || trans || tree.css_has_active()
+                                let flip = tree.tick_flip_animations(dt_ms);
+                                anim || trans || flip || tree.css_has_active()
                             } else {
                                 false
                             };
@@ -2980,6 +2991,7 @@ impl WindowedApp {
                                     // (e.g. visibility: hidden → display: none, or height changes on hover)
                                     if state_changed {
                                         tree.compute_layout(windowed_ctx.width, windowed_ctx.height);
+                                        tree.update_flip_bounds();
                                     }
                                 }
                             }
@@ -2990,8 +3002,10 @@ impl WindowedApp {
                                 if let Some(ref mut tree) = render_tree {
                                     tree.apply_all_css_animation_props();
                                     tree.apply_all_css_transition_props();
+                                    tree.apply_flip_animation_props();
                                     if tree.apply_animated_layout_props() {
                                         tree.compute_layout(windowed_ctx.width, windowed_ctx.height);
+                                        tree.update_flip_bounds();
                                     }
                                 }
                             }
@@ -3100,12 +3114,15 @@ impl WindowedApp {
                                 mgr.take_dirty() || mgr.has_visible_overlays()
                             };
 
-                            // Check if CSS animations/transitions need continued redraws
+                            // Check if CSS animations/transitions/FLIP need continued redraws
                             // (includes transitions created during apply_complex_selector_styles)
                             let css_needs_redraw = css_active
                                 || !render_tree
                                     .as_ref()
-                                    .map_or(true, |t| t.css_transitions_empty());
+                                    .map_or(true, |t| t.css_transitions_empty())
+                                || render_tree
+                                    .as_ref()
+                                    .is_some_and(|t| t.has_active_flip_animations());
 
                             // Check if pointer query elements need continuous redraws
                             let pointer_query_active = !windowed_ctx.pointer_query.is_empty();

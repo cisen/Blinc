@@ -454,6 +454,17 @@ pub struct RenderTree {
     /// Nodes that were affected by complex selector state rules (e.g. .class:hover)
     /// Used to reset render props when the state rule no longer matches
     complex_state_affected: HashSet<LayoutNodeId>,
+
+    // ========================================================================
+    // FLIP Animation Support (CSS transitions on layout position changes)
+    // ========================================================================
+    /// Persistent element bounds by string ID, updated after every compute_layout().
+    /// Used by apply_flip_transitions() to detect position changes on subtree rebuild.
+    flip_previous_bounds: HashMap<String, ElementBounds>,
+    /// Active FLIP animations keyed by element string ID (stable across subtree rebuilds).
+    /// Unlike css_anim_store.transitions (keyed by LayoutNodeId), these survive node recreation
+    /// because they resolve string IDs → LayoutNodeIds at apply time via element_registry.
+    flip_animations: HashMap<String, crate::render_state::ActiveCssAnimation>,
 }
 
 /// Result of an incremental update attempt
@@ -517,6 +528,8 @@ impl RenderTree {
             css_anim_store: Arc::new(Mutex::new(crate::render_state::CssAnimationStore::new())),
             hover_css_animations: HashSet::new(),
             complex_state_affected: HashSet::new(),
+            flip_previous_bounds: HashMap::new(),
+            flip_animations: HashMap::new(),
         }
     }
 
@@ -7793,6 +7806,286 @@ impl RenderTree {
         }
     }
 
+    /// Apply CSS base styles (class and ID selectors) to a subtree after rebuild.
+    ///
+    /// Called after `process_pending_subtree_rebuilds` builds new child nodes.
+    /// `collect_render_props_boxed` only applies `#id` styles inline; class-based
+    /// selectors (`.sort-item`, `.grid-item`, etc.) are resolved by
+    /// `apply_stylesheet_base_styles()` which only runs at full tree creation.
+    /// This method fills that gap for incrementally rebuilt subtrees.
+    fn apply_stylesheet_base_styles_for_subtree(&mut self, parent_id: LayoutNodeId) {
+        let stylesheet = match &self.stylesheet {
+            Some(s) => s.clone(),
+            None => return,
+        };
+
+        // Collect all node IDs in the subtree (parent + descendants)
+        let mut subtree_nodes = Vec::new();
+        self.collect_subtree_ids(parent_id, &mut subtree_nodes);
+
+        if subtree_nodes.is_empty() {
+            return;
+        }
+
+        // Apply complex base rules (class selectors, combinators) — lower specificity first
+        let complex_rules = stylesheet.complex_rules();
+        if !complex_rules.is_empty() {
+            let empty_set = std::collections::HashSet::new();
+
+            let mut base_rules: Vec<&(
+                crate::css_parser::ComplexSelector,
+                crate::element_style::ElementStyle,
+            )> = complex_rules
+                .iter()
+                .filter(|(selector, _)| !selector.has_state())
+                .collect();
+            base_rules.sort_by_key(|(selector, _)| Self::selector_specificity(selector));
+
+            for (selector, style) in base_rules {
+                for &node_id in &subtree_nodes {
+                    if self
+                        .complex_selector_matches(selector, node_id, &empty_set, &empty_set, None)
+                    {
+                        if let Some(render_node) = self.render_nodes.get_mut(&node_id) {
+                            Self::apply_element_style_to_props(&mut render_node.props, style);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Apply simple ID rules (highest specificity, overrides class selectors)
+        for &node_id in &subtree_nodes {
+            if let Some(element_id) = self.element_registry.get_id(node_id) {
+                if let Some(base_style) = stylesheet.get(&element_id) {
+                    if let Some(render_node) = self.render_nodes.get_mut(&node_id) {
+                        Self::apply_element_style_to_props(&mut render_node.props, base_style);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Collect all node IDs in a subtree (the node itself + all descendants).
+    fn collect_subtree_ids(&self, node_id: LayoutNodeId, out: &mut Vec<LayoutNodeId>) {
+        out.push(node_id);
+        for child_id in self.layout_tree.children(node_id) {
+            self.collect_subtree_ids(child_id, out);
+        }
+    }
+
+    // ========================================================================
+    // FLIP Animation for Subtree Rebuilds
+    // ========================================================================
+
+    /// Update persistent element bounds for FLIP tracking.
+    ///
+    /// Called after every `compute_layout()` to record current absolute positions
+    /// by element string ID. This data survives across subtree rebuilds since it's
+    /// keyed by stable string IDs, not volatile LayoutNodeIds.
+    pub fn update_flip_bounds(&mut self) {
+        self.flip_previous_bounds.clear();
+        for (node_id, _render_node) in &self.render_nodes {
+            if let Some(element_id) = self.element_registry.get_id(*node_id) {
+                if let Some(bounds) = self.layout_tree.get_absolute_bounds(*node_id) {
+                    self.flip_previous_bounds.insert(element_id, bounds);
+                }
+            }
+        }
+    }
+
+    /// Apply FLIP transitions for elements that moved during subtree rebuild.
+    ///
+    /// Called AFTER layout recomputation (in windowed.rs, after compute_layout()).
+    /// Compares new layout positions to snapshots taken before the rebuild.
+    /// For elements that moved AND have a CSS `transition` on `transform`,
+    /// creates a CSS transition from `translate(dx, dy)` to `translate(0, 0)`.
+    pub fn apply_flip_transitions(&mut self) {
+        tracing::trace!(
+            "FLIP: apply_flip_transitions called, flip_previous_bounds has {} entries",
+            self.flip_previous_bounds.len()
+        );
+        if self.flip_previous_bounds.is_empty() {
+            return;
+        }
+
+        let stylesheet = self.stylesheet.clone();
+
+        // Collect elements that moved: compare previous bounds with current absolute bounds
+        let mut moved: Vec<(String, f32, f32, crate::tree::LayoutNodeId)> = Vec::new();
+
+        for (node_id, render_node) in &self.render_nodes {
+            // Skip elements that already have a transform set by the app (e.g. the dragged item).
+            // FLIP should only animate elements whose position changed passively due to reflow,
+            // not elements being actively positioned via Transform::translate().
+            if render_node.props.transform.is_some() {
+                continue;
+            }
+
+            let Some(element_id) = self.element_registry.get_id(*node_id) else {
+                continue;
+            };
+            let Some(old_bounds) = self.flip_previous_bounds.get(&element_id) else {
+                continue;
+            };
+            let Some(new_bounds) = self.layout_tree.get_absolute_bounds(*node_id) else {
+                continue;
+            };
+
+            let dx = old_bounds.x - new_bounds.x;
+            let dy = old_bounds.y - new_bounds.y;
+
+            if dx.abs() < 1.0 && dy.abs() < 1.0 {
+                continue;
+            }
+
+            tracing::trace!("FLIP: '{}' moved: delta=({:.1},{:.1})", element_id, dx, dy);
+            moved.push((element_id, dx, dy, *node_id));
+        }
+
+        if moved.is_empty() {
+            return;
+        }
+
+        tracing::debug!("FLIP: {} elements moved, creating transitions", moved.len());
+
+        for (element_id, dx, dy, new_node_id) in &moved {
+            // Find CSS transition spec for "transform" (CssTransitionSet::get also matches "all")
+            // Check: 1) ID-based style, 2) class-based complex selector rules
+            let transition = stylesheet.as_ref().and_then(|ss| {
+                // Check by element ID first
+                ss.get(element_id)
+                    .and_then(|style| style.transition.as_ref())
+                    .and_then(|ts| ts.get("transform"))
+                    .or_else(|| {
+                        // Check class-based complex selector rules
+                        let empty = std::collections::HashSet::new();
+                        for rule in ss.complex_rules() {
+                            if rule.0.has_state() {
+                                continue;
+                            }
+                            if self.complex_selector_matches(
+                                &rule.0,
+                                *new_node_id,
+                                &empty,
+                                &empty,
+                                None,
+                            ) {
+                                if let Some(ts) = rule.1.transition.as_ref() {
+                                    if let Some(t) = ts.get("transform") {
+                                        return Some(t);
+                                    }
+                                }
+                            }
+                        }
+                        None
+                    })
+            });
+
+            let Some(transition) = transition else {
+                tracing::trace!(
+                    "FLIP: '{}' has no CSS transition for 'transform'",
+                    element_id
+                );
+                continue;
+            };
+
+            let duration_ms = transition.duration_ms;
+            let delay_ms = transition.delay_ms;
+            let easing = transition.timing.to_easing();
+
+            if duration_ms == 0 {
+                continue;
+            }
+
+            tracing::debug!(
+                "FLIP: '{}' translate({:.1}, {:.1}) → (0,0) over {}ms",
+                element_id,
+                dx,
+                dy,
+                duration_ms
+            );
+
+            // Create a CSS transition from translate(dx, dy) to translate(0, 0)
+            use blinc_animation::{FillMode, KeyframeProperties, MultiKeyframeAnimation};
+
+            let from = KeyframeProperties {
+                translate_x: Some(*dx),
+                translate_y: Some(*dy),
+                ..Default::default()
+            };
+
+            let to = KeyframeProperties {
+                translate_x: Some(0.0),
+                translate_y: Some(0.0),
+                ..Default::default()
+            };
+
+            let anim = MultiKeyframeAnimation::new(duration_ms)
+                .keyframe(0.0, from, easing)
+                .keyframe(1.0, to, easing)
+                .delay(delay_ms)
+                .fill_mode(FillMode::Forwards);
+
+            // Store in flip_animations keyed by string ID (survives subtree rebuilds).
+            // Unlike css_anim_store.transitions which are keyed by LayoutNodeId,
+            // these persist when nodes are recreated because we resolve to the
+            // current LayoutNodeId at apply time via element_registry.
+            self.flip_animations.insert(
+                element_id.clone(),
+                crate::render_state::ActiveCssAnimation::new(anim),
+            );
+        }
+    }
+
+    /// Tick all active FLIP animations by `dt_ms` milliseconds.
+    /// Removes completed animations. Returns `true` if any are still playing.
+    pub fn tick_flip_animations(&mut self, dt_ms: f32) -> bool {
+        if self.flip_animations.is_empty() {
+            return false;
+        }
+        let mut any_playing = false;
+        for anim in self.flip_animations.values_mut() {
+            if anim.tick(dt_ms) {
+                any_playing = true;
+            }
+        }
+        // Remove completed animations
+        self.flip_animations.retain(|_, a| a.is_playing);
+        any_playing
+    }
+
+    /// Apply current FLIP animation values to render props.
+    /// Resolves string element IDs → LayoutNodeIds via element_registry.
+    pub fn apply_flip_animation_props(&mut self) {
+        if self.flip_animations.is_empty() {
+            return;
+        }
+        // Collect data first to avoid borrow conflict with render_nodes
+        let props_data: Vec<(
+            crate::tree::LayoutNodeId,
+            blinc_animation::KeyframeProperties,
+        )> = self
+            .flip_animations
+            .iter()
+            .filter_map(|(element_id, anim)| {
+                let node_id = self.element_registry.get(element_id)?;
+                Some((node_id, anim.current_properties.clone()))
+            })
+            .collect();
+
+        for (node_id, anim_props) in props_data {
+            if let Some(render_node) = self.render_nodes.get_mut(&node_id) {
+                Self::apply_keyframe_props_to_render(&mut render_node.props, &anim_props);
+            }
+        }
+    }
+
+    /// Check if any FLIP animations are currently active.
+    pub fn has_active_flip_animations(&self) -> bool {
+        !self.flip_animations.is_empty()
+    }
+
     /// Apply stylesheet state styles based on EventRouter state
     ///
     /// This should be called after mouse events to update styles for nodes
@@ -8124,6 +8417,13 @@ impl RenderTree {
                     self.layout_tree.add_child(rebuild.parent_id, child_id);
                     self.collect_render_props_boxed(child.as_ref(), child_id);
                 }
+
+                // Apply CSS base styles (class/complex selectors) to new subtree nodes.
+                // collect_render_props_boxed only applies #id styles; class-based
+                // styles are applied by apply_stylesheet_base_styles() which only
+                // runs at full tree creation. Without this, new children from
+                // stateful rebuilds lose CSS class styles (border-radius, etc.).
+                self.apply_stylesheet_base_styles_for_subtree(rebuild.parent_id);
             } else {
                 // Visual-only update - just update render props of existing children
                 // Don't remove/rebuild, just walk the tree and update props
@@ -8152,6 +8452,10 @@ impl RenderTree {
     }
 
     /// Update subtree props from a generic ElementBuilder (for recursion)
+    ///
+    /// Uses full replacement (not merge) so that properties cleared back to defaults
+    /// (e.g. transform removed on drag end) are properly reflected. Preserves node_id
+    /// and motion which are not set by builders.
     fn update_subtree_props_from_builder(
         &mut self,
         parent_id: LayoutNodeId,
@@ -8162,10 +8466,12 @@ impl RenderTree {
 
         for (i, child_id) in existing_children.iter().enumerate() {
             if let Some(new_child) = new_children.get(i) {
-                // Update this child's render props
-                let new_props = new_child.render_props();
+                // Full replace of visual props, preserving node_id and motion
+                let mut new_props = new_child.render_props();
                 if let Some(render_node) = self.render_nodes.get_mut(child_id) {
-                    render_node.props.merge_from(&new_props);
+                    new_props.node_id = render_node.props.node_id;
+                    new_props.motion = render_node.props.motion.clone();
+                    render_node.props = new_props;
                 }
 
                 // Recursively update grandchildren
@@ -8174,6 +8480,9 @@ impl RenderTree {
                 }
             }
         }
+
+        // Re-apply CSS base styles since the full replace cleared them
+        self.apply_stylesheet_base_styles_for_subtree(parent_id);
     }
 
     /// Transfer node states from another tree

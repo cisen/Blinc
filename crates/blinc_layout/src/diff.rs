@@ -80,6 +80,20 @@ impl DivHash {
         hash_element_tree(element, &mut hasher);
         DivHash(hasher.finish())
     }
+
+    /// Compute a structural hash that excludes visual-only properties.
+    ///
+    /// Two elements with the same structural hash have the same layout,
+    /// children structure, and content identity — even if visual properties
+    /// (transform, opacity, background, shadow, etc.) differ.
+    ///
+    /// Used to decide whether a stateful rebuild can take the fast visual-only
+    /// update path or needs a full subtree rebuild.
+    pub fn compute_structural_tree(element: &dyn ElementBuilder) -> Self {
+        let mut hasher = DefaultHasher::new();
+        hash_element_structural(element, &mut hasher);
+        DivHash(hasher.finish())
+    }
 }
 
 // =============================================================================
@@ -684,6 +698,56 @@ fn hash_element_tree(element: &dyn ElementBuilder, hasher: &mut impl Hasher) {
     children.len().hash(hasher);
     for child in children {
         hash_element_tree(child.as_ref(), hasher);
+    }
+}
+
+/// Hash an ElementBuilder's structural properties (excluding visual-only props).
+///
+/// Includes: element type, layout style, element ID, text content, SVG/image source,
+/// children count and their structural hashes.
+/// Excludes: transform, opacity, background, shadow, material, corner_radius, render_layer.
+fn hash_element_structural(element: &dyn ElementBuilder, hasher: &mut impl Hasher) {
+    // Element type
+    std::mem::discriminant(&element.element_type_id()).hash(hasher);
+
+    // Layout style (all layout-affecting properties)
+    if let Some(style) = element.layout_style() {
+        1u8.hash(hasher);
+        hash_style(style, hasher);
+    } else {
+        0u8.hash(hasher);
+    }
+
+    // Element ID (identity)
+    if let Some(id) = element.element_id() {
+        1u8.hash(hasher);
+        id.hash(hasher);
+    } else {
+        0u8.hash(hasher);
+    }
+
+    // Type-specific structural content
+    if let Some(text_info) = element.text_render_info() {
+        text_info.content.hash(hasher);
+        hash_f32(text_info.font_size, hasher);
+        for c in &text_info.color {
+            hash_f32(*c, hasher);
+        }
+    }
+
+    if let Some(svg_info) = element.svg_render_info() {
+        svg_info.source.hash(hasher);
+    }
+
+    if let Some(image_info) = element.image_render_info() {
+        image_info.source.hash(hasher);
+    }
+
+    // Children (recursive)
+    let children = element.children_builders();
+    children.len().hash(hasher);
+    for child in children {
+        hash_element_structural(child.as_ref(), hasher);
     }
 }
 

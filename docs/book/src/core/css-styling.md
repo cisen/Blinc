@@ -229,6 +229,54 @@ Supports solid colors, gradients, and image URLs:
 #card { border-radius: theme(radius-lg); } /* Theme token */
 ```
 
+### Corner Shape
+
+Controls the shape of rounded corners using superellipse exponents. Instead of the standard circular arc, you can create beveled, squircle, scooped, or notched corners.
+
+```css
+/* Uniform shape for all corners */
+#card { corner-shape: 2; }                /* Squircle (smoother than circular) */
+#card { corner-shape: 0; }                /* Bevel (straight diagonal cut) */
+#card { corner-shape: -1; }               /* Scoop (concave inward curve) */
+
+/* Functional syntax */
+#card { corner-shape: superellipse(2); }   /* Same as corner-shape: 2 */
+```
+
+**Value reference:**
+
+| Value  | Shape    | Description                         |
+| ------ | -------- | ----------------------------------- |
+| `1`    | Round    | Standard circular arc (default)     |
+| `0`    | Bevel    | Straight diagonal cut               |
+| `2`    | Squircle | Smoother than circular (iOS-style)  |
+| `-1`   | Scoop    | Concave inward curve                |
+| `100`  | Square   | Sharp corner (ignores border-radius)|
+| `-100` | Notch    | Sharp 90-degree inward notch        |
+
+**Rust builder equivalents:**
+
+```rust
+div().corner_shape(2.0)                                   // Uniform squircle
+div().corner_shapes(0.0, 2.0, 2.0, 0.0)                  // Per-corner: bevel TL, squircle others
+div().corner_squircle()                                    // Preset: squircle
+div().corner_bevel()                                       // Preset: bevel
+div().corner_scoop()                                       // Preset: scoop
+```
+
+Corner shape is animatable via transitions and keyframes:
+
+```css
+#card {
+    border-radius: 20px;
+    corner-shape: 1;
+    transition: corner-shape 0.3s ease;
+}
+#card:hover {
+    corner-shape: 2;   /* Morph from round to squircle on hover */
+}
+```
+
 ### Border
 
 ```css
@@ -353,6 +401,43 @@ All standard flexbox layout properties can be set from CSS:
 #el     { overflow-x: scroll; overflow-y: hidden; }
 ```
 
+### Overflow Fade
+
+Replaces the hard clip at overflow boundaries with a smooth fade-to-transparent ramp. Each edge can have an independent fade distance in pixels.
+
+```css
+/* Uniform: all 4 edges fade over 24px */
+#scroll { overflow-fade: 24px; }
+
+/* Vertical + horizontal: top/bottom 32px, left/right 0 */
+#scroll { overflow-fade: 32px 0px; }
+
+/* Per-edge: top, right, bottom, left */
+#scroll { overflow-fade: 24px 0px 24px 0px; }
+```
+
+**Rust builder equivalents:**
+
+```rust
+div().overflow_fade(24.0)                              // Uniform
+div().overflow_fade_y(32.0)                            // Vertical only (top + bottom)
+div().overflow_fade_x(16.0)                            // Horizontal only (left + right)
+div().overflow_fade_edges(24.0, 0.0, 24.0, 0.0)       // Per-edge: top, right, bottom, left
+```
+
+Overflow fade is animatable — combine with transitions for hover-triggered soft edges:
+
+```css
+#container {
+    overflow: clip;
+    overflow-fade: 0px;
+    transition: overflow-fade 0.3s ease;
+}
+#container:hover {
+    overflow-fade: 32px;
+}
+```
+
 ### Display
 
 ```css
@@ -460,10 +545,11 @@ transition-delay: 100ms;
 
 Almost every visual and layout property can be transitioned:
 
-- **Visual**: `opacity`, `background`, `border-color`, `border-width`, `border-radius`, `box-shadow`, `text-shadow`, `outline-color`, `outline-width`
+- **Visual**: `opacity`, `background`, `border-color`, `border-width`, `border-radius`, `corner-shape`, `box-shadow`, `text-shadow`, `outline-color`, `outline-width`
 - **Transform**: `transform` (rotate, scale, translate, skew)
 - **Layout**: `width`, `height`, `padding`, `margin`, `gap`, `min-width`, `max-width`, `min-height`, `max-height`, `top`, `left`, `flex-grow`
 - **Filters**: `filter`, `backdrop-filter`
+- **Clip & Overflow**: `clip-path`, `overflow-fade`
 - **SVG**: `fill`, `stroke`, `stroke-width`, `stroke-dashoffset`
 - **Mask**: `mask-image`
 - **3D**: `rotate-x`, `rotate-y`, `perspective`, `translate-z`

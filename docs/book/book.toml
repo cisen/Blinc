@@ -9,5 +9,5 @@ description = "A GPU-accelerated, reactive UI framework for Rust"
 build-dir = "../../target/book"
 
 [output.html]
-git-repository-url = "https://github.com/user/blinc"
-edit-url-template = "https://github.com/user/blinc/edit/main/docs/book/{path}"
+git-repository-url = "https://github.com/project-blinc/blinc"
+edit-url-template = "https://github.com/project-blinc/blinc/edit/main/docs/book/{path}"

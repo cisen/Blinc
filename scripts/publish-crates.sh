@@ -13,7 +13,9 @@ if [ -f ".env.cargo" ]; then
     source .env.cargo
 fi
 
-WAIT_TIME=20  # seconds between publishes (index propagation)
+WAIT_TIME=20   # seconds between publishes (index propagation)
+MAX_RETRIES=5  # retries per crate when index hasn't propagated yet
+RETRY_WAIT=30  # seconds between retries
 
 # Publish order (respects dependency graph)
 # Note: blinc_core has blinc_animation as dev-dep only, so core goes first
@@ -44,15 +46,36 @@ publish_crate() {
         return 0
     fi
 
-    # --no-verify skips local build check (which fails because deps may not
-    # be indexed yet). Crates are already verified by cargo check before release.
-    if cargo publish -p "$crate" --no-verify 2>&1; then
-        echo "Successfully published $crate@$version"
-        return 0
-    else
-        echo "Failed to publish $crate"
-        return 1
-    fi
+    # --no-verify skips local build check. However, the packaging step still
+    # resolves deps against the crates.io index. If a dependency was just published,
+    # the index may not have propagated yet. Retry with backoff to handle this.
+    local attempt=1
+    while [ $attempt -le $MAX_RETRIES ]; do
+        local output
+        output=$(cargo publish -p "$crate" --no-verify 2>&1)
+        local exit_code=$?
+
+        if [ $exit_code -eq 0 ]; then
+            echo "Successfully published $crate@$version"
+            return 0
+        fi
+
+        # Check if the error is due to index not yet updated (dep version not found)
+        if echo "$output" | grep -q "failed to select a version"; then
+            echo "Index not yet propagated (attempt $attempt/$MAX_RETRIES)"
+            echo "Waiting ${RETRY_WAIT}s for index to update..."
+            sleep $RETRY_WAIT
+            attempt=$((attempt + 1))
+        else
+            # Non-retryable error
+            echo "$output"
+            echo "Failed to publish $crate"
+            return 1
+        fi
+    done
+
+    echo "Failed to publish $crate after $MAX_RETRIES attempts (index propagation timeout)"
+    return 1
 }
 
 wait_for_rate_limit() {

@@ -1189,6 +1189,133 @@ Control how images fill their container:
 
 ---
 
+## Calc Expressions & Math Functions
+
+Blinc supports CSS `calc()` with full arithmetic, standard CSS math functions, and shader-inspired extensions. Any property that accepts a numeric value can use `calc()`.
+
+### Basic Arithmetic
+
+Standard `+`, `-`, `*`, `/` with mixed units:
+
+```css
+#panel {
+    width: calc(100% - 40px);
+    padding: calc(2 * 8px);
+    margin: calc(100% / 3);
+    height: calc(50vh - 20px);
+}
+```
+
+### Units in Calc
+
+All length units from the table above work inside `calc()`:
+
+```css
+width: calc(100vw - 300px);
+height: calc(50vh - 2em);
+rotate: calc(45deg + 0.25turn);
+transition-duration: calc(200ms + 0.1s);
+```
+
+Multiply unitless values by a unit literal to produce a dimension:
+
+```css
+/* Unitless env var → px */
+border-radius: calc(mix(4, 48, 0.5) * 1px);
+
+/* Unitless → degrees */
+rotate: calc(env(pointer-x) * 25deg);
+```
+
+### CSS Standard Functions
+
+| Function | Syntax | Description |
+| --- | --- | --- |
+| `min` | `min(a, b)` | Smaller of two values |
+| `max` | `max(a, b)` | Larger of two values |
+| `clamp` | `clamp(min, val, max)` | Constrain value to range |
+
+```css
+#card {
+    width: clamp(200px, 50%, 600px);
+    font-size: min(2em, 24px);
+    padding: max(8px, 2%);
+}
+```
+
+### Blinc Extension Functions
+
+These shader-inspired functions are available inside `calc()` for expressive, animation-friendly math:
+
+#### `mix(a, b, t)` — Linear Interpolation
+
+Returns `a + (b - a) * t`. When `t = 0` returns `a`, when `t = 1` returns `b`.
+
+```css
+/* Opacity: 30% at t=0, 100% at t=1 */
+opacity: calc(mix(0.3, 1.0, env(pointer-inside)));
+
+/* Border-radius between 4px and 48px */
+border-radius: calc(mix(4, 48, env(pointer-inside)) * 1px);
+```
+
+#### `smoothstep(edge0, edge1, x)` — Hermite Interpolation
+
+Returns a smooth 0→1 S-curve. Result is 0 when `x <= edge0`, 1 when `x >= edge1`, and smoothly interpolated between. Uses the Hermite formula: `t*t*(3 - 2*t)`.
+
+When `edge0 > edge1`, the curve inverts — useful for proximity effects (1 when close, 0 when far):
+
+```css
+/* Fade in as pointer approaches (distance 1.8→0 maps to opacity 0→1) */
+opacity: calc(smoothstep(1.8, 0.0, env(pointer-distance)));
+
+/* Sharp threshold at 0.5 (smoother than step) */
+opacity: calc(smoothstep(0.4, 0.6, env(pointer-inside)));
+```
+
+#### `step(edge, x)` — Hard Threshold
+
+Returns 0 if `x < edge`, 1 otherwise. Binary on/off switch:
+
+```css
+/* Fully visible or fully hidden */
+opacity: calc(step(0.5, env(pointer-inside)));
+```
+
+#### `remap(val, in_lo, in_hi, out_lo, out_hi)` — Range Mapping
+
+Linearly maps `val` from one range to another:
+
+```css
+/* Map pointer-x from [-1, 1] to [10, 50] for border-radius */
+border-radius: calc(remap(env(pointer-x), -1, 1, 10, 50) * 1px);
+```
+
+### Environment Variables
+
+`env()` references resolve to per-frame dynamic values. Currently used by the [pointer query](../advanced/pointer-query.md) system:
+
+```css
+#card {
+    pointer-space: self;
+    rotate-y: calc(env(pointer-x) * 25deg);
+    opacity: calc(mix(0.3, 1.0, env(pointer-inside)));
+}
+```
+
+See the [Pointer Query](../advanced/pointer-query.md) chapter for the full list of `env(pointer-*)` variables.
+
+### Percentage Values
+
+`%` in calc resolves against the parent dimension (width for horizontal properties, height for vertical):
+
+```css
+width: calc(50% - 20px);
+margin-left: calc(100% / 6);
+```
+
+---
+
 ## Error Handling
 
 The CSS parser is resilient — it collects errors without stopping:

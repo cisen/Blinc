@@ -62,6 +62,7 @@
 - [Element Query API](./advanced/element-query.md)
 - [Overlay System](./advanced/overlays.md)
 - [Custom State Machines](./advanced/state-machines.md)
+- [Pointer Query](./advanced/pointer-query.md)
 - [Performance Tips](./advanced/performance.md)
 - [Flow Shaders](./advanced/flow-shaders.md)
 

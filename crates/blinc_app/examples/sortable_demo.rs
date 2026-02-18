@@ -6,27 +6,6 @@
 //! - Sortable grid: 3x3 drag-to-reorder grid
 //!
 //! Run with: cargo run -p blinc_app --example sortable_demo --features windowed
-//!
-//! # Known Issues
-//!
-//! **Flicker when dragged item approaches container edge**
-//!
-//! When a dragged item nears the boundary of the parent container (e.g. the
-//! bottom or right edge of the grid), adjacent items may visually flicker or
-//! overlap for a few frames. A hysteresis bias (0.1 cell dead-zone) is applied
-//! to the swap threshold to reduce oscillation at mid-cell boundaries, but
-//! the artifact persists near container edges. Likely root causes:
-//!
-//! - The visual-only update path (`update_subtree_props_from_builder`) does
-//!   full prop replacement each frame during drag. When the dragged item's
-//!   transform places it near the container boundary, the swap detection and
-//!   the prop rebuild race across frames — the item list order changes one
-//!   frame before the visual offset adjusts.
-//! - FLIP animations may briefly fire for the dragged element itself before
-//!   the `transform.is_some()` guard filters it out on the next cycle.
-//! - Signal batching: each `State::set()` (items, drag_idx, drag_offset)
-//!   fires an independent signal, potentially causing multiple visual rebuilds
-//!   within a single frame with intermediate (inconsistent) state.
 
 use blinc_app::prelude::*;
 use blinc_app::windowed::{WindowedApp, WindowedContext};
@@ -96,6 +75,21 @@ struct ListItem {
     id: usize,
     label: String,
     color: Color,
+}
+
+/// Atomic state for sortable list: items + drag index change together
+/// to prevent intermediate frames where drag_idx points at the wrong item.
+#[derive(Clone, Debug, Default)]
+struct SortListState {
+    items: Vec<ListItem>,
+    drag_idx: Option<usize>,
+}
+
+/// Atomic state for sortable grid: items + drag index change together.
+#[derive(Clone, Debug, Default)]
+struct SortGridState {
+    items: Vec<ListItem>,
+    drag_idx: Option<usize>,
 }
 
 const ITEM_COLORS: [Color; 8] = [
@@ -329,48 +323,43 @@ fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
 
 fn sortable_list_section() -> Div {
     let blinc = BlincContextState::get();
-    let items: State<Vec<ListItem>> = blinc.use_state_keyed("sort_items", || make_items(7, "Item"));
-    let drag_idx: State<Option<usize>> = blinc.use_state_keyed("sort_drag_idx", || None);
+    let state: State<SortListState> = blinc.use_state_keyed("sort_state", || SortListState {
+        items: make_items(7, "Item"),
+        drag_idx: None,
+    });
     let drag_offset: State<f32> = blinc.use_state_keyed("sort_drag_offset", || 0.0);
     let swap_adj: State<f32> = blinc.use_state_keyed("sort_swap_adj", || 0.0);
 
     // Clones for on_state
-    let items_s = items.clone();
-    let drag_idx_s = drag_idx.clone();
+    let state_s = state.clone();
     let drag_offset_s = drag_offset.clone();
 
     // Clones for on_mouse_down
-    let items_md = items.clone();
-    let drag_idx_md = drag_idx.clone();
+    let state_md = state.clone();
     let swap_adj_md = swap_adj.clone();
 
     // Clones for on_drag
-    let items_d = items.clone();
-    let drag_idx_d = drag_idx.clone();
+    let state_d = state.clone();
     let drag_offset_d = drag_offset.clone();
     let swap_adj_d = swap_adj.clone();
 
     // Clones for on_drag_end
-    let drag_idx_de = drag_idx.clone();
+    let state_de = state.clone();
     let drag_offset_de = drag_offset.clone();
     let swap_adj_de = swap_adj.clone();
 
     let sort_container = stateful_with_key::<DragFSM>("sort-list-container")
-        .deps([
-            items.signal_id(),
-            drag_idx.signal_id(),
-            drag_offset.signal_id(),
-        ])
+        .deps([state.signal_id(), drag_offset.signal_id()])
         .on_state(move |_ctx| {
-            let items_val = items_s.get();
-            let idx = drag_idx_s.get();
+            let st = state_s.get();
             let offset = drag_offset_s.get();
 
-            let children: Vec<Div> = items_val
+            let children: Vec<Div> = st
+                .items
                 .iter()
                 .enumerate()
                 .map(|(i, item)| {
-                    let is_dragged = idx == Some(i);
+                    let is_dragged = st.drag_idx == Some(i);
                     let mut d = div()
                         .id(&format!("sort-{}", item.id))
                         .class("sort-item")
@@ -401,17 +390,20 @@ fn sortable_list_section() -> Div {
         })
         .class("sort-list")
         .on_mouse_down(move |e| {
-            let len = items_md.get().len();
+            let len = state_md.get().items.len();
             let idx = ((e.local_y / LIST_STEP).floor() as usize).min(len.saturating_sub(1));
-            drag_idx_md.set(Some(idx));
+            state_md.update(|mut s| {
+                s.drag_idx = Some(idx);
+                s
+            });
             swap_adj_md.set(0.0);
         })
         .on_drag(move |e| {
-            if let Some(current) = drag_idx_d.get() {
+            let st = state_d.get();
+            if let Some(current) = st.drag_idx {
                 let adj = swap_adj_d.get();
                 let visual_offset = e.drag_delta_y - adj;
-                let items_val = items_d.get();
-                let len = items_val.len();
+                let len = st.items.len();
 
                 // Hysteresis: require 60% of a cell to swap, preventing
                 // oscillation at the boundary (swap → reverse swap loop).
@@ -420,20 +412,30 @@ fn sortable_list_section() -> Div {
                 if slots != 0 {
                     let target = (current as i32 + slots).clamp(0, len as i32 - 1) as usize;
                     if target != current {
-                        items_d.update(|mut v| {
-                            let r = v.remove(current);
-                            v.insert(target, r);
-                            v
-                        });
-                        drag_idx_d.set(Some(target));
                         swap_adj_d.set(adj + (target as f32 - current as f32) * LIST_STEP);
+                        // Set visual offset BEFORE atomic items+idx update so the
+                        // structural rebuild callback reads the correct offset.
+                        drag_offset_d.set(visual_offset);
+                        // Atomic update: items + drag_idx change together in one
+                        // signal, preventing intermediate frames where drag_idx
+                        // points at the wrong item in a half-reordered array.
+                        state_d.update(|mut s| {
+                            let r = s.items.remove(current);
+                            s.items.insert(target, r);
+                            s.drag_idx = Some(target);
+                            s
+                        });
+                        return;
                     }
                 }
                 drag_offset_d.set(visual_offset);
             }
         })
         .on_drag_end(move |_e| {
-            drag_idx_de.set(None);
+            state_de.update(|mut s| {
+                s.drag_idx = None;
+                s
+            });
             drag_offset_de.set(0.0);
             swap_adj_de.set(0.0);
         });
@@ -588,58 +590,52 @@ fn build_swipe_item(item: &ListItem, items: State<Vec<ListItem>>) -> Stateful<Sw
 
 fn sortable_grid_section() -> Div {
     let blinc = BlincContextState::get();
-    let items: State<Vec<ListItem>> = blinc.use_state_keyed("grid_items", || make_items(9, "#"));
-    let drag_idx: State<Option<usize>> = blinc.use_state_keyed("grid_drag_idx", || None);
+    let state: State<SortGridState> = blinc.use_state_keyed("grid_state", || SortGridState {
+        items: make_items(9, "#"),
+        drag_idx: None,
+    });
     let drag_ox: State<f32> = blinc.use_state_keyed("grid_drag_ox", || 0.0);
     let drag_oy: State<f32> = blinc.use_state_keyed("grid_drag_oy", || 0.0);
     let swap_ax: State<f32> = blinc.use_state_keyed("grid_swap_ax", || 0.0);
     let swap_ay: State<f32> = blinc.use_state_keyed("grid_swap_ay", || 0.0);
 
     // Clones for on_state
-    let items_s = items.clone();
-    let drag_idx_s = drag_idx.clone();
+    let state_s = state.clone();
     let drag_ox_s = drag_ox.clone();
     let drag_oy_s = drag_oy.clone();
 
     // Clones for on_mouse_down
-    let items_md = items.clone();
-    let drag_idx_md = drag_idx.clone();
+    let state_md = state.clone();
     let swap_ax_md = swap_ax.clone();
     let swap_ay_md = swap_ay.clone();
 
     // Clones for on_drag
-    let items_d = items.clone();
-    let drag_idx_d = drag_idx.clone();
+    let state_d = state.clone();
     let drag_ox_d = drag_ox.clone();
     let drag_oy_d = drag_oy.clone();
     let swap_ax_d = swap_ax.clone();
     let swap_ay_d = swap_ay.clone();
 
     // Clones for on_drag_end
-    let drag_idx_de = drag_idx.clone();
+    let state_de = state.clone();
     let drag_ox_de = drag_ox.clone();
     let drag_oy_de = drag_oy.clone();
     let swap_ax_de = swap_ax.clone();
     let swap_ay_de = swap_ay.clone();
 
     let grid = stateful_with_key::<DragFSM>("grid-container")
-        .deps([
-            items.signal_id(),
-            drag_idx.signal_id(),
-            drag_ox.signal_id(),
-            drag_oy.signal_id(),
-        ])
+        .deps([state.signal_id(), drag_ox.signal_id(), drag_oy.signal_id()])
         .on_state(move |_ctx| {
-            let items_val = items_s.get();
-            let idx = drag_idx_s.get();
+            let st = state_s.get();
             let ox = drag_ox_s.get();
             let oy = drag_oy_s.get();
 
-            let children: Vec<Div> = items_val
+            let children: Vec<Div> = st
+                .items
                 .iter()
                 .enumerate()
                 .map(|(i, item)| {
-                    let is_dragged = idx == Some(i);
+                    let is_dragged = st.drag_idx == Some(i);
                     let mut d = div()
                         .id(&format!("grid-{}", item.id))
                         .class("grid-item")
@@ -665,22 +661,25 @@ fn sortable_grid_section() -> Div {
         })
         .class("grid-container")
         .on_mouse_down(move |e| {
-            let len = items_md.get().len();
+            let len = state_md.get().items.len();
             let col = (e.local_x / GRID_STEP).floor() as i32;
             let row = (e.local_y / GRID_STEP).floor() as i32;
             let idx = ((row * GRID_COLS + col).max(0) as usize).min(len.saturating_sub(1));
-            drag_idx_md.set(Some(idx));
+            state_md.update(|mut s| {
+                s.drag_idx = Some(idx);
+                s
+            });
             swap_ax_md.set(0.0);
             swap_ay_md.set(0.0);
         })
         .on_drag(move |e| {
-            if let Some(current) = drag_idx_d.get() {
+            let st = state_d.get();
+            if let Some(current) = st.drag_idx {
                 let ax = swap_ax_d.get();
                 let ay = swap_ay_d.get();
                 let vx = e.drag_delta_x - ax;
                 let vy = e.drag_delta_y - ay;
-                let items_val = items_d.get();
-                let len = items_val.len();
+                let len = st.items.len();
 
                 let current_col = current as i32 % GRID_COLS;
                 let current_row = current as i32 / GRID_COLS;
@@ -699,18 +698,26 @@ fn sortable_grid_section() -> Div {
                         (target_row * GRID_COLS + target_col).clamp(0, len as i32 - 1) as usize;
 
                     if target != current {
-                        items_d.update(|mut v| {
-                            let r = v.remove(current);
-                            v.insert(target, r);
-                            v
-                        });
                         let dx = (target as i32 % GRID_COLS - current as i32 % GRID_COLS) as f32
                             * GRID_STEP;
                         let dy = (target as i32 / GRID_COLS - current as i32 / GRID_COLS) as f32
                             * GRID_STEP;
-                        drag_idx_d.set(Some(target));
                         swap_ax_d.set(ax + dx);
                         swap_ay_d.set(ay + dy);
+                        // Set visual offsets BEFORE the atomic items+idx update so
+                        // the structural rebuild callback reads correct offsets.
+                        drag_ox_d.set(vx);
+                        drag_oy_d.set(vy);
+                        // Atomic update: items + drag_idx change together in one
+                        // signal, preventing intermediate frames where drag_idx
+                        // points at the wrong item in a half-reordered array.
+                        state_d.update(|mut s| {
+                            let r = s.items.remove(current);
+                            s.items.insert(target, r);
+                            s.drag_idx = Some(target);
+                            s
+                        });
+                        return;
                     }
                 }
                 drag_ox_d.set(vx);
@@ -718,7 +725,10 @@ fn sortable_grid_section() -> Div {
             }
         })
         .on_drag_end(move |_e| {
-            drag_idx_de.set(None);
+            state_de.update(|mut s| {
+                s.drag_idx = None;
+                s
+            });
             drag_ox_de.set(0.0);
             drag_oy_de.set(0.0);
             swap_ax_de.set(0.0);

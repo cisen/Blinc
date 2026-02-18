@@ -11,8 +11,8 @@ keywords = ["ui", "gui", "theme", "design", "blinc"]
 categories = ["gui"]
 
 [dependencies]
-blinc_core = { path = "../blinc_core", version = "0.1.12" }
-blinc_animation = { path = "../blinc_animation", version = "0.1.12" }
+blinc_core = { path = "../blinc_core", version = "0.1.13" }
+blinc_animation = { path = "../blinc_animation", version = "0.1.13" }
 
 # Utilities
 tracing = { workspace = true }

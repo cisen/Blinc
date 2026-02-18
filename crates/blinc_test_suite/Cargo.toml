@@ -7,6 +7,7 @@ repository.workspace = true
 documentation = "https://docs.rs/blinc_test_suite"
 rust-version.workspace = true
 description = "Visual test suite for Blinc UI framework rendering capabilities"
+publish = false
 
 [lib]
 crate-type = ["lib"]
@@ -22,12 +23,12 @@ interactive = []
 
 [dependencies]
 # Core Blinc crates
-blinc_core = { path = "../blinc_core", version = "0.1.12" }
-blinc_gpu = { path = "../blinc_gpu", version = "0.1.12" }
-blinc_layout = { path = "../blinc_layout", version = "0.1.12" }
-blinc_paint = { path = "../blinc_paint", version = "0.1.12" }
-blinc_text = { path = "../blinc_text", version = "0.1.12" }
-blinc_svg = { path = "../blinc_svg", version = "0.1.12" }
+blinc_core = { path = "../blinc_core", version = "0.1.13" }
+blinc_gpu = { path = "../blinc_gpu", version = "0.1.13" }
+blinc_layout = { path = "../blinc_layout", version = "0.1.13" }
+blinc_paint = { path = "../blinc_paint", version = "0.1.13" }
+blinc_text = { path = "../blinc_text", version = "0.1.13" }
+blinc_svg = { path = "../blinc_svg", version = "0.1.13" }
 
 # GPU and windowing
 wgpu.workspace = true

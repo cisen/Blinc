@@ -10,6 +10,7 @@ rust-version.workspace = true
 keywords = ["fuchsia", "zircon", "kernel", "blinc"]
 categories = ["os::fuchsia-api-bindings"]
 links = "zircon"
+publish = false
 
 [lib]
 crate-type = ["lib"]

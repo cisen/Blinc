@@ -9,6 +9,7 @@ documentation = "https://docs.rs/blinc_platform_harmony"
 rust-version.workspace = true
 keywords = ["ui", "gui", "harmonyos", "ohos", "blinc"]
 categories = ["gui"]
+publish = false
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("ohos"))'] }

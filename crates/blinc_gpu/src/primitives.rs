@@ -788,43 +788,6 @@ impl GpuGlassPrimitive {
     }
 }
 
-/// Convert a layout GlassPanel to GPU primitive
-///
-/// This bridges the layout system's material definitions to the GPU rendering system.
-impl From<&blinc_layout::GlassPanel> for GpuGlassPrimitive {
-    fn from(panel: &blinc_layout::GlassPanel) -> Self {
-        let mat = &panel.material;
-        let bounds = &panel.bounds;
-        let cr = &panel.corner_radius;
-
-        let mut glass = GpuGlassPrimitive::new(bounds.x, bounds.y, bounds.width, bounds.height)
-            .with_corner_radius_per_corner(
-                cr.top_left,
-                cr.top_right,
-                cr.bottom_right,
-                cr.bottom_left,
-            )
-            .with_blur(mat.blur)
-            .with_tint(mat.tint.r, mat.tint.g, mat.tint.b, mat.tint.a)
-            .with_saturation(mat.saturation)
-            .with_brightness(mat.brightness)
-            .with_noise(mat.noise)
-            .with_border_thickness(mat.border_thickness);
-
-        // Apply shadow if present
-        if let Some(ref shadow) = mat.shadow {
-            glass = glass.with_shadow_offset(
-                shadow.blur,
-                shadow.opacity,
-                shadow.offset.0,
-                shadow.offset.1,
-            );
-        }
-
-        glass
-    }
-}
-
 /// A GPU text glyph instance (matches shader `GlyphInstance` struct)
 ///
 /// Memory layout:

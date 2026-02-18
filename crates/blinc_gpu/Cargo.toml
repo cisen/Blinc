@@ -26,10 +26,9 @@ fuchsia = ["vulkan"]                    # Fuchsia uses Vulkan via Scenic (native
 harmony = ["vulkan"]                    # HarmonyOS prefers Vulkan (native windowing)
 
 [dependencies]
-blinc_core = { path = "../blinc_core", version = "0.1.12" }
-blinc_layout = { path = "../blinc_layout", version = "0.1.12" }
-blinc_paint = { path = "../blinc_paint", version = "0.1.12" }
-blinc_text = { path = "../blinc_text", version = "0.1.12" }
+blinc_core = { path = "../blinc_core", version = "0.1.13" }
+blinc_paint = { path = "../blinc_paint", version = "0.1.13" }
+blinc_text = { path = "../blinc_text", version = "0.1.13" }
 
 # GPU
 wgpu.workspace = true

@@ -9,6 +9,7 @@ documentation = "https://docs.rs/blinc_platform_fuchsia"
 rust-version.workspace = true
 keywords = ["ui", "gui", "fuchsia", "blinc"]
 categories = ["gui"]
+publish = false
 
 [lib]
 crate-type = ["lib"]

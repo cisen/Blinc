@@ -7,18 +7,19 @@ license.workspace = true
 repository.workspace = true
 documentation = "https://docs.rs/blinc_runtime"
 rust-version.workspace = true
+publish = false
 
 [features]
 default = ["full"]
 full = ["blinc_core", "blinc_animation", "blinc_layout", "blinc_gpu", "blinc_paint"]
 
 [dependencies]
-blinc_core = { path = "../blinc_core", version = "0.1.12", optional = true }
-blinc_animation = { path = "../blinc_animation", version = "0.1.12", optional = true }
-blinc_layout = { path = "../blinc_layout", version = "0.1.12", optional = true }
-blinc_gpu = { path = "../blinc_gpu", version = "0.1.12", optional = true }
-blinc_paint = { path = "../blinc_paint", version = "0.1.12", optional = true }
-# blinc_cn = { path = "../blinc_cn", version = "0.1.12", optional = true }
+blinc_core = { path = "../blinc_core", version = "0.1.13", optional = true }
+blinc_animation = { path = "../blinc_animation", version = "0.1.13", optional = true }
+blinc_layout = { path = "../blinc_layout", version = "0.1.13", optional = true }
+blinc_gpu = { path = "../blinc_gpu", version = "0.1.13", optional = true }
+blinc_paint = { path = "../blinc_paint", version = "0.1.13", optional = true }
+# blinc_cn = { path = "../blinc_cn", version = "0.1.13", optional = true }
 
 # Errors
 anyhow.workspace = true

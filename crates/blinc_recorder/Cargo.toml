@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 documentation = "https://docs.rs/blinc_recorder"
 rust-version.workspace = true
+publish = false
 
 [features]
 default = []
@@ -14,7 +15,7 @@ png = ["dep:png"]
 
 [dependencies]
 png = { version = "0.17", optional = true }
-blinc_core = { path = "../blinc_core", version = "0.1.12" }
+blinc_core = { path = "../blinc_core", version = "0.1.13" }
 parking_lot = "0.12"
 serde = { version = "1.0", features = ["derive"] }
 tracing.workspace = true

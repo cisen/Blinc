@@ -9,6 +9,7 @@ documentation = "https://docs.rs/blinc_fidl"
 rust-version.workspace = true
 keywords = ["fuchsia", "fidl", "ipc", "blinc"]
 categories = ["encoding", "os::fuchsia-api-bindings"]
+publish = false
 
 [lib]
 crate-type = ["lib"]

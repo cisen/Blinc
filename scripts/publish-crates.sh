@@ -18,7 +18,8 @@ MAX_RETRIES=8   # retries per crate when index hasn't propagated yet
 RETRY_WAIT=45   # seconds between retries (~6 min max wait per crate)
 
 # Publish order (respects dependency graph)
-# Note: blinc_core has blinc_animation as dev-dep only, so core goes first
+# Note: blinc_core's dev-dep on blinc_animation has no version pin (path-only),
+# so it's stripped from the published crate, allowing core to go first.
 PHASE1=(blinc_macros blinc_platform blinc_icons blinc_core)
 PHASE2=(blinc_animation blinc_paint blinc_svg blinc_text)
 PHASE3=(blinc_theme blinc_image blinc_layout)

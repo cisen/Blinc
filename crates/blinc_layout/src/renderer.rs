@@ -8218,6 +8218,8 @@ impl RenderTree {
                 "pointer-angle",
                 "pointer-inside",
                 "pointer-active",
+                "pointer-pressure",
+                "pointer-touch-count",
                 "pointer-hover-duration",
             ] {
                 if let Some(val) = pointer_state.resolve_env(name) {

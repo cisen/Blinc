@@ -6,6 +6,14 @@ All notable changes to `blinc_layout` will be documented in this file.
 
 ### Added
 
+#### Pointer Query Pressure & Touch Count
+
+- `env(pointer-pressure)` — normalized touch/click pressure (0.0-1.0), smoothed via `pointer-smoothing`
+- `env(pointer-touch-count)` — number of active touch points (0 for mouse input)
+- `set_pressure()` and `set_touch_count()` on `PointerQueryState` for per-event platform input
+- Pressure smoothing using same exponential decay as position smoothing
+- Registered `pointer-pressure` and `pointer-touch-count` env var names in renderer
+
 #### Flow Shader Macro & Builders
 
 - `flow!` macro for defining `@flow` shaders using Rust identifiers and primitives (no raw strings)

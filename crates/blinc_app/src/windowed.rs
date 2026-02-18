@@ -1748,6 +1748,9 @@ impl WindowedApp {
             OverlayContext::init(Arc::clone(&overlays));
         }
 
+        // Track active touch IDs for pointer query touch count
+        let mut active_touch_ids = std::collections::HashSet::<u64>::new();
+
         event_loop
             .run(move |event, window| {
                 match event {
@@ -2036,6 +2039,7 @@ impl WindowedApp {
                                         let lx = x / scale;
                                         let ly = y / scale;
                                         let btn = convert_mouse_button(button);
+                                        windowed_ctx.pointer_query.set_pressure(1.0);
 
                                         // Check for backdrop clicks (dismisses overlays)
                                         // This still needs special handling because backdrop clicks should
@@ -2077,6 +2081,7 @@ impl WindowedApp {
                                         let lx = x / scale;
                                         let ly = y / scale;
                                         let btn = convert_mouse_button(button);
+                                        windowed_ctx.pointer_query.set_pressure(0.0);
 
                                         // Route through main tree (includes overlay content)
                                         router.on_mouse_up(tree, lx, ly, btn);
@@ -2256,62 +2261,85 @@ impl WindowedApp {
                                         }
                                     }
                                 },
-                                InputEvent::Touch(touch_event) => match touch_event {
-                                    TouchEvent::Started { x, y, .. } => {
-                                        let lx = x / scale;
-                                        let ly = y / scale;
-                                        router.on_mouse_down(tree, lx, ly, MouseButton::Left);
-                                        let (local_x, local_y) = router.last_hit_local();
-                                        let (bounds_x, bounds_y) = router.last_hit_bounds_pos();
-                                        let (bounds_width, bounds_height) = router.last_hit_bounds();
-                                        for event in pending_events.iter_mut() {
-                                            event.mouse_x = lx;
-                                            event.mouse_y = ly;
-                                            event.local_x = local_x;
-                                            event.local_y = local_y;
-                                            event.bounds_x = bounds_x;
-                                            event.bounds_y = bounds_y;
-                                            event.bounds_width = bounds_width;
-                                            event.bounds_height = bounds_height;
+                                InputEvent::Touch(touch_event) => {
+                                    // Track active touch IDs for touch count
+                                    match &touch_event {
+                                        TouchEvent::Started { .. } => {
+                                            active_touch_ids.insert(touch_event.id());
+                                            windowed_ctx.pointer_query.set_touch_count(active_touch_ids.len() as u32);
                                         }
+                                        TouchEvent::Ended { .. } => {
+                                            active_touch_ids.remove(&touch_event.id());
+                                            windowed_ctx.pointer_query.set_touch_count(active_touch_ids.len() as u32);
+                                        }
+                                        TouchEvent::Cancelled { .. } => {
+                                            active_touch_ids.remove(&touch_event.id());
+                                            windowed_ctx.pointer_query.set_touch_count(active_touch_ids.len() as u32);
+                                        }
+                                        _ => {}
                                     }
-                                    TouchEvent::Moved { x, y, .. } => {
-                                        let lx = x / scale;
-                                        let ly = y / scale;
+                                    match touch_event {
+                                        TouchEvent::Started { x, y, pressure, .. } => {
+                                            let lx = x / scale;
+                                            let ly = y / scale;
+                                            windowed_ctx.pointer_query.set_pressure(pressure);
+                                            router.on_mouse_down(tree, lx, ly, MouseButton::Left);
+                                            let (local_x, local_y) = router.last_hit_local();
+                                            let (bounds_x, bounds_y) = router.last_hit_bounds_pos();
+                                            let (bounds_width, bounds_height) = router.last_hit_bounds();
+                                            for event in pending_events.iter_mut() {
+                                                event.mouse_x = lx;
+                                                event.mouse_y = ly;
+                                                event.local_x = local_x;
+                                                event.local_y = local_y;
+                                                event.bounds_x = bounds_x;
+                                                event.bounds_y = bounds_y;
+                                                event.bounds_width = bounds_width;
+                                                event.bounds_height = bounds_height;
+                                            }
+                                        }
+                                        TouchEvent::Moved { x, y, pressure, .. } => {
+                                            let lx = x / scale;
+                                            let ly = y / scale;
+                                            windowed_ctx.pointer_query.set_pressure(pressure);
 
-                                        // Use occlusion-aware hit testing for touch move as well
-                                        let overlay_bounds = windowed_ctx.overlay_manager.get_visible_overlay_bounds();
-                                        let overlay_layer_id = tree.query_by_id(
-                                            blinc_layout::widgets::overlay::OVERLAY_LAYER_ID
-                                        );
-                                        router.on_mouse_move_with_occlusion(
-                                            tree,
-                                            lx,
-                                            ly,
-                                            &overlay_bounds,
-                                            overlay_layer_id,
-                                        );
+                                            // Use occlusion-aware hit testing for touch move as well
+                                            let overlay_bounds = windowed_ctx.overlay_manager.get_visible_overlay_bounds();
+                                            let overlay_layer_id = tree.query_by_id(
+                                                blinc_layout::widgets::overlay::OVERLAY_LAYER_ID
+                                            );
+                                            router.on_mouse_move_with_occlusion(
+                                                tree,
+                                                lx,
+                                                ly,
+                                                &overlay_bounds,
+                                                overlay_layer_id,
+                                            );
 
-                                        for event in pending_events.iter_mut() {
-                                            event.mouse_x = lx;
-                                            event.mouse_y = ly;
+                                            for event in pending_events.iter_mut() {
+                                                event.mouse_x = lx;
+                                                event.mouse_y = ly;
+                                            }
+                                        }
+                                        TouchEvent::Ended { x, y, .. } => {
+                                            let lx = x / scale;
+                                            let ly = y / scale;
+                                            windowed_ctx.pointer_query.set_pressure(0.0);
+                                            router.on_mouse_up(tree, lx, ly, MouseButton::Left);
+                                            for event in pending_events.iter_mut() {
+                                                event.mouse_x = lx;
+                                                event.mouse_y = ly;
+                                            }
+                                        }
+                                        TouchEvent::Cancelled { .. } => {
+                                            // Touch cancelled - treat like mouse leave
+                                            // This will emit POINTER_UP if there was a pressed target
+                                            windowed_ctx.pointer_query.set_pressure(0.0);
+                                            windowed_ctx.pointer_query.set_touch_count(0);
+                                            router.on_mouse_leave();
                                         }
                                     }
-                                    TouchEvent::Ended { x, y, .. } => {
-                                        let lx = x / scale;
-                                        let ly = y / scale;
-                                        router.on_mouse_up(tree, lx, ly, MouseButton::Left);
-                                        for event in pending_events.iter_mut() {
-                                            event.mouse_x = lx;
-                                            event.mouse_y = ly;
-                                        }
-                                    }
-                                    TouchEvent::Cancelled { .. } => {
-                                        // Touch cancelled - treat like mouse leave
-                                        // This will emit POINTER_UP if there was a pressed target
-                                        router.on_mouse_leave();
-                                    }
-                                },
+                                }
                                 InputEvent::Scroll { delta_x, delta_y, phase } => {
                                     let (mx, my) = router.mouse_position();
                                     // Scroll deltas are also in physical pixels, convert to logical

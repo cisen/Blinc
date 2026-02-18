@@ -6,6 +6,14 @@ All notable changes to `blinc_app` will be documented in this file.
 
 ### Added
 
+#### Pointer Query Pressure & Touch Physics
+
+- Desktop: mouse press → binary 0/1 pressure, touch events → hardware pressure via `Force::Normalized`
+- Desktop: `HashSet<u64>` active touch ID tracking for accurate `pointer-touch-count`
+- iOS: forward `touch.force` to `pointer_query.set_pressure()`, track active touch count
+- iOS: `blinc_handle_touch_with_force` FFI for Swift callers to pass force data (backward-compatible)
+- Android: forward primary pointer pressure and touch count from `MotionEvent`
+
 #### Flow Shader Direct Graph Support
 
 - `FlowElement` carries optional `Arc<FlowGraph>` for direct graph rendering (bypasses stylesheet lookup)

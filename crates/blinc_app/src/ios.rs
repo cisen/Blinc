@@ -527,6 +527,22 @@ impl IOSRenderContext {
         let gesture = self.gesture_detector.process(&touch);
         let active_touches = self.gesture_detector.active_touch_count();
 
+        // Forward touch force/pressure and touch count to pointer query
+        match touch.phase {
+            TouchPhase::Began | TouchPhase::Moved => {
+                self.windowed_ctx.pointer_query.set_pressure(touch.force);
+                self.windowed_ctx
+                    .pointer_query
+                    .set_touch_count(active_touches as u32);
+            }
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                self.windowed_ctx.pointer_query.set_pressure(0.0);
+                self.windowed_ctx
+                    .pointer_query
+                    .set_touch_count(active_touches as u32);
+            }
+        }
+
         let tree = match &self.render_tree {
             Some(t) => t,
             None => {
@@ -1028,6 +1044,47 @@ pub extern "C" fn blinc_handle_touch(
         (*ctx).handle_touch(touch);
     }
     tracing::trace!("[Blinc FFI] blinc_handle_touch completed");
+}
+
+/// Handle a touch event with force/pressure (C FFI for Swift)
+///
+/// Same as `blinc_handle_touch` but includes force pressure from 3D Touch / Haptic Touch.
+/// Use this for pressure-sensitive interactions via `env(pointer-pressure)` in CSS.
+///
+/// # Arguments
+/// * `ctx` - Render context pointer
+/// * `touch_id` - Unique touch identifier
+/// * `x` - X position in logical points
+/// * `y` - Y position in logical points
+/// * `phase` - Touch phase: 0=began, 1=moved, 2=ended, 3=cancelled
+/// * `force` - Normalized force (0.0-1.0), from `UITouch.force / UITouch.maximumPossibleForce`
+///
+/// # Safety
+/// `ctx` must be a valid pointer returned by `blinc_create_context`.
+#[no_mangle]
+pub extern "C" fn blinc_handle_touch_with_force(
+    ctx: *mut IOSRenderContext,
+    touch_id: u64,
+    x: f32,
+    y: f32,
+    phase: i32,
+    force: f32,
+) {
+    if ctx.is_null() {
+        return;
+    }
+
+    let touch_phase = match phase {
+        0 => TouchPhase::Began,
+        1 => TouchPhase::Moved,
+        2 => TouchPhase::Ended,
+        _ => TouchPhase::Cancelled,
+    };
+
+    let touch = blinc_platform_ios::Touch::with_force(touch_id, x, y, touch_phase, force);
+    unsafe {
+        (*ctx).handle_touch(touch);
+    }
 }
 
 /// Set the focus state (C FFI for Swift)

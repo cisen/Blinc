@@ -120,6 +120,8 @@ Once `pointer-space` is set on an element, these `env()` variables resolve insid
 | `env(pointer-angle)` | float | Angle from origin (radians, 0 = right, pi/2 = up) |
 | `env(pointer-inside)` | 0.0/1.0 | 1.0 if cursor is inside element, 0.0 otherwise (smoothed) |
 | `env(pointer-active)` | 0.0/1.0 | 1.0 if mouse button is pressed while over element |
+| `env(pointer-pressure)` | float | Touch/click pressure (0.0-1.0). Mouse: binary 0/1. Touch: hardware pressure (smoothed) |
+| `env(pointer-touch-count)` | float | Number of active touch points (0 for mouse input) |
 | `env(pointer-hover-duration)` | float | Seconds since cursor entered (0 if outside) |
 
 ### Using `pointer-inside` as a Gate
@@ -276,6 +278,22 @@ Card rotates gently following cursor x-position.
 
     rotate: calc(env(pointer-x) * env(pointer-inside) * 5deg);
     opacity: calc(mix(0.5, 1.0, env(pointer-inside)));
+}
+```
+
+### Pressure Response
+
+Scale and opacity respond to touch pressure or click state. On desktop, mouse clicks produce a binary 0→1 pressure that smooths naturally via `pointer-smoothing`. On mobile devices with 3D Touch or pressure-sensitive screens, the response is continuous.
+
+```css
+#pressure-card {
+    pointer-space: self;
+    pointer-smoothing: 0.06;
+
+    /* Scale up slightly when pressed, proportional to pressure */
+    scale: calc(1.0 + env(pointer-pressure) * 0.1);
+    /* Full opacity when pressed hard */
+    opacity: calc(mix(0.4, 1.0, env(pointer-pressure)));
 }
 ```
 

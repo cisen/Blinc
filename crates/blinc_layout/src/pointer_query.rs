@@ -27,6 +27,8 @@
 //! - `env(pointer-angle)` — angle from origin (radians)
 //! - `env(pointer-inside)` — 1.0 if pointer is inside, 0.0 otherwise
 //! - `env(pointer-active)` — 1.0 if pointer is pressed, 0.0 otherwise
+//! - `env(pointer-pressure)` — normalized touch/click pressure (0.0-1.0)
+//! - `env(pointer-touch-count)` — number of active touch points (0 for mouse)
 //! - `env(pointer-hover-duration)` — seconds since pointer entered
 
 use std::collections::HashMap;
@@ -102,12 +104,18 @@ pub struct ElementPointerState {
     pub smooth_inside: f32,
     /// Whether the pointer button is pressed while over this element
     pub active: bool,
+    /// Smoothed pointer pressure (0.0-1.0)
+    /// Touch: actual hardware pressure. Mouse: 0.0 released, 1.0 pressed.
+    pub pressure: f32,
+    /// Number of active touch points (0 for mouse-only input)
+    pub touch_count: u32,
     /// Seconds since pointer entered (0 if not inside)
     pub hover_duration: f32,
 
     // Internal smoothing state
     smooth_x: f32,
     smooth_y: f32,
+    smooth_pressure: f32,
     prev_x: f32,
     prev_y: f32,
     enter_time: Option<f64>,
@@ -126,9 +134,12 @@ impl Default for ElementPointerState {
             inside: false,
             smooth_inside: 0.0,
             active: false,
+            pressure: 0.0,
+            touch_count: 0,
             hover_duration: 0.0,
             smooth_x: 0.0,
             smooth_y: 0.0,
+            smooth_pressure: 0.0,
             prev_x: 0.0,
             prev_y: 0.0,
             enter_time: None,
@@ -149,6 +160,8 @@ impl ElementPointerState {
             "pointer-angle" => Some(self.angle),
             "pointer-inside" => Some(self.smooth_inside),
             "pointer-active" => Some(if self.active { 1.0 } else { 0.0 }),
+            "pointer-pressure" => Some(self.pressure),
+            "pointer-touch-count" => Some(self.touch_count as f32),
             "pointer-hover-duration" => Some(self.hover_duration),
             _ => None,
         }
@@ -165,6 +178,11 @@ pub struct PointerQueryState {
     elements: HashMap<String, ElementPointerState>,
     /// Configs from CSS, keyed by element string ID
     configs: HashMap<String, PointerSpaceConfig>,
+    /// Raw pointer pressure from the current input frame (0.0-1.0).
+    /// Set per-event via `set_pressure()`, consumed by `update()` for smoothing.
+    raw_pressure: f32,
+    /// Number of active touch points (0 for mouse-only input).
+    touch_count: u32,
 }
 
 impl PointerQueryState {
@@ -223,6 +241,20 @@ impl PointerQueryState {
             self.configs.insert(id.clone(), config);
             self.elements.entry(id).or_default();
         }
+    }
+
+    /// Set the current raw pointer pressure (0.0-1.0).
+    /// Call this per-event before `update()`.
+    /// - Touch: actual hardware pressure from platform
+    /// - Mouse: 0.0 when released, 1.0 when pressed
+    pub fn set_pressure(&mut self, pressure: f32) {
+        self.raw_pressure = pressure.clamp(0.0, 1.0);
+    }
+
+    /// Set the current active touch count.
+    /// 0 for mouse-only input, 1+ for touch input.
+    pub fn set_touch_count(&mut self, count: u32) {
+        self.touch_count = count;
     }
 
     /// Check if any elements are registered for pointer tracking
@@ -287,6 +319,26 @@ impl PointerQueryState {
 
             // Active state (pressed while over element)
             state.active = state.inside && is_pressed;
+
+            // Pressure: use raw pressure when active, decay to 0 otherwise
+            let target_pressure = if state.inside && is_pressed {
+                self.raw_pressure
+            } else {
+                0.0
+            };
+            if config.smoothing > 0.0 && dt > 0.0 {
+                let alpha = 1.0 - (-dt / config.smoothing).exp();
+                state.smooth_pressure += (target_pressure - state.smooth_pressure) * alpha;
+                if (state.smooth_pressure - target_pressure).abs() < 0.001 {
+                    state.smooth_pressure = target_pressure;
+                }
+            } else {
+                state.smooth_pressure = target_pressure;
+            }
+            state.pressure = state.smooth_pressure;
+
+            // Touch count (global, not per-element, no smoothing)
+            state.touch_count = self.touch_count;
 
             // Compute raw normalized position based on config
             // Only compute meaningful position when we have bounds (hovered)
@@ -609,6 +661,100 @@ mod tests {
         assert_eq!(pq.len(), 2);
         pq.clear();
         assert!(pq.is_empty());
+    }
+
+    #[test]
+    fn test_pressure_env_resolution() {
+        let state = ElementPointerState {
+            pressure: 0.75,
+            touch_count: 2,
+            ..Default::default()
+        };
+        assert_eq!(state.resolve_env("pointer-pressure"), Some(0.75));
+        assert_eq!(state.resolve_env("pointer-touch-count"), Some(2.0));
+    }
+
+    #[test]
+    fn test_pressure_without_smoothing() {
+        let mut pq = PointerQueryState::new();
+        pq.register("card", PointerSpaceConfig::default());
+
+        // Set pressure and update with mouse inside + pressed
+        pq.set_pressure(0.6);
+        pq.update(200.0, 200.0, true, 0.016, 1.0, |_| {
+            Some((100.0, 100.0, 200.0, 200.0))
+        });
+
+        let state = pq.get("card").unwrap();
+        assert!(
+            (state.pressure - 0.6).abs() < 0.01,
+            "pressure={}, expected 0.6",
+            state.pressure
+        );
+    }
+
+    #[test]
+    fn test_pressure_with_smoothing() {
+        let mut pq = PointerQueryState::new();
+        pq.register(
+            "card",
+            PointerSpaceConfig {
+                smoothing: 0.1,
+                ..Default::default()
+            },
+        );
+
+        // Apply pressure
+        pq.set_pressure(1.0);
+        pq.update(200.0, 200.0, true, 0.016, 1.0, |_| {
+            Some((100.0, 100.0, 200.0, 200.0))
+        });
+
+        let state = pq.get("card").unwrap();
+        // With smoothing, pressure should be moving toward 1.0 but not there yet
+        assert!(state.pressure > 0.0, "pressure should be increasing");
+        assert!(state.pressure < 1.0, "pressure should lag due to smoothing");
+    }
+
+    #[test]
+    fn test_pressure_decays_when_released() {
+        let mut pq = PointerQueryState::new();
+        pq.register("card", PointerSpaceConfig::default());
+
+        // Press with pressure
+        pq.set_pressure(1.0);
+        pq.update(200.0, 200.0, true, 0.016, 1.0, |_| {
+            Some((100.0, 100.0, 200.0, 200.0))
+        });
+        assert!((pq.get("card").unwrap().pressure - 1.0).abs() < 0.01);
+
+        // Release
+        pq.set_pressure(0.0);
+        pq.update(200.0, 200.0, false, 0.016, 1.016, |_| {
+            Some((100.0, 100.0, 200.0, 200.0))
+        });
+        assert!(
+            (pq.get("card").unwrap().pressure - 0.0).abs() < 0.01,
+            "pressure should decay to 0 without smoothing"
+        );
+    }
+
+    #[test]
+    fn test_touch_count() {
+        let mut pq = PointerQueryState::new();
+        pq.register("card", PointerSpaceConfig::default());
+
+        pq.set_touch_count(3);
+        pq.update(200.0, 200.0, false, 0.016, 1.0, |_| {
+            Some((100.0, 100.0, 200.0, 200.0))
+        });
+        assert_eq!(pq.get("card").unwrap().touch_count, 3);
+
+        pq.set_touch_count(0);
+        pq.update(200.0, 200.0, false, 0.016, 1.016, |_| {
+            Some((100.0, 100.0, 200.0, 200.0))
+        });
+        assert_eq!(pq.get("card").unwrap().touch_count, 0);
     }
 
     #[test]

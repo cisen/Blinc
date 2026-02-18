@@ -475,6 +475,8 @@ impl AndroidApp {
                                     if pointer_count == 0 {
                                         if action == MotionAction::Cancel {
                                             tracing::debug!("Touch CANCEL");
+                                            windowed_ctx.pointer_query.set_pressure(0.0);
+                                            windowed_ctx.pointer_query.set_touch_count(0);
                                             router.on_mouse_leave();
                                             pinch_state.reset();
                                             last_touch_x = None;
@@ -512,6 +514,12 @@ impl AndroidApp {
                                                     }
                                                 })
                                                 .collect();
+
+                                        // Forward pressure and touch count to pointer query
+                                        if let Some(primary) = pointers.first() {
+                                            windowed_ctx.pointer_query.set_pressure(primary.pressure);
+                                        }
+                                        windowed_ctx.pointer_query.set_touch_count(pointers.len() as u32);
 
                                         let pinch_gesture = detect_pinch(&pointers, &mut pinch_state);
                                         if let Some(gesture) = pinch_gesture {
@@ -614,6 +622,7 @@ impl AndroidApp {
                                                     lx,
                                                     ly
                                                 );
+                                                windowed_ctx.pointer_query.set_pressure(0.0);
                                                 router.on_mouse_up(&*tree, lx, ly, MouseButton::Left);
 
                                                 // Mark touch ended for scroll physics
@@ -636,6 +645,8 @@ impl AndroidApp {
                                             }
                                             MotionAction::Cancel => {
                                                 tracing::debug!("Touch CANCEL");
+                                                windowed_ctx.pointer_query.set_pressure(0.0);
+                                                windowed_ctx.pointer_query.set_touch_count(0);
                                                 router.on_mouse_leave();
                                                 pinch_state.reset();
                                                 // Clear touch tracking on cancel too

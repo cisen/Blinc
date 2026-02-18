@@ -14,8 +14,8 @@ if [ -f ".env.cargo" ]; then
 fi
 
 WAIT_TIME=20   # seconds between publishes (index propagation)
-MAX_RETRIES=5  # retries per crate when index hasn't propagated yet
-RETRY_WAIT=30  # seconds between retries
+MAX_RETRIES=8   # retries per crate when index hasn't propagated yet
+RETRY_WAIT=45   # seconds between retries (~6 min max wait per crate)
 
 # Publish order (respects dependency graph)
 # Note: blinc_core has blinc_animation as dev-dep only, so core goes first
@@ -52,18 +52,27 @@ publish_crate() {
     local attempt=1
     while [ $attempt -le $MAX_RETRIES ]; do
         local output
-        output=$(cargo publish -p "$crate" --no-verify 2>&1)
-        local exit_code=$?
+        output=$(cargo publish -p "$crate" --no-verify 2>&1) || true
 
-        if [ $exit_code -eq 0 ]; then
+        if echo "$output" | grep -q "Successfully published\|uploaded"; then
+            echo "Successfully published $crate@$version"
+            return 0
+        fi
+
+        # No error keywords means success (cargo publish returns empty on success sometimes)
+        if ! echo "$output" | grep -qi "error\|failed"; then
             echo "Successfully published $crate@$version"
             return 0
         fi
 
         # Check if the error is due to index not yet updated (dep version not found)
-        if echo "$output" | grep -q "failed to select a version"; then
-            echo "Index not yet propagated (attempt $attempt/$MAX_RETRIES)"
-            echo "Waiting ${RETRY_WAIT}s for index to update..."
+        if echo "$output" | grep -q "failed to select a version\|failed to prepare local package"; then
+            echo "$output" | tail -5
+            echo ""
+            echo ">>> Index not yet propagated (attempt $attempt/$MAX_RETRIES)"
+            echo ">>> Forcing index refresh and waiting ${RETRY_WAIT}s..."
+            # Force cargo to refresh its local index cache
+            cargo update --dry-run 2>/dev/null || true
             sleep $RETRY_WAIT
             attempt=$((attempt + 1))
         else
@@ -74,6 +83,7 @@ publish_crate() {
         fi
     done
 
+    echo "$output"
     echo "Failed to publish $crate after $MAX_RETRIES attempts (index propagation timeout)"
     return 1
 }

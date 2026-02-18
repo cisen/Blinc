@@ -2,7 +2,7 @@
 
 All notable changes to `blinc_app` will be documented in this file.
 
-## [Unreleased]
+## [0.1.13] - 2026-02-18
 
 ### Added
 

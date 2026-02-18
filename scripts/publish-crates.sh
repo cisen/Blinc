@@ -44,7 +44,9 @@ publish_crate() {
         return 0
     fi
 
-    if cargo publish -p "$crate" 2>&1; then
+    # --no-verify skips local build check (which fails because deps may not
+    # be indexed yet). Crates are already verified by cargo check before release.
+    if cargo publish -p "$crate" --no-verify 2>&1; then
         echo "Successfully published $crate@$version"
         return 0
     else

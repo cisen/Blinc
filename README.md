@@ -3,6 +3,7 @@
 [![Build Status](https://github.com/project-blinc/Blinc/actions/workflows/ci.yml/badge.svg)](https://github.com/project-blinc/Blinc/actions/workflows/ci.yml)
 [![Tests](https://github.com/project-blinc/Blinc/actions/workflows/ci.yml/badge.svg?event=push)](https://github.com/project-blinc/Blinc/actions/workflows/ci.yml)
 [![Rust Version](https://img.shields.io/badge/rust-1.75%2B-blue.svg)](https://www.rust-lang.org)
+[![Crates.io](https://img.shields.io/crates/v/blinc_app.svg)](https://crates.io/crates/blinc_app)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 [![Blinc Book](https://img.shields.io/badge/Blinc_Book-blue.svg?logo=gitbook&logoColor=white)](https://project-blinc.github.io/Blinc)
 

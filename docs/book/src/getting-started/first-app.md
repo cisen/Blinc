@@ -70,14 +70,13 @@ fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
 
 ### Step 3: Building the Layout with Stateful Elements
 
-The key insight in Blinc is that UI doesn't rebuild on every state change. Instead, we use `stateful(handle)` with `.deps()` to react to state changes:
+The key insight in Blinc is that UI doesn't rebuild on every state change. Instead, we use `stateful::<S>()` with `.deps()` to react to state changes:
 
 ```rust
 use blinc_layout::stateful::stateful;
 
 fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
     let count = ctx.use_state_keyed("counter", || 0i32);
-    let container_handle = ctx.use_state(ButtonState::Idle);
 
     div()
         .w(ctx.width)
@@ -95,71 +94,62 @@ fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
                 .color(Color::WHITE)
         )
         // Count display - uses stateful with deps to update when count changes
-        .child(count_display(ctx, count.clone()))
+        .child(count_display(count.clone()))
         // Buttons row
         .child(
             div()
                 .flex_row()
                 .gap(16.0)
-                .child(counter_button(ctx, count.clone(), "-", -1))
-                .child(counter_button(ctx, count.clone(), "+", 1))
+                .child(counter_button(count.clone(), "-", -1))
+                .child(counter_button(count.clone(), "+", 1))
         )
 }
 ```
 
 ### Step 4: Creating the Count Display
 
-The count display needs to update when the count changes. We use `stateful(handle)` with `.deps()`:
+The count display needs to update when the count changes. We use `stateful::<NoState>()` with `.deps()`:
 
 ```rust
-fn count_display(ctx: &WindowedContext, count: State<i32>) -> impl ElementBuilder {
-    let handle = ctx.use_state(ButtonState::Idle);
-
-    stateful(handle)
-        .deps(&[count.signal_id()])
-        .on_state(move |_state, container| {
+fn count_display(count: State<i32>) -> impl ElementBuilder {
+    stateful::<NoState>()
+        .deps([count.signal_id()])
+        .on_state(move |_ctx| {
             let current = count.get();
-            container.merge(
-                div()
-                    .child(
-                        text(&format!("{}", current))
-                            .size(64.0)
-                            .weight(FontWeight::Bold)
-                            .color(Color::rgba(0.4, 0.6, 1.0, 1.0))
-                    )
-            );
+            div().child(
+                text(&format!("{}", current))
+                    .size(64.0)
+                    .weight(FontWeight::Bold)
+                    .color(Color::rgba(0.4, 0.6, 1.0, 1.0))
+            )
         })
 }
 ```
 
 ### Step 5: Creating Interactive Buttons
 
-For interactive buttons with hover and press states, use `stateful(handle)`:
+For interactive buttons with hover and press states, use `stateful::<ButtonState>()`:
 
 ```rust
 fn counter_button(
-    ctx: &WindowedContext,
     count: State<i32>,
     label: &'static str,
     delta: i32,
 ) -> impl ElementBuilder {
-    // Use use_state_for for reusable components with a unique key
-    let handle = ctx.use_state_for(label, ButtonState::Idle);
-
-    stateful(handle)
+    stateful::<ButtonState>()
         .w(60.0)
         .h(60.0)
         .rounded(12.0)
         .flex_center()
-        .on_state(|state, div| {
+        .on_state(|ctx| {
             // Apply different styles based on current state
-            let bg = match state {
+            let bg = match ctx.state() {
                 ButtonState::Idle => Color::rgba(0.2, 0.2, 0.25, 1.0),
                 ButtonState::Hovered => Color::rgba(0.3, 0.3, 0.35, 1.0),
                 ButtonState::Pressed => Color::rgba(0.15, 0.15, 0.2, 1.0),
                 ButtonState::Disabled => Color::rgba(0.1, 0.1, 0.12, 0.5),
             };
-            div.set_bg(bg);
+            div().bg(bg)
         })
         .on_click(move |_| {
             count.update(|v| v + delta);
@@ -215,56 +205,48 @@ fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
                 .weight(FontWeight::Bold)
                 .color(Color::WHITE)
         )
-        .child(count_display(ctx, count.clone()))
+        .child(count_display(count.clone()))
         .child(
             div()
                 .flex_row()
                 .gap(16.0)
-                .child(counter_button(ctx, count.clone(), "-", -1))
-                .child(counter_button(ctx, count.clone(), "+", 1))
+                .child(counter_button(count.clone(), "-", -1))
+                .child(counter_button(count.clone(), "+", 1))
         )
 }
 
-fn count_display(ctx: &WindowedContext, count: State<i32>) -> impl ElementBuilder {
-    let handle = ctx.use_state(ButtonState::Idle);
-
-    stateful(handle)
-        .deps(&[count.signal_id()])
-        .on_state(move |_state, container| {
+fn count_display(count: State<i32>) -> impl ElementBuilder {
+    stateful::<NoState>()
+        .deps([count.signal_id()])
+        .on_state(move |_ctx| {
             let current = count.get();
-            container.merge(
-                div()
-                    .child(
-                        text(&format!("{}", current))
-                            .size(64.0)
-                            .weight(FontWeight::Bold)
-                            .color(Color::rgba(0.4, 0.6, 1.0, 1.0))
-                    )
-            );
+            div().child(
+                text(&format!("{}", current))
+                    .size(64.0)
+                    .weight(FontWeight::Bold)
+                    .color(Color::rgba(0.4, 0.6, 1.0, 1.0))
+            )
         })
 }
 
 fn counter_button(
-    ctx: &WindowedContext,
     count: State<i32>,
     label: &'static str,
     delta: i32,
 ) -> impl ElementBuilder {
-    let handle = ctx.use_state_for(label, ButtonState::Idle);
-
-    stateful(handle)
+    stateful::<ButtonState>()
         .w(60.0)
         .h(60.0)
         .rounded(12.0)
         .flex_center()
-        .on_state(|state, div| {
-            let bg = match state {
+        .on_state(|ctx| {
+            let bg = match ctx.state() {
                 ButtonState::Idle => Color::rgba(0.2, 0.2, 0.25, 1.0),
                 ButtonState::Hovered => Color::rgba(0.3, 0.3, 0.35, 1.0),
                 ButtonState::Pressed => Color::rgba(0.15, 0.15, 0.2, 1.0),
                 ButtonState::Disabled => Color::rgba(0.1, 0.1, 0.12, 0.5),
             };
-            div.set_bg(bg);
+            div().bg(bg)
         })
         .on_click(move |_| {
             count.update(|v| v + delta);
@@ -286,7 +268,7 @@ fn counter_button(
 1. **WindowedApp::run** - Entry point for desktop applications
 2. **WindowedContext** - Provides window dimensions and state hooks
 3. **use_state_keyed** - Creates reactive state with a string key
-4. **stateful(handle)** - Creates elements that react to state changes
+4. **stateful::\<S\>()** - Creates elements that react to state changes
 5. **deps()** - Declares signal dependencies for reactive updates
 6. **on_state** - Callback that runs when state or dependencies change
 7. **Fluent Builder API** - Chain methods like `.w()`, `.h()`, `.child()`

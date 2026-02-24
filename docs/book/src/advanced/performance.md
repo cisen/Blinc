@@ -4,25 +4,23 @@ Blinc is designed for high performance, but following these guidelines ensures y
 
 ## Use Stateful for Visual States
 
-**Do:** Use `stateful(handle)` for hover, press, and focus effects:
+**Do:** Use `stateful::<S>()` for hover, press, and focus effects:
 
 ```rust
 use blinc_layout::stateful::stateful;
 
-fn hover_button(ctx: &WindowedContext) -> impl ElementBuilder {
-    let handle = ctx.use_state(ButtonState::Idle);
-
-    stateful(handle)
+fn hover_button() -> impl ElementBuilder {
+    stateful::<ButtonState>()
         .px(16.0)
         .py(8.0)
         .rounded(8.0)
-        .on_state(|state, div| {
-            let bg = match state {
+        .on_state(|ctx| {
+            let bg = match ctx.state() {
                 ButtonState::Idle => Color::RED,
                 ButtonState::Hovered => Color::BLUE,
                 _ => Color::RED,
             };
-            div.set_bg(bg);
+            div().bg(bg)
         })
         .child(text("Hover me").color(Color::WHITE))
 }
@@ -43,7 +41,7 @@ div()
     })
 ```
 
-The `stateful(handle)` pattern only updates the affected element, while signals with if-else rebuild the entire UI tree.
+The `stateful::<S>()` pattern only updates the affected element, while signals with if-else rebuild the entire UI tree.
 
 ## Minimize Signal Updates
 

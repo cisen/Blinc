@@ -163,41 +163,31 @@ fn pull_to_refresh(ctx: &WindowedContext) -> impl ElementBuilder {
 Use a stateful element with `.deps()` to react to visibility state changes:
 
 ```rust
-fn animated_card_list(ctx: &WindowedContext) -> impl ElementBuilder {
-    let show_cards = ctx.use_state_keyed("show_cards", || true);
-    let button_handle = ctx.use_state(ButtonState::Idle);
-
-    stateful(button_handle)
+fn animated_card_list(show_cards: State<bool>) -> impl ElementBuilder {
+    stateful::<ButtonState>()
         .flex_col()
         .gap(16.0)
-        .deps(&[show_cards.signal_id()])
-        .on_state(move |state, container| {
+        .deps([show_cards.signal_id()])
+        .on_state(move |ctx| {
             let visible = show_cards.get();
             let label = if visible { "Hide Cards" } else { "Show Cards" };
 
-            let bg = match state {
+            let bg = match ctx.state() {
                 ButtonState::Idle => Color::rgba(0.3, 0.5, 0.9, 1.0),
                 ButtonState::Hovered => Color::rgba(0.4, 0.6, 1.0, 1.0),
                 _ => Color::rgba(0.3, 0.5, 0.9, 1.0),
             };
 
-            // Build content based on visibility
-            let mut content = div()
-                .bg(bg)
-                .px(16.0)
-                .py(8.0)
-                .rounded(8.0)
-                .child(text(label).color(Color::WHITE));
-
-            container.merge(content);
+            div().bg(bg).px(16.0).py(8.0).rounded(8.0)
+                .child(text(label).color(Color::WHITE))
         })
         .on_click(move |_| {
             show_cards.update(|v| !v);
         })
-        .child(card_list(ctx))
+        .child(card_list())
 }
 
-fn card_list(ctx: &WindowedContext) -> impl ElementBuilder {
+fn card_list() -> impl ElementBuilder {
     // Cards with staggered animation
     motion()
         .stagger(StaggerConfig::new(80, AnimationPreset::fade_in(300)))
@@ -221,10 +211,11 @@ fn card_list(ctx: &WindowedContext) -> impl ElementBuilder {
 Use a custom state type for page navigation:
 
 ```rust
-use blinc_layout::stateful::{stateful, StateTransitions};
+use blinc_layout::stateful::{stateful, StateTransitions, use_shared_state};
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 enum Page {
+    #[default]
     Home,
     Settings,
     Profile,
@@ -237,51 +228,44 @@ impl StateTransitions for Page {
     }
 }
 
-fn page_transition(ctx: &WindowedContext) -> impl ElementBuilder {
-    let page_handle = ctx.use_state(Page::Home);
-
-    stateful(page_handle.clone())
+fn page_transition(current_page: State<u8>) -> impl ElementBuilder {
+    stateful::<NoState>()
         .w_full()
         .h_full()
-        .on_state(move |page, container| {
-            // Render different content based on current page
-            let content = match page {
-                Page::Home => div().child(text("Home Page").color(Color::WHITE)),
-                Page::Settings => div().child(text("Settings Page").color(Color::WHITE)),
-                Page::Profile => div().child(text("Profile Page").color(Color::WHITE)),
+        .deps([current_page.signal_id()])
+        .on_state(move |_ctx| {
+            // Render different content based on current page signal
+            let content = match current_page.get() {
+                0 => div().child(text("Home Page").color(Color::WHITE)),
+                1 => div().child(text("Settings Page").color(Color::WHITE)),
+                _ => div().child(text("Profile Page").color(Color::WHITE)),
             };
 
-            container.merge(
-                div()
-                    .child(
-                        motion()
-                            .fade_in(200)
-                            .slide_in(SlideDirection::Right, 200)
-                            .child(content)
-                    )
-            );
+            div().child(
+                motion()
+                    .fade_in(200)
+                    .slide_in(SlideDirection::Right, 200)
+                    .child(content)
+            )
         })
 }
 
-// Navigate programmatically
-fn nav_button(ctx: &WindowedContext, target: Page, label: &str) -> impl ElementBuilder {
-    let page_handle = ctx.use_state(Page::Home);  // Same handle
-    let handle = ctx.use_state_for(label, ButtonState::Idle);
-
-    stateful(handle)
+// Navigate programmatically using a shared signal
+fn nav_button(current_page: State<u8>, target: u8, label: &str) -> impl ElementBuilder {
+    stateful::<ButtonState>()
         .px(16.0)
         .py(8.0)
         .rounded(8.0)
-        .on_state(|state, div| {
-            let bg = match state {
+        .on_state(|ctx| {
+            let bg = match ctx.state() {
                 ButtonState::Idle => Color::rgba(0.3, 0.5, 0.9, 1.0),
                 ButtonState::Hovered => Color::rgba(0.4, 0.6, 1.0, 1.0),
                 _ => Color::rgba(0.3, 0.5, 0.9, 1.0),
             };
-            div.set_bg(bg);
+            div().bg(bg)
         })
         .on_click(move |_| {
-            page_handle.set(target);
+            current_page.set(target);
         })
         .child(text(label).color(Color::WHITE))
 }

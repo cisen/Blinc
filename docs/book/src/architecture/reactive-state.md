@@ -35,12 +35,12 @@ When code accesses a signal's value, the dependency is automatically recorded:
 
 ```rust
 // Stateful element with signal dependency
-stateful(handle)
-    .deps(&[count.signal_id()])  // Declare dependency
-    .on_state(move |state, div| {
+stateful::<ButtonState>()
+    .deps([count.signal_id()])  // Declare dependency
+    .on_state(move |ctx| {
         // Reading count.get() here is tracked
         let value = count.get();
-        div.set_bg(color_for_value(value));
+        div().bg(color_for_value(value))
     })
 ```
 
@@ -149,18 +149,14 @@ ctx.batch(|g| {
 The reactive system integrates with stateful elements via `.deps()`:
 
 ```rust
-fn counter_display(ctx: &WindowedContext, count: State<i32>) -> impl ElementBuilder {
-    let handle = ctx.use_state(ButtonState::Idle);
-
-    stateful(handle)
+fn counter_display(count: State<i32>) -> impl ElementBuilder {
+    stateful::<NoState>()
         // Declare signal dependencies
-        .deps(&[count.signal_id()])
-        .on_state(move |_state, container| {
+        .deps([count.signal_id()])
+        .on_state(move |_ctx| {
             // This callback re-runs when count changes
             let current = count.get();
-            container.merge(
-                div().child(text(&format!("{}", current)).color(Color::WHITE))
-            );
+            div().child(text(&format!("{}", current)).color(Color::WHITE))
         })
 }
 ```

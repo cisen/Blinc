@@ -254,21 +254,20 @@ fn my_component() -> impl ElementBuilder {
 For interactive elements that need to respond to theme changes within event handlers, fetch colors inside the callback:
 
 ```rust
-fn themed_button(ctx: &WindowedContext) -> impl ElementBuilder {
-    let handle = ctx.use_state_for("btn", ButtonState::Idle);
-
-    stateful(handle)
-        .on_state(|state, div| {
+fn themed_button() -> impl ElementBuilder {
+    stateful::<ButtonState>()
+        .on_state(|ctx| {
             // Fetch colors inside callback for theme reactivity
             let theme = ThemeState::get();
             let primary = theme.color(ColorToken::Primary);
             let primary_hover = theme.color(ColorToken::PrimaryHover);
 
-            match state {
-                ButtonState::Idle => div.set_bg(primary),
-                ButtonState::Hovered => div.set_bg(primary_hover),
-                // ...
-            }
+            let bg = match ctx.state() {
+                ButtonState::Idle => primary,
+                ButtonState::Hovered => primary_hover,
+                _ => primary,
+            };
+            div().bg(bg)
         })
         .child(text("Click me"))
 }
@@ -537,34 +536,28 @@ use blinc_app::prelude::*;
 use blinc_theme::{ThemeState, ColorToken};
 
 fn notification_toast(
-    ctx: &WindowedContext,
     message: &str,
     variant: ColorToken,
 ) -> impl ElementBuilder {
     let theme = ThemeState::get();
-    let handle = ctx.use_state_for("toast", ButtonState::Idle);
-
     let bg_color = theme.color(variant);
 
-    stateful(handle)
+    stateful::<ButtonState>()
         .w(320.0)
         .p(theme.spacing().space_4)
         .rounded(theme.radii().radius_lg)
         .bg(bg_color.with_alpha(0.15))
         .border(1.0, bg_color.with_alpha(0.3))
         .shadow_md()
-        .on_state(move |state, div| {
+        .on_state(move |ctx| {
             let theme = ThemeState::get();
             let base = theme.color(variant);
 
-            match state {
-                ButtonState::Hovered => {
-                    div.set_bg(base.with_alpha(0.2));
-                }
-                _ => {
-                    div.set_bg(base.with_alpha(0.15));
-                }
-            }
+            let bg = match ctx.state() {
+                ButtonState::Hovered => base.with_alpha(0.2),
+                _ => base.with_alpha(0.15),
+            };
+            div().bg(bg)
         })
         .flex_row()
         .items_center()
@@ -585,7 +578,7 @@ fn notification_toast(
 }
 
 // Usage
-notification_toast(ctx, "File saved successfully", ColorToken::Success)
-notification_toast(ctx, "Network error occurred", ColorToken::Error)
-notification_toast(ctx, "New update available", ColorToken::Info)
+notification_toast("File saved successfully", ColorToken::Success)
+notification_toast("Network error occurred", ColorToken::Error)
+notification_toast("New update available", ColorToken::Info)
 ```

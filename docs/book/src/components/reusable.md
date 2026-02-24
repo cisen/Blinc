@@ -57,48 +57,40 @@ card_with_content("Settings",
 )
 ```
 
-### Components with Context
+### Stateful Components
 
-For components needing state or animations:
+For components needing interactive state or reactive updates:
 
 ```rust
 use blinc_layout::stateful::stateful;
 
-fn counter_card(ctx: &WindowedContext) -> impl ElementBuilder {
-    let count = ctx.use_state_keyed("counter_card_count", || 0i32);
-    let card_handle = ctx.use_state(ButtonState::Idle);
-
-    stateful(card_handle)
+fn counter_card(count: State<i32>) -> impl ElementBuilder {
+    stateful::<ButtonState>()
         .p(16.0)
         .rounded(12.0)
         .bg(Color::rgba(0.15, 0.15, 0.2, 1.0))
         .flex_col()
         .gap(12.0)
-        .deps(&[count.signal_id()])
-        .on_state(move |_state, container| {
+        .deps([count.signal_id()])
+        .on_state(move |_ctx| {
             let current = count.get();
-            container.merge(
-                div()
-                    .child(text(&format!("Count: {}", current)).color(Color::WHITE))
-            );
+            div().child(text(&format!("Count: {}", current)).color(Color::WHITE))
         })
-        .child(increment_btn(ctx, count))
+        .child(increment_btn(count))
 }
 
-fn increment_btn(ctx: &WindowedContext, count: State<i32>) -> impl ElementBuilder {
-    let handle = ctx.use_state(ButtonState::Idle);
-
-    stateful(handle)
+fn increment_btn(count: State<i32>) -> impl ElementBuilder {
+    stateful::<ButtonState>()
         .px(16.0)
         .py(8.0)
         .rounded(8.0)
-        .on_state(|state, div| {
-            let bg = match state {
+        .on_state(|ctx| {
+            let bg = match ctx.state() {
                 ButtonState::Idle => Color::rgba(0.3, 0.5, 0.9, 1.0),
                 ButtonState::Hovered => Color::rgba(0.4, 0.6, 1.0, 1.0),
                 _ => Color::rgba(0.3, 0.5, 0.9, 1.0),
             };
-            div.set_bg(bg);
+            div().bg(bg)
         })
         .on_click(move |_| {
             count.update(|v| v + 1);
@@ -151,32 +143,29 @@ fn animated_card(ctx: &WindowedContext, title: &str) -> impl ElementBuilder {
 }
 ```
 
-**Note:** For hover-only visual effects without animations, prefer `Stateful` instead - it's more efficient as it doesn't require continuous redraws.
+**Note:** For hover-only visual effects without animations, prefer `stateful::<S>()` instead - it's more efficient as it doesn't require continuous redraws.
 
 ---
 
 ## Stateful Components
 
-Use `stateful(handle)` for components with visual states:
+Use `stateful::<S>()` for components with visual states:
 
 ```rust
 use blinc_layout::stateful::stateful;
 
-fn interactive_card(ctx: &WindowedContext, title: &str) -> impl ElementBuilder {
-    // Use use_state_for with title as key for reusable component
-    let handle = ctx.use_state_for(title, ButtonState::Idle);
-
-    stateful(handle)
+fn interactive_card(title: &str) -> impl ElementBuilder {
+    stateful::<ButtonState>()
         .p(16.0)
         .rounded(12.0)
-        .on_state(|state, div| {
-            let bg = match state {
+        .on_state(|ctx| {
+            let bg = match ctx.state() {
                 ButtonState::Idle => Color::rgba(0.15, 0.15, 0.2, 1.0),
                 ButtonState::Hovered => Color::rgba(0.18, 0.18, 0.25, 1.0),
                 ButtonState::Pressed => Color::rgba(0.12, 0.12, 0.16, 1.0),
                 _ => Color::rgba(0.15, 0.15, 0.2, 1.0),
             };
-            div.set_bg(bg);
+            div().bg(bg)
         })
         .child(text(title).color(Color::WHITE))
 }
@@ -363,6 +352,6 @@ pub fn notification(props: NotificationProps) -> Div {
 
 7. **Use BlincComponent for state and animations** - Type-safe hooks for both `State<T>` and `SharedAnimatedValue` prevent key collisions.
 
-8. **Use Stateful for visual states** - Hover, press, focus effects should use `Stateful` rather than signals.
+8. **Use `stateful::<S>()` for visual states** - Hover, press, focus effects should use stateful containers rather than signals.
 
 9. **Use motion() for animated values** - Wrap animated content in `motion()` for proper redraws.

@@ -113,7 +113,7 @@ fn hover_scale_card(ctx: &WindowedContext) -> impl ElementBuilder {
 }
 ```
 
-**Note:** For simple hover state changes without spring physics (e.g., just color changes), prefer `stateful(handle)` which is more efficient. Use `motion()` when you specifically need spring-animated values.
+**Note:** For simple hover state changes without spring physics (e.g., just color changes), prefer `stateful::<S>()` which is more efficient. Use `motion()` when you specifically need spring-animated values.
 
 ### Example: Drag Position
 

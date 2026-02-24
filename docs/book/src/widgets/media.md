@@ -252,23 +252,20 @@ fn avatar(url: &str, size: f32) -> impl ElementBuilder {
 ```rust
 use blinc_layout::stateful::stateful;
 
-fn icon_button(ctx: &WindowedContext, icon_path: &str) -> impl ElementBuilder {
-    // Use use_state_for with icon_path as key for reusable component
-    let handle = ctx.use_state_for(icon_path, ButtonState::Idle);
-
-    stateful(handle)
+fn icon_button(icon_path: &str) -> impl ElementBuilder {
+    stateful::<ButtonState>()
         .w(40.0)
         .h(40.0)
         .rounded(8.0)
         .flex_center()
-        .on_state(|state, div| {
-            let bg = match state {
+        .on_state(|ctx| {
+            let bg = match ctx.state() {
                 ButtonState::Idle => Color::TRANSPARENT,
                 ButtonState::Hovered => Color::rgba(0.2, 0.2, 0.25, 1.0),
                 ButtonState::Pressed => Color::rgba(0.15, 0.15, 0.2, 1.0),
                 _ => Color::TRANSPARENT,
             };
-            div.set_bg(bg);
+            div().bg(bg)
         })
         .child(
             svg(icon_path)

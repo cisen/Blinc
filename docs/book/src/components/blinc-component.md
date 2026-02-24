@@ -47,62 +47,55 @@ fn counter_demo(ctx: &WindowedContext) -> impl ElementBuilder {
     let count = Counter::use_count(ctx, 0);
     let step = Counter::use_step(ctx, 1);
 
-    // Create persistent button state handle
-    let button_handle = ctx.use_state(ButtonState::Idle);
-
-    // Use stateful(handle) with .deps() to react to state changes
-    stateful(button_handle)
+    // Use stateful::<S>() with .deps() to react to state changes
+    stateful::<ButtonState>()
         .flex_col()
         .gap(16.0)
         .p(16.0)
-        .deps(&[count.signal_id(), step.signal_id()])
-        .on_state(move |state, container| {
+        .deps([count.signal_id(), step.signal_id()])
+        .on_state(move |ctx| {
             // Read current values inside on_state
             let current_count = count.get();
             let current_step = step.get();
 
-            let bg = match state {
+            let bg = match ctx.state() {
                 ButtonState::Idle => Color::rgba(0.15, 0.15, 0.2, 1.0),
                 ButtonState::Hovered => Color::rgba(0.18, 0.18, 0.25, 1.0),
                 _ => Color::rgba(0.15, 0.15, 0.2, 1.0),
             };
 
-            // Update container with dynamic content
-            container.merge(
-                div()
-                    .bg(bg)
-                    .child(text(&format!("Count: {}", current_count)).color(Color::WHITE))
-                    .child(text(&format!("Step: {}", current_step)).color(Color::WHITE))
-            );
+            // Return a Div with dynamic content
+            div()
+                .bg(bg)
+                .child(text(&format!("Count: {}", current_count)).color(Color::WHITE))
+                .child(text(&format!("Step: {}", current_step)).color(Color::WHITE))
         })
         .on_click(move |_| {
             let current_step = step.get();
             count.update(|v| v + current_step);
         })
-        .child(increment_button(ctx))
+        .child(increment_button())
 }
 
-fn increment_button(ctx: &WindowedContext) -> impl ElementBuilder {
-    let handle = ctx.use_state(ButtonState::Idle);
-
-    stateful(handle)
+fn increment_button() -> impl ElementBuilder {
+    stateful::<ButtonState>()
         .px(16.0)
         .py(8.0)
         .rounded(8.0)
-        .on_state(|state, div| {
-            let bg = match state {
+        .on_state(|ctx| {
+            let bg = match ctx.state() {
                 ButtonState::Idle => Color::rgba(0.3, 0.5, 0.9, 1.0),
                 ButtonState::Hovered => Color::rgba(0.4, 0.6, 1.0, 1.0),
                 ButtonState::Pressed => Color::rgba(0.2, 0.4, 0.8, 1.0),
                 _ => Color::rgba(0.3, 0.5, 0.9, 1.0),
             };
-            div.set_bg(bg);
+            div().bg(bg)
         })
         .child(text("Increment").color(Color::WHITE))
 }
 ```
 
-**Key point:** When UI content depends on state values that can change, use `stateful(handle)` with `.deps()` to declare the dependency. The `on_state` callback re-runs whenever those signals change, and you update the display via `container.merge()` or `div.set_*()` methods.
+**Key point:** When UI content depends on state values that can change, use `stateful::<S>()` with `.deps()` to declare the dependency. The `on_state` callback re-runs whenever those signals change, and you return a `Div` with the updated content.
 
 ### Common State Patterns
 

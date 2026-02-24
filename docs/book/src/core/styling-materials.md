@@ -303,25 +303,23 @@ fn ghost_button() -> Div {
 
 ### Hover Effects with State
 
-Use `stateful(handle)` to create elements with automatic hover/press state transitions:
+Use `stateful::<S>()` to create elements with automatic hover/press state transitions:
 
 ```rust
 use blinc_layout::stateful::stateful;
 
-fn hoverable_card(ctx: &WindowedContext) -> impl ElementBuilder {
-    let handle = ctx.use_state(ButtonState::Idle);
-
-    stateful(handle)
+fn hoverable_card() -> impl ElementBuilder {
+    stateful::<ButtonState>()
         .p(16.0)
         .rounded(12.0)
-        .on_state(|state, div| {
-            let bg = match state {
+        .on_state(|ctx| {
+            let bg = match ctx.state() {
                 ButtonState::Idle => Color::rgba(0.15, 0.15, 0.2, 1.0),
                 ButtonState::Hovered => Color::rgba(0.18, 0.18, 0.24, 1.0),
                 ButtonState::Pressed => Color::rgba(0.12, 0.12, 0.16, 1.0),
                 _ => Color::rgba(0.15, 0.15, 0.2, 1.0),
             };
-            div.set_bg(bg);
+            div().bg(bg)
         })
         .child(text("Hover me").color(Color::WHITE))
 }

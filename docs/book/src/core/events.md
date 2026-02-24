@@ -149,20 +149,18 @@ Use `ToggleState` for toggle buttons - it handles click transitions automaticall
 ```rust
 use blinc_layout::stateful::stateful;
 
-fn toggle_button(ctx: &WindowedContext) -> impl ElementBuilder {
-    let handle = ctx.use_state(ToggleState::Off);
-
-    stateful(handle)
+fn toggle_button() -> impl ElementBuilder {
+    stateful::<ToggleState>()
         .w(100.0)
         .h(40.0)
         .rounded(8.0)
         .flex_center()
-        .on_state(|state, div| {
-            let bg = match state {
+        .on_state(|ctx| {
+            let bg = match ctx.state() {
                 ToggleState::Off => Color::rgba(0.3, 0.3, 0.35, 1.0),
                 ToggleState::On => Color::rgba(0.2, 0.8, 0.4, 1.0),
             };
-            div.set_bg(bg);
+            div().bg(bg)
         })
         .on_click(|_| {
             println!("Toggled!");
@@ -226,20 +224,17 @@ fn keyboard_handler(ctx: &WindowedContext) -> impl ElementBuilder {
 ```rust
 use blinc_layout::stateful::stateful;
 
-fn hover_card(ctx: &WindowedContext) -> impl ElementBuilder {
-    let handle = ctx.use_state(ButtonState::Idle);
-
-    stateful(handle)
+fn hover_card() -> impl ElementBuilder {
+    stateful::<ButtonState>()
         .w(200.0)
         .h(120.0)
         .rounded(12.0)
-        .on_state(|state, div| {
-            let (bg, scale) = match state {
+        .on_state(|ctx| {
+            let (bg, scale) = match ctx.state() {
                 ButtonState::Hovered => (Color::rgba(0.2, 0.2, 0.3, 1.0), 1.02),
                 _ => (Color::rgba(0.15, 0.15, 0.2, 1.0), 1.0),
             };
-            div.set_bg(bg);
-            div.set_transform(Transform::scale(scale, scale));
+            div().bg(bg).transform(Transform::scale(scale, scale))
         })
         .child(text("Hover me!").color(Color::WHITE))
 }
@@ -321,7 +316,7 @@ fn shared_state_example() -> impl ElementBuilder {
 
 1. **Keep handlers lightweight** - Do minimal work in event handlers. For heavy operations, queue work or update state.
 
-2. **Use stateful(handle) for hover/press** - Instead of manually tracking hover state, use `ctx.use_state()` with `stateful(handle)` which handles state transitions automatically.
+2. **Use `stateful::<S>()` for hover/press** - Instead of manually tracking hover state, use `stateful::<ButtonState>()` which handles state transitions automatically.
 
 3. **Clone before closures** - Clone `Arc`, signals, or context references before moving them into closures.
 

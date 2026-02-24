@@ -833,3 +833,4 @@ div().material(Material::Glass(
 10. **`use_spring` returns `f32`** — it's a convenience that sets target and returns current value. Don't try to `.lock()` on it. For `SharedAnimatedValue`, use `use_animated_value_with_config()` instead.
 11. **`#[state]` attribute doesn't exist** — in `#[derive(BlincComponent)]`, unmarked fields are state. Only `#[animation]` is an explicit attribute.
 12. **The trait is `StateTransitions`** (plural) — not `StateTransition`.
+13. **`text()` has no `.class()` method** — use `.id("name")` with `#name { ... }` CSS selectors to style text. If you need class-based styling, wrap in `div().class("name").child(text("..."))`.

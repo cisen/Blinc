@@ -1,0 +1,19 @@
+[package]
+name = "blinc_canvas_kit"
+description = "Blinc canvas toolkit - pan, zoom, and viewport management for interactive canvases"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/blinc_canvas_kit"
+rust-version.workspace = true
+keywords = ["ui", "gui", "canvas", "pan", "zoom"]
+categories = ["gui"]
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+blinc_core = { path = "../blinc_core", version = "0.1.14" }
+blinc_layout = { path = "../blinc_layout", version = "0.1.14" }
+blinc_animation = { path = "../blinc_animation", version = "0.1.14" }

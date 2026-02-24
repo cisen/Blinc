@@ -524,6 +524,10 @@ The book covers:
 - Widget library
 - Architecture deep-dives
 
+### For AI Agents
+
+See [Skills.md](Skills.md) — a concise, example-driven reference optimized for AI code agents building with Blinc.
+
 ## License
 
 Apache License 2.0 - see [LICENSE](LICENSE)

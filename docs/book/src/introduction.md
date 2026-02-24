@@ -109,6 +109,10 @@ fn main() -> Result<()> {
 }
 ```
 
+## For AI Agents
+
+If you're an AI coding agent working with Blinc, see [Skills.md](https://github.com/project-blinc/Blinc/blob/main/Skills.md) in the repository root — a concise, example-driven reference with verified APIs, CSS-first styling patterns, and common pitfalls.
+
 ## Next Steps
 
 - [Installation](./getting-started/installation.md) - Set up your development environment

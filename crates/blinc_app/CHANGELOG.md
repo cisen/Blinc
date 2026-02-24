@@ -2,6 +2,12 @@
 
 All notable changes to `blinc_app` will be documented in this file.
 
+## [0.1.14] - 2026-02-24
+
+### Added
+
+- `css_debug` example updated with stateful container tests for CSS var(), percentage, color inheritance, and inner child click persistence
+
 ## [0.1.13] - 2026-02-18
 
 ### Added

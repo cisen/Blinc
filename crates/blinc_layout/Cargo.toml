@@ -17,9 +17,9 @@ default = []
 recorder = []
 
 [dependencies]
-blinc_core = { path = "../blinc_core", version = "0.1.13" }
-blinc_animation = { path = "../blinc_animation", version = "0.1.13" }
-blinc_theme = { path = "../blinc_theme", version = "0.1.13" }
+blinc_core = { path = "../blinc_core", version = "0.1.14" }
+blinc_animation = { path = "../blinc_animation", version = "0.1.14" }
+blinc_theme = { path = "../blinc_theme", version = "0.1.14" }
 
 # Layout
 taffy.workspace = true

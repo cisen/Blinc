@@ -2,6 +2,19 @@
 
 All notable changes to `blinc_layout` will be documented in this file.
 
+## [0.1.14] - 2026-02-24
+
+### Added
+
+- `set_auto_id()` and `children_builders_mut()` methods on `ElementBuilder` trait for stable child ID assignment within stateful containers
+- `assign_inner_ids_recursive()` in stateful callback wrapper: auto-assigns deterministic inner IDs to children via `derive_child_key()` (e.g. `"button_0:div:0"`) so event handlers and CSS selectors persist across rebuilds
+
+### Fixed
+
+- CSS `color` property now inherits into text elements inside stateful container rebuilds (added text_color propagation to `apply_stylesheet_base_styles_for_subtree()` post-pass)
+- Event handlers on inner children are now re-registered during visual-only subtree rebuilds (`update_subtree_props_from_builder`), ensuring closures capturing new state are properly propagated
+- CSS text property inheritance (text_color, text_decoration, white_space, text_overflow) added to the full-tree post-pass at initial render time
+
 ## [0.1.13] - 2026-02-18
 
 ### Added

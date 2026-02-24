@@ -367,71 +367,64 @@ fn test_color_inheritance_stateful(count: State<i32>) -> impl ElementBuilder {
 
 /// TEST 4: CSS layout properties inside stateful (no hover — pure layout test)
 fn test_layout_stateful() -> impl ElementBuilder {
-    stateful::<NoState>()
-        .on_state(|_ctx| {
-            div()
-                .class("section")
-                .flex_col()
-                .gap(3.0)
-                .child(
-                    div().child(
-                        text("Test 4: CSS Layout in stateful (class, var, %, color)")
-                            .size(20.0)
-                            .weight(FontWeight::Bold)
-                            .color(Color::rgba(0.58, 0.64, 0.72, 1.0)),
+    stateful::<NoState>().on_state(|_ctx| {
+        div()
+            .class("section")
+            .flex_col()
+            .gap(3.0)
+            .child(
+                div().child(
+                    text("Test 4: CSS Layout in stateful (class, var, %, color)")
+                        .size(20.0)
+                        .weight(FontWeight::Bold)
+                        .color(Color::rgba(0.58, 0.64, 0.72, 1.0)),
+                ),
+            )
+            // var() test
+            .child(
+                div().id("sf-var-test").child(
+                    text("var(--brand-color) bg inside stateful")
+                        .size(14.0)
+                        .color(Color::WHITE),
+                ),
+            )
+            // Percentage width test
+            .child(
+                div()
+                    .id("sf-percent-container")
+                    .flex_col()
+                    .gap(2.0)
+                    .child(
+                        div().id("sf-percent-half").child(
+                            text("width: 50% inside stateful")
+                                .size(14.0)
+                                .color(Color::WHITE),
+                        ),
+                    )
+                    .child(
+                        div().id("sf-percent-third").child(
+                            text("width: 33.3% inside stateful")
+                                .size(14.0)
+                                .color(Color::WHITE),
+                        ),
                     ),
-                )
-                // var() test
-                .child(
-                    div()
-                        .id("sf-var-test")
-                        .child(
-                            text("var(--brand-color) bg inside stateful")
-                                .size(14.0)
-                                .color(Color::WHITE),
-                        ),
-                )
-                // Percentage width test
-                .child(
-                    div()
-                        .id("sf-percent-container")
-                        .flex_col()
-                        .gap(2.0)
-                        .child(
-                            div().id("sf-percent-half").child(
-                                text("width: 50% inside stateful")
-                                    .size(14.0)
-                                    .color(Color::WHITE),
-                            ),
-                        )
-                        .child(
-                            div().id("sf-percent-third").child(
-                                text("width: 33.3% inside stateful")
-                                    .size(14.0)
-                                    .color(Color::WHITE),
-                            ),
-                        ),
-                )
-                // Color inheritance test
-                .child(
-                    div()
-                        .id("sf-color-parent")
-                        .child(
-                            text("Should be GREEN (inherited from #sf-color-parent { color: #10b981 })")
-                                .size(14.0),
-                        ),
-                )
-                // Class-based styling test
-                .child(
-                    div()
-                        .class("sf-card")
-                        .child(
-                            text(".sf-card class styling inside stateful")
-                                .size(14.0)
-                                .color(Color::WHITE),
-                        ),
-                )
-        })
+            )
+            // Color inheritance test
+            .child(
+                div().id("sf-color-parent").child(
+                    text("Should be GREEN (inherited from #sf-color-parent { color: #10b981 })")
+                        .size(14.0),
+                ),
+            )
+            // Class-based styling test
+            .child(
+                div().class("sf-card").child(
+                    text(".sf-card class styling inside stateful")
+                        .size(14.0)
+                        .color(Color::WHITE),
+                ),
+            )
+    })
 }
 
 /// TEST 5: Inner child click handlers persist across stateful rebuilds

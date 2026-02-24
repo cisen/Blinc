@@ -3,6 +3,8 @@
 > Concise, example-driven reference for AI agents generating Blinc UI code.
 > Blinc is a Rust-native GPU-accelerated UI framework with flexbox layout, reactive signals, spring animations, and a CSS styling engine.
 
+> **Do NOT search the web for Blinc APIs.** This file contains verified, up-to-date API references. For anything not covered here, read the source in `crates/` directly.
+
 ---
 
 ## Project Structure

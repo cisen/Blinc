@@ -577,6 +577,25 @@ fn counter_btn(count: State<i32>, label: &'static str, delta: i32) -> impl Eleme
 - **Return** a `Div` (builder pattern) — do NOT mutate
 - Outer builder methods (`.id()`, `.class()`) apply to the container
 - Inner `div()` returned from `on_state` is the visual content
+
+### Conditional Rendering with `.when()`
+
+`.when(condition, |div| ...)` conditionally modifies a builder. This only works **inside `on_state` callbacks** where the structure rebuilds on state change — outside of `on_state`, conditions are evaluated once at build time and won't react to changes.
+
+```rust
+fn expandable_section(expanded: State<bool>) -> impl ElementBuilder {
+    stateful::<NoState>()
+        .deps([expanded.signal_id()])
+        .on_state(move |_ctx| {
+            let is_open = expanded.get();
+            div()
+                .child(text("Section Title"))
+                .when(is_open, |d| {
+                    d.child(div().child(text("Expanded content here...")))
+                })
+        })
+}
+```
 ```
 
 ---

@@ -1952,6 +1952,43 @@ impl<S: StateTransitions> StateContext<S> {
 }
 
 // =========================================================================
+// Auto-ID assignment for stateful children
+// =========================================================================
+
+/// Recursively assign stable auto-generated IDs to children within a stateful
+/// container's returned Div.
+///
+/// Uses `StateContext::derive_child_key()` to generate deterministic IDs like
+/// `"{stateful_key}:div:0"`, `"{stateful_key}:div:1"`, etc.
+/// Children that already have an explicit ID (set by the user) are skipped.
+/// This ensures event handlers and CSS selectors persist across stateful rebuilds.
+fn assign_inner_ids_recursive<S: StateTransitions>(
+    ctx: &StateContext<S>,
+    element: &mut dyn crate::div::ElementBuilder,
+) {
+    let children = element.children_builders_mut();
+    for child in children.iter_mut() {
+        // Determine element type name for key generation
+        let type_name = match child.element_type_id() {
+            crate::div::ElementTypeId::Text => "text",
+            crate::div::ElementTypeId::StyledText => "styled_text",
+            crate::div::ElementTypeId::Image => "img",
+            crate::div::ElementTypeId::Svg => "svg",
+            crate::div::ElementTypeId::Canvas => "canvas",
+            crate::div::ElementTypeId::Motion => "motion",
+            _ => "div",
+        };
+
+        // Assign auto ID if child doesn't have an explicit one
+        let auto_id = ctx.derive_child_key(type_name);
+        child.set_auto_id(auto_id);
+
+        // Recurse into grandchildren
+        assign_inner_ids_recursive(ctx, child.as_mut());
+    }
+}
+
+// =========================================================================
 // StatefulBuilder - New API Entry Point
 // =========================================================================
 
@@ -2073,7 +2110,14 @@ impl<S: StateTransitions + Default> StatefulBuilder<S> {
                 ctx.reset_counter();
 
                 // Call user callback and get the returned Div
-                let user_div = callback_clone(&ctx);
+                let mut user_div = callback_clone(&ctx);
+
+                // Auto-assign stable inner IDs to children that don't have explicit IDs.
+                // This uses derive_child_key() to generate deterministic keys like
+                // "{stateful_key}:div:0", "{stateful_key}:div:1", etc.
+                // Stable IDs ensure event handlers persist across stateful rebuilds
+                // because children can be matched by ID rather than by position alone.
+                assign_inner_ids_recursive(&ctx, &mut user_div);
 
                 // Set the stateful context key on the returned Div for auto-keying
                 let user_div = user_div.with_stateful_context(ctx.full_key());

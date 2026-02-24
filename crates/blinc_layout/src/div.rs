@@ -3845,6 +3845,19 @@ pub trait ElementBuilder {
         None
     }
 
+    /// Set an auto-generated element ID (used by stateful containers for stable child IDs).
+    ///
+    /// Only sets the ID if one hasn't been explicitly assigned by the user.
+    /// Returns true if the ID was set, false if an explicit ID already existed.
+    fn set_auto_id(&mut self, _id: String) -> bool {
+        false
+    }
+
+    /// Get mutable access to children for auto-ID assignment
+    fn children_builders_mut(&mut self) -> &mut [Box<dyn ElementBuilder>] {
+        &mut []
+    }
+
     /// Get the element's CSS class list for selector matching
     fn element_classes(&self) -> &[String] {
         &[]
@@ -3972,6 +3985,19 @@ impl ElementBuilder for Div {
 
     fn element_id(&self) -> Option<&str> {
         self.element_id.as_deref()
+    }
+
+    fn set_auto_id(&mut self, id: String) -> bool {
+        if self.element_id.is_none() {
+            self.element_id = Some(id);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn children_builders_mut(&mut self) -> &mut [Box<dyn ElementBuilder>] {
+        &mut self.children
     }
 
     fn element_classes(&self) -> &[String] {

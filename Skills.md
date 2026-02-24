@@ -172,7 +172,16 @@ CSS transitions automatically animate property changes on hover, focus, etc.:
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
 }
 
-/* Layout transitions — width, height, padding animate smoothly */
+/* Transform transitions (FLIP-style — smooth, no layout reflow) */
+.card {
+    transform: translateY(0);
+    transition: transform 300ms ease;
+}
+.card:hover {
+    transform: translateY(-4px) scale(1.02);
+}
+
+/* Layout transitions — width, height, padding (supported but triggers reflow per frame) */
 .expandable {
     width: 100px;
     transition: width 400ms ease;
@@ -642,7 +651,7 @@ motion()
 
 ### FLIP-Style Layout Animations (`animate_bounds`)
 
-For animating layout changes (position, size) that CSS transitions can't reach — such as when elements reorder, accordions expand/collapse, or container sizes change programmatically — use `animate_bounds()` with `VisualAnimationConfig`:
+CSS handles most FLIP-style animations via `transform` transitions (translate, scale, rotate — no layout reflow). For **layout-driven** changes that CSS can't express — such as element reordering, accordion content expanding, or container sizes changing programmatically — use `animate_bounds()` with `VisualAnimationConfig`:
 
 ```rust
 use blinc_layout::visual_animation::VisualAnimationConfig;
@@ -681,6 +690,7 @@ div()
 | Need | Use |
 |------|-----|
 | Hover/focus color change | CSS `transition: all 300ms ease` + `:hover` |
+| FLIP-style lift/scale/slide | CSS `transition: transform 300ms ease` + `:hover` |
 | Continuous looping animation | CSS `@keyframes` + `animation:` |
 | Reveal/clip animation | CSS `@keyframes` with `clip-path` |
 | Accordion expand/collapse | `animate_bounds(VisualAnimationConfig::height())` |

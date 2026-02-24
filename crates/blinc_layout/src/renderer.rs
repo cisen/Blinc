@@ -4453,6 +4453,12 @@ impl RenderTree {
                 props.text_overflow = Some(to);
             }
         }
+        // color (CSS spec: inherited)
+        if props.text_color.is_none() {
+            if let Some(c) = parent_props.text_color {
+                props.text_color = Some(c);
+            }
+        }
     }
 
     /// Build TextData from TextRenderInfo, applying CSS overrides from RenderProps
@@ -7782,9 +7788,10 @@ impl RenderTree {
                     n.props.text_decoration_thickness,
                     n.props.white_space,
                     n.props.text_overflow,
+                    n.props.text_color,
                 )
             });
-            if let Some((td, td_color, td_thick, ws, to)) = parent_text_props {
+            if let Some((td, td_color, td_thick, ws, to, tc)) = parent_text_props {
                 if let Some(node) = self.render_nodes.get_mut(&node_id) {
                     if node.props.text_decoration.is_none() {
                         node.props.text_decoration = td;
@@ -7800,6 +7807,9 @@ impl RenderTree {
                     }
                     if node.props.text_overflow.is_none() {
                         node.props.text_overflow = to;
+                    }
+                    if node.props.text_color.is_none() {
+                        node.props.text_color = tc;
                     }
                 }
             }

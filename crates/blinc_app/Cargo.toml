@@ -75,6 +75,7 @@ image.workspace = true
 tracing-subscriber.workspace = true
 blinc_cn = { path = "../blinc_cn", version = "0.1.14" }
 blinc_icons = { path = "../blinc_icons", version = "0.1.14" }
+blinc_canvas_kit = { path = "../blinc_canvas_kit", version = "0.1.14" }
 
 [features]
 default = ["windowed"]

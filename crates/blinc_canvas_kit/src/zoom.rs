@@ -52,12 +52,7 @@ impl ZoomController {
     ///
     /// `pinch_scale`: scale ratio delta (>1 = zoom in, <1 = zoom out).
     /// `pinch_center`: screen-space center of the pinch gesture.
-    pub fn on_pinch(
-        &self,
-        viewport: &mut CanvasViewport,
-        pinch_scale: f32,
-        pinch_center: Point,
-    ) {
+    pub fn on_pinch(&self, viewport: &mut CanvasViewport, pinch_scale: f32, pinch_center: Point) {
         let factor = 1.0 + (pinch_scale - 1.0) * self.pinch_sensitivity;
         viewport.zoom_at(pinch_center, factor);
     }

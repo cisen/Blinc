@@ -400,25 +400,9 @@ impl EventRouter {
         let hits = if overlay_bounds.is_empty() {
             self.hit_test_all(tree, x, y)
         } else {
-            eprintln!("[HOVER] occlusion active: {} overlay bounds", overlay_bounds.len());
             self.hit_test_all_with_occlusion(tree, x, y, overlay_bounds, overlay_layer_id)
         };
         let current_hovered: HashSet<LayoutNodeId> = hits.iter().map(|h| h.node).collect();
-
-        // [DIAG] Log hovered nodes with element IDs for debugging
-        {
-            let select_items: Vec<_> = hits
-                .iter()
-                .filter(|h| tree.element_registry().has_class(h.node, "cn-select-item"))
-                .map(|h| {
-                    let eid = tree.element_registry().get_id(h.node);
-                    format!("{:?}(id={:?})", h.node, eid)
-                })
-                .collect();
-            if !select_items.is_empty() {
-                eprintln!("[HOVER] select items in hit_test_all: {:?}", select_items);
-            }
-        }
 
         // Store bounds for all hit nodes (for event handlers to access via get_node_bounds)
         // Clear previous bounds and populate with current hit test results
@@ -603,15 +587,6 @@ impl EventRouter {
                 .iter()
                 .filter_map(|&node| tree.element_registry().get_id(node))
                 .collect();
-            // [DIAG] Log click target and ancestor IDs for click-outside debugging
-            {
-                let hit_eid = tree.element_registry().get_id(hit.node);
-                let is_select_item = tree.element_registry().has_class(hit.node, "cn-select-item");
-                eprintln!(
-                    "[CLICK] hit={:?}(id={:?}, is_select_item={}), ancestor_ids={:?}",
-                    hit.node, hit_eid, is_select_item, ancestor_ids
-                );
-            }
             crate::click_outside::fire_click_outside(&ancestor_ids);
 
             // Record mouse down event (only if recording is enabled)

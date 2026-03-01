@@ -165,6 +165,11 @@ impl Button {
         }
     }
 
+    /// Access the shared config (allows external content builders to read CSS-resolved values)
+    pub fn config_arc(&self) -> Arc<Mutex<ButtonConfig>> {
+        Arc::clone(&self.config)
+    }
+
     // Button-specific methods
     pub fn bg_color(self, color: impl Into<Color>) -> Self {
         self.config.lock().unwrap().bg_color = color.into();
@@ -566,11 +571,17 @@ impl ElementBuilder for Button {
 
                     // Add content based on whether we have custom content or label
                     if let Some(ref callback) = custom_callback {
+                        // Drop config lock before calling custom callback to avoid
+                        // deadlock if the callback reads the config (e.g. for text_color)
+                        drop(cfg);
                         callback(*state, &mut update);
                     } else if let Some(ref label) = cfg.label {
                         tracing::debug!("Button adding label child: {}", label);
                         update =
                             update.child(text(label).size(cfg.text_size).color(cfg.text_color));
+                        drop(cfg);
+                    } else {
+                        drop(cfg);
                     }
 
                     let update_children = update.children.len();
@@ -578,7 +589,6 @@ impl ElementBuilder for Button {
                         "Button update div has {} children before merge",
                         update_children
                     );
-                    drop(cfg);
                     container.merge(update);
                     let container_children = container.children.len();
                     tracing::debug!(
@@ -587,6 +597,7 @@ impl ElementBuilder for Button {
                     );
                 }));
             shared.base_render_props = Some(self.inner.inner_render_props());
+            shared.base_style = self.inner.inner_layout_style();
             shared.needs_visual_update = true;
         }
 
@@ -664,10 +675,12 @@ fn apply_css_overrides_button(
         if let Some(fs) = style.font_size {
             cfg.text_size = fs;
         }
-        // Corner radius — apply directly to container
-        if let Some(cr) = style.corner_radius {
-            container.set_rounded(cr.top_left);
-        }
+        // Corner radius — NOT applied here. Border-radius is handled by the
+        // renderer's apply_stylesheet_base_styles(), which correctly evaluates
+        // hierarchical selectors (e.g. `.sidebar .cn-button--secondary`).
+        // Applying it here from simple class styles would overwrite higher-specificity
+        // hierarchical CSS on every state change.
+        //
         // Border
         if let Some(bw) = style.border_width {
             if let Some(bc) = style.border_color {

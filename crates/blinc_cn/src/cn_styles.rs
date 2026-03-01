@@ -28,8 +28,8 @@ pub const CN_STYLES: &str = r#"
    ============================================================================ */
 
 /* Button: visual states (hover, active, disabled) handled by Stateful FSM.
-   CSS defines padding per size. User CSS can override these classes. */
-.cn-button { }
+   CSS defines border-radius and padding per size. User CSS can override these classes. */
+.cn-button { border-radius: 6px; }
 .cn-button--primary { }
 .cn-button--secondary { }
 .cn-button--destructive { }
@@ -37,10 +37,10 @@ pub const CN_STYLES: &str = r#"
 .cn-button--ghost { }
 .cn-button--link { }
 .cn-button--disabled { }
-.cn-button--sm { }
-.cn-button--md { }
-.cn-button--lg { }
-.cn-button--icon { }
+.cn-button--sm { border-radius: 4px; }
+.cn-button--md { border-radius: 6px; }
+.cn-button--lg { border-radius: 8px; }
+.cn-button--icon { border-radius: 6px; }
 
 /* ============================================================================
    Card

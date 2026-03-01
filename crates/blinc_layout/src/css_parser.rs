@@ -6775,8 +6775,20 @@ fn parse_radius(value: &str) -> Option<CornerRadius> {
         return Some(radius);
     }
 
-    // Try parsing as numeric value
-    parse_length_value(value).map(CornerRadius::uniform)
+    // Handle percentage values for border-radius.
+    // CSS border-radius percentages are relative to the element's dimensions,
+    // which we can't resolve at parse time. Use 9999px as a large sentinel —
+    // the renderer clamps border-radius to half the element size, so any
+    // percentage >= 50% produces a fully-rounded (circular/pill) shape.
+    if let Some(len) = parse_css_length(value) {
+        return match len {
+            Length::Pct(v) if v > 0.0 => Some(CornerRadius::uniform(9999.0)),
+            Length::Pct(_) => Some(CornerRadius::uniform(0.0)),
+            _ => Some(CornerRadius::uniform(len.to_px())),
+        };
+    }
+
+    None
 }
 
 fn parse_corner_shape_value(value: &str) -> Option<CornerShape> {

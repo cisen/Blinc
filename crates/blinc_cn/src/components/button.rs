@@ -32,7 +32,7 @@ use blinc_layout::stateful::{use_shared_state, ButtonState, SharedState};
 use blinc_layout::tree::{LayoutNodeId, LayoutTree};
 use blinc_layout::widgets::button as layout_button;
 use blinc_layout::InstanceKey;
-use blinc_theme::{ColorToken, RadiusToken, ThemeState};
+use blinc_theme::{ColorToken, ThemeState};
 use std::sync::Arc;
 
 /// Button visual variants (like shadcn)
@@ -210,9 +210,14 @@ impl ButtonSize {
         }
     }
 
-    /// Get border radius using theme tokens
-    fn border_radius(&self, theme: &ThemeState) -> f32 {
-        theme.radius(blinc_theme::RadiusToken::Md)
+    /// Get default border radius (inline fallback — CSS overrides this)
+    fn border_radius(&self) -> f32 {
+        match self {
+            ButtonSize::Small => 4.0,
+            ButtonSize::Medium => 6.0,
+            ButtonSize::Large => 8.0,
+            ButtonSize::Icon => 6.0,
+        }
     }
 }
 
@@ -273,6 +278,8 @@ pub fn button(label: impl Into<String>) -> ButtonBuilder {
             disabled: false,
             icon: None,
             icon_position: IconPosition::default(),
+            icon_size: None,
+            text_color: None,
             on_click: None,
         },
         built: std::cell::OnceCell::new(),
@@ -289,6 +296,8 @@ struct ButtonConfig {
     disabled: bool,
     icon: Option<String>,
     icon_position: IconPosition,
+    icon_size: Option<f32>,
+    text_color: Option<Color>,
     on_click: Option<Arc<dyn Fn(&blinc_layout::event_handler::EventContext) + Send + Sync>>,
 }
 
@@ -303,7 +312,6 @@ impl Button {
     fn from_config(instance_key: &str, config: ButtonConfig) -> Self {
         let theme = ThemeState::get();
         let font_size = config.btn_size.font_size();
-        let radius = config.btn_size.border_radius(theme);
         let variant = config.variant;
         let disabled = config.disabled;
 
@@ -325,43 +333,86 @@ impl Button {
         let label = config.label.clone();
         let icon = config.icon.clone();
         let icon_position = config.icon_position;
+        let custom_icon_size = config.icon_size;
 
         let btn_size = config.btn_size;
-        // Use Button::with_content() directly — NOT button_with() which adds
-        // .px(12).py(6) = 48px/24px defaults on the Stateful container.
-        let mut btn = layout_button::Button::with_content(btn_state, move |_state| {
-            let theme = ThemeState::get();
-            let fg = variant.foreground(theme);
+        let default_fg = config.text_color.unwrap_or_else(|| variant.foreground(theme));
 
-            let label_text = text(&label)
-                .size(font_size)
-                .color(fg)
-                .no_wrap()
-                .v_center()
-                .pointer_events_none()
-                .no_cursor();
+        // Determine icon-only mode at construction time (needed for sizing)
+        let is_icon_only = config.icon.is_some() && config.label.is_empty();
+        let resolved_icon_size = config.icon_size.unwrap_or(font_size + 2.0);
 
-            // Padding applied HERE (inside the content builder) — not on the
-            // Stateful container, which mutates its inner structure dynamically.
-            let pad_x = btn_size.padding_x();
-            let pad_y = btn_size.padding_y();
-            let mut content = div()
-                .flex_row()
-                .items_center()
-                .justify_center()
-                .gap(6.0)
-                .padding_x_px(pad_x)
-                .padding_y_px(pad_y)
-                .pointer_events_none();
+        // Create button with empty content — we'll set up on_state below
+        // to read CSS-resolved text_color for both label and icon.
+        let mut btn = layout_button::Button::with_content(btn_state, |_state| div())
+            .text_color(default_fg)
+            .bg_color(bg)
+            .hover_color(hover_bg)
+            .pressed_color(pressed_bg)
+            .rounded(config.btn_size.border_radius())
+            .items_center()
+            .justify_center()
+            // CSS classes for user overrides
+            .class("cn-button")
+            .class(variant.css_class())
+            .class(config.btn_size.css_class());
 
-            if let Some(ref icon_str) = icon {
-                let icon_size = font_size + 2.0;
-                let svg_str = blinc_icons::to_svg(icon_str, icon_size);
-                let icon_svg = svg(&svg_str).size(icon_size, icon_size).color(fg);
+        // Icon-only: explicit square dimensions so items_center/justify_center
+        // can center the icon. With-label: shrink-wrap to content.
+        if is_icon_only {
+            let pad = config.btn_size.padding_y();
+            let dim = resolved_icon_size + pad * 2.0;
+            btn = btn.w(dim).h(dim);
+        } else {
+            btn = btn.w_fit();
+        }
 
-                if label.is_empty() {
-                    content = content.child(icon_svg);
-                } else {
+        // Capture config arc so the on_state callback can read CSS-resolved text_color
+        let cfg_arc = btn.config_arc();
+        btn = btn.on_state(move |_state, container| {
+            // Read CSS-resolved text_color — apply_css_overrides_button has already run
+            let fg = cfg_arc.lock().unwrap().text_color;
+
+            if is_icon_only {
+                // Icon-only: place SVG directly as child of the Stateful container.
+                // The container's items_center + justify_center + explicit w/h
+                // handles centering — no content wrapper needed.
+                if let Some(ref icon_str) = icon {
+                    let icon_size = custom_icon_size.unwrap_or(font_size + 2.0);
+                    let svg_str = blinc_icons::to_svg(icon_str, icon_size);
+                    let icon_svg = svg(&svg_str)
+                        .size(icon_size, icon_size)
+                        .color(fg);
+                    container.merge(div().child(icon_svg));
+                }
+            } else {
+                // With label: use content wrapper for flex_row layout
+                let label_text = text(&label)
+                    .size(font_size)
+                    .color(fg)
+                    .no_wrap()
+                    .v_center()
+                    .pointer_events_none()
+                    .no_cursor();
+
+                let pad_x = btn_size.padding_x();
+                let pad_y = btn_size.padding_y();
+                let mut content = div()
+                    .flex_row()
+                    .items_center()
+                    .justify_center()
+                    .gap_px(6.0)
+                    .padding_x_px(pad_x)
+                    .padding_y_px(pad_y)
+                    .pointer_events_none();
+
+                if let Some(ref icon_str) = icon {
+                    let icon_size = custom_icon_size.unwrap_or(font_size + 2.0);
+                    let svg_str = blinc_icons::to_svg(icon_str, icon_size);
+                    let icon_svg = svg(&svg_str)
+                        .size(icon_size, icon_size)
+                        .color(fg);
+
                     match icon_position {
                         IconPosition::Start => {
                             content = content.child(icon_svg).child(label_text);
@@ -370,23 +421,13 @@ impl Button {
                             content = content.child(label_text).child(icon_svg);
                         }
                     }
+                } else {
+                    content = content.child(label_text);
                 }
-            } else {
-                content = content.child(label_text);
-            }
 
-            content
-        })
-        // Colors — layout button FSM handles state transitions
-        .bg_color(bg)
-        .hover_color(hover_bg)
-        .pressed_color(pressed_bg)
-        .rounded(radius)
-        .w_fit()
-        // CSS classes for user overrides
-        .class("cn-button")
-        .class(variant.css_class())
-        .class(config.btn_size.css_class());
+                container.merge(div().child(content));
+            }
+        });
 
         if disabled {
             btn = btn.class("cn-button--disabled").opacity(0.5).disabled(true);
@@ -472,6 +513,8 @@ impl ButtonBuilder {
                 disabled: false,
                 icon: None,
                 icon_position: IconPosition::Start,
+                icon_size: None,
+                text_color: None,
                 on_click: None,
             },
             built: std::cell::OnceCell::new(),
@@ -511,6 +554,18 @@ impl ButtonBuilder {
     /// Set the icon position
     pub fn icon_position(mut self, position: IconPosition) -> Self {
         self.config.icon_position = position;
+        self
+    }
+
+    /// Set the icon size in pixels (overrides the default derived from font size)
+    pub fn icon_size(mut self, size: f32) -> Self {
+        self.config.icon_size = Some(size);
+        self
+    }
+
+    /// Set the text/icon color (overrides variant default)
+    pub fn color(mut self, color: impl Into<Color>) -> Self {
+        self.config.text_color = Some(color.into());
         self
     }
 

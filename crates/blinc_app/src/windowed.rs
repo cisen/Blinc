@@ -1330,6 +1330,11 @@ impl WindowedContext {
                 self.stylesheet = Some(Arc::new(sheet));
             }
         }
+        // Publish to global so stateful widgets (buttons, etc.) can read CSS
+        // overrides during tree construction, before set_stylesheet_arc() runs
+        if let Some(ref stylesheet) = self.stylesheet {
+            blinc_layout::css_parser::set_active_stylesheet(std::sync::Arc::clone(stylesheet));
+        }
     }
 
     /// Set a style for an element by ID.

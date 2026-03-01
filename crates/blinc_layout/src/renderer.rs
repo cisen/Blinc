@@ -3192,15 +3192,6 @@ impl RenderTree {
         pinch_scale: f32,
     ) {
         let has_handler = self.handler_registry.has_handler(node_id, event_type);
-        // [DIAG] Log POINTER_UP dispatch (click events)
-        if event_type == blinc_core::events::event_types::POINTER_UP {
-            let eid = self.element_registry.get_id(node_id);
-            let is_select_item = self.element_registry.has_class(node_id, "cn-select-item");
-            eprintln!(
-                "[DISPATCH] POINTER_UP node={:?}(id={:?}, is_select_item={}), has_handler={}",
-                node_id, eid, is_select_item, has_handler
-            );
-        }
         tracing::debug!(
             "dispatch_event_full: node={:?}, event_type={}, has_handler={}, drag_delta=({:.1}, {:.1})",
             node_id,
@@ -5868,6 +5859,7 @@ impl RenderTree {
             router.hovered_nodes().collect();
         let pressed_nodes: std::collections::HashSet<LayoutNodeId> =
             router.pressed_target().into_iter().collect();
+
         let focused_node: Option<LayoutNodeId> = {
             // Check all registered nodes for focus
             let mut focused = None;
@@ -5975,14 +5967,6 @@ impl RenderTree {
                     &pressed_nodes,
                     focused_node,
                 ) {
-                    // [DIAG] Log CSS hover matches for select items
-                    if self.element_registry.has_class(node_id, "cn-select-item") {
-                        let eid = self.element_registry.get_id(node_id);
-                        eprintln!(
-                            "[CSS_HOVER] Matched hover rule for select-item node {:?} (id={:?})",
-                            node_id, eid
-                        );
-                    }
                     // Save base styles for nodes affected by state rules (for future reset)
                     if is_state_rule {
                         if !self.base_styles.contains_key(&node_id) {
@@ -9941,6 +9925,14 @@ impl RenderTree {
             }
         }
 
+        // Clear corner shape before rendering children — corner-shape is NOT inherited.
+        // It only affects the current node's own fill_rect/stroke_rect primitives.
+        // Without this, a parent's corner-shape (e.g. squircle on .chat-card) would
+        // leak into all descendant nodes that don't set their own corner-shape.
+        if has_corner_shape {
+            ctx.clear_corner_shape();
+        }
+
         // Push overflow clip for children. This is deferred from before the render block
         // so that the border/outline SDF doesn't get double-AA'd by an overlapping clip.
         // Background and borders are SDF-constrained; only children need the overflow clip.
@@ -10214,10 +10206,7 @@ impl RenderTree {
             ctx.clear_mask_gradient();
         }
 
-        // Clear corner shape transient state
-        if has_corner_shape {
-            ctx.clear_corner_shape();
-        }
+        // (corner_shape already cleared before children — see above)
 
         // Restore z_layer after this subtree
         if has_z_index {

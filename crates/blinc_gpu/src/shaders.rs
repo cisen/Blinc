@@ -1385,14 +1385,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let rel = sp - center;  // Position relative to center (signed, in unrotated space)
         let antialias_threshold = 0.5;
 
-        // Select corner radius based on quadrant
+        // Select corner radius and corner shape based on quadrant
         var corner_radius: f32;
+        var corner_n: f32;
         if rel.y < 0.0 {
-            if rel.x > 0.0 { corner_radius = prim.corner_radius.y; }  // top-right
-            else { corner_radius = prim.corner_radius.x; }           // top-left
+            if rel.x > 0.0 { corner_radius = prim.corner_radius.y; corner_n = prim.corner_shape.y; }  // top-right
+            else { corner_radius = prim.corner_radius.x; corner_n = prim.corner_shape.x; }           // top-left
         } else {
-            if rel.x > 0.0 { corner_radius = prim.corner_radius.z; }  // bottom-right
-            else { corner_radius = prim.corner_radius.w; }           // bottom-left
+            if rel.x > 0.0 { corner_radius = prim.corner_radius.z; corner_n = prim.corner_shape.z; }  // bottom-right
+            else { corner_radius = prim.corner_radius.w; corner_n = prim.corner_shape.w; }           // bottom-left
         }
         // Clamp radius to half the minimum dimension (CSS spec)
         corner_radius = min(corner_radius, min(half_size.x, half_size.y));
@@ -1439,14 +1440,35 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 // Beyond inner straight edge - definitely in border
                 inner_sdf = -1.0;
             } else if abs(reduced_border.x - reduced_border.y) < 0.001 {
-                // Equal border widths - inner corner is circular (simple offset from outer)
-                let outer_sdf = length(max(vec2<f32>(0.0), corner_center_to_point)) +
-                               min(0.0, max(corner_center_to_point.x, corner_center_to_point.y)) - corner_radius;
+                // Equal border widths - inner corner shape matches outer
+                var outer_sdf: f32;
+                if abs(corner_n - 1.0) < 0.01 {
+                    // Round (circular) - standard SDF
+                    outer_sdf = length(max(vec2<f32>(0.0), corner_center_to_point)) +
+                                   min(0.0, max(corner_center_to_point.x, corner_center_to_point.y)) - corner_radius;
+                } else {
+                    // Superellipse (squircle, bevel, etc.) - match outer shape
+                    let t = corner_center_to_point / max(corner_radius, 0.001);
+                    let p_exp = pow(2.0, min(abs(corner_n), 5.0));
+                    let se = pow(max(t.x, 0.0), p_exp) + pow(max(t.y, 0.0), p_exp);
+                    outer_sdf = (pow(se, 1.0 / p_exp) - 1.0) * corner_radius;
+                }
                 inner_sdf = -(outer_sdf + reduced_border.x);
             } else {
-                // Asymmetric borders - inner corner is ELLIPTICAL (key insight from GPUI)
-                let ellipse_radii = max(vec2<f32>(0.0), vec2<f32>(corner_radius) - reduced_border);
-                inner_sdf = quarter_ellipse_sdf(corner_center_to_point, ellipse_radii);
+                // Asymmetric borders - inner corner is elliptical
+                if abs(corner_n - 1.0) < 0.01 {
+                    // Round - use elliptical inner corner (GPUI approach)
+                    let ellipse_radii = max(vec2<f32>(0.0), vec2<f32>(corner_radius) - reduced_border);
+                    inner_sdf = quarter_ellipse_sdf(corner_center_to_point, ellipse_radii);
+                } else {
+                    // Superellipse - use average border for inner offset
+                    let avg_border = (reduced_border.x + reduced_border.y) * 0.5;
+                    let t = corner_center_to_point / max(corner_radius, 0.001);
+                    let p_exp = pow(2.0, min(abs(corner_n), 5.0));
+                    let se = pow(max(t.x, 0.0), p_exp) + pow(max(t.y, 0.0), p_exp);
+                    let outer_sdf = (pow(se, 1.0 / p_exp) - 1.0) * corner_radius;
+                    inner_sdf = -(outer_sdf + avg_border);
+                }
             }
 
             // Calculate border blend from inner SDF

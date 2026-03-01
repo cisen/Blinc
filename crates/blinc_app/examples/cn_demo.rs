@@ -433,6 +433,9 @@ fn css_overrides_section() -> impl ElementBuilder {
 // ============================================================================
 
 fn buttons_section(_ctx: &WindowedContext) -> impl ElementBuilder {
+    let theme = ThemeState::get();
+    let text_secondary = theme.color(ColorToken::TextSecondary);
+
     section_container()
         .child(section_title("Buttons"))
         .child(
@@ -456,6 +459,27 @@ fn buttons_section(_ctx: &WindowedContext) -> impl ElementBuilder {
                 .child(cn::button("Medium").size(ButtonSize::Medium))
                 .child(cn::button("Large").size(ButtonSize::Large))
                 .child(cn::button("Disabled").disabled(true)),
+        )
+        // Icon-only buttons at various sizes
+        .child(text("Icon-only buttons (centering test)").size(12.0).color(text_secondary))
+        .child(
+            div()
+                .flex_row()
+                .items_center()
+                .gap(12.0)
+                // Icon-only at default size (font_size + 2 = 16)
+                .child(cn::button("").icon(icons::ARROW_RIGHT))
+                // Icon-only at 20px
+                .child(cn::button("").icon(icons::ARROW_RIGHT).icon_size(20.0))
+                // Icon-only at 24px
+                .child(cn::button("").icon(icons::ARROW_RIGHT).icon_size(24.0))
+                // Icon-only at 12px
+                .child(cn::button("").icon(icons::ARROW_RIGHT).icon_size(12.0))
+                // Icon-only with different variant
+                .child(cn::button("").icon(icons::PLUS).variant(ButtonVariant::Outline))
+                .child(cn::button("").icon(icons::PLUS).variant(ButtonVariant::Outline).icon_size(20.0))
+                // Button with icon + label
+                .child(cn::button("With Icon").icon(icons::STAR)),
         )
 }
 

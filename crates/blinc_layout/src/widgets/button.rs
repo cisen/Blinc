@@ -51,6 +51,8 @@ pub struct ButtonConfig {
     pub pressed_color: Color,
     pub disabled_color: Color,
     pub disabled: bool,
+    /// CSS class names for stylesheet matching
+    pub css_classes: Vec<String>,
 }
 
 impl Default for ButtonConfig {
@@ -65,6 +67,7 @@ impl Default for ButtonConfig {
             pressed_color: theme.color(ColorToken::PrimaryActive),
             disabled_color: theme.color(ColorToken::InputBgDisabled),
             disabled: false,
+            css_classes: Vec::new(),
         }
     }
 }
@@ -450,6 +453,7 @@ impl Button {
 
     /// Add a CSS class for selector matching
     pub fn class(mut self, class: &str) -> Self {
+        self.config.lock().unwrap().css_classes.push(class.to_string());
         self.inner = self.inner.class(class);
         self
     }
@@ -548,7 +552,7 @@ impl ElementBuilder for Button {
                     let mut cfg = config_for_state.lock().unwrap();
 
                     // Apply CSS overrides if stylesheet is active
-                    apply_css_overrides_button(&mut cfg, css_element_id.as_deref(), state);
+                    apply_css_overrides_button(&mut cfg, css_element_id.as_deref(), state, container);
 
                     let bg = match state {
                         ButtonState::Idle => cfg.bg_color,
@@ -630,19 +634,20 @@ fn apply_css_overrides_button(
     cfg: &mut ButtonConfig,
     css_element_id: Option<&str>,
     state: &ButtonState,
+    container: &mut Div,
 ) {
     let stylesheet = match active_stylesheet() {
         Some(s) => s,
         None => return,
     };
 
-    // Helper to apply a single ElementStyle to the button config
+    // Helper to apply a single ElementStyle to the button config + container
     let apply = |cfg: &mut ButtonConfig,
+                 container: &mut Div,
                  style: &crate::element_style::ElementStyle,
                  is_state_specific: bool| {
         if let Some(blinc_core::Brush::Solid(c)) = style.background.as_ref() {
             if is_state_specific {
-                // State-specific styles override the state's color
                 match state {
                     ButtonState::Idle => cfg.bg_color = *c,
                     ButtonState::Hovered => cfg.hover_color = *c,
@@ -650,7 +655,6 @@ fn apply_css_overrides_button(
                     ButtonState::Disabled => cfg.disabled_color = *c,
                 }
             } else {
-                // Base styles set the idle color
                 cfg.bg_color = *c;
             }
         }
@@ -660,32 +664,50 @@ fn apply_css_overrides_button(
         if let Some(fs) = style.font_size {
             cfg.text_size = fs;
         }
+        // Corner radius — apply directly to container
+        if let Some(cr) = style.corner_radius {
+            container.set_rounded(cr.top_left);
+        }
+        // Border
+        if let Some(bw) = style.border_width {
+            if let Some(bc) = style.border_color {
+                container.set_border(bw, bc);
+            }
+        } else if let Some(bc) = style.border_color {
+            // border-color only (keep existing width)
+            container.border_color = Some(bc);
+        }
     };
 
-    // 1. Resolve by element ID (if set)
-    if let Some(id) = css_element_id {
-        // Base style
-        if let Some(base) = stylesheet.get(id) {
-            apply(cfg, base, false);
+    let element_state = match state {
+        ButtonState::Hovered => Some(ElementState::Hover),
+        ButtonState::Pressed => Some(ElementState::Active),
+        ButtonState::Disabled => Some(ElementState::Disabled),
+        ButtonState::Idle => None,
+    };
+
+    // 1. Resolve by class (lowest priority)
+    let classes = cfg.css_classes.clone();
+    for class in &classes {
+        if let Some(base) = stylesheet.get_class(class) {
+            apply(cfg, container, base, false);
         }
-        // State-specific
-        match state {
-            ButtonState::Hovered => {
-                if let Some(s) = stylesheet.get_with_state(id, ElementState::Hover) {
-                    apply(cfg, s, true);
-                }
+        if let Some(s) = element_state {
+            if let Some(state_style) = stylesheet.get_class_with_state(class, s) {
+                apply(cfg, container, state_style, true);
             }
-            ButtonState::Pressed => {
-                if let Some(s) = stylesheet.get_with_state(id, ElementState::Active) {
-                    apply(cfg, s, true);
-                }
+        }
+    }
+
+    // 2. Resolve by element ID (higher priority)
+    if let Some(id) = css_element_id {
+        if let Some(base) = stylesheet.get(id) {
+            apply(cfg, container, base, false);
+        }
+        if let Some(s) = element_state {
+            if let Some(state_style) = stylesheet.get_with_state(id, s) {
+                apply(cfg, container, state_style, true);
             }
-            ButtonState::Disabled => {
-                if let Some(s) = stylesheet.get_with_state(id, ElementState::Disabled) {
-                    apply(cfg, s, true);
-                }
-            }
-            ButtonState::Idle => {}
         }
     }
 }

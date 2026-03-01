@@ -2737,6 +2737,9 @@ impl WindowedApp {
                             if needs_rebuild || render_tree.is_none() {
                                 // Reset call counters for stable key generation
                                 reset_call_counters();
+                                // Clear stale Stateful base_render_props updaters
+                                blinc_layout::clear_stateful_base_updaters();
+                                blinc_layout::click_outside::clear_click_outside_handlers();
 
                                 // Reset stable motions so they replay on full rebuild
                                 // This ensures motion animations play when UI is reconstructed

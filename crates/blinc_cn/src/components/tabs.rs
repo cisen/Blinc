@@ -595,6 +595,7 @@ impl TabsBuilder {
                 let active_value = state_for_buttons.get();
 
                 let mut buttons = div()
+                    .class("cn-tabs-list")
                     .h(size.height())
                     .w_full()
                     .bg(tab_list_bg)
@@ -842,7 +843,16 @@ fn build_tab_trigger(
             );
         }
 
+        // Determine size CSS class for trigger
+        let trigger_size_class = match size {
+            TabsSize::Small => "cn-tabs-trigger--sm",
+            TabsSize::Medium => "cn-tabs-trigger--md",
+            TabsSize::Large => "cn-tabs-trigger--lg",
+        };
+
         let mut trigger_div = div()
+            .class("cn-tabs-trigger")
+            .class(trigger_size_class)
             .h(inner_height)
             .padding_x(Length::Px(size.padding_x()))
             .padding_y(Length::Px(
@@ -861,9 +871,14 @@ fn build_tab_trigger(
             })
             .child(content);
 
-        // Add shadow for active tab
+        // Add active class for active tab
         if is_active && !disabled {
-            trigger_div = trigger_div.shadow_sm();
+            trigger_div = trigger_div.class("cn-tabs-trigger--active").shadow_sm();
+        }
+
+        // Add disabled class
+        if disabled {
+            trigger_div = trigger_div.class("cn-tabs-trigger--disabled");
         }
 
         trigger_div

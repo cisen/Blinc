@@ -223,6 +223,7 @@ impl BuiltAvatar {
 
         // Build the inner avatar container (with clipping for image/initials)
         let mut inner = div()
+            .class("cn-avatar")
             .w(size_px)
             .h(size_px)
             .rounded(radius)
@@ -230,6 +231,10 @@ impl BuiltAvatar {
             .flex_row()
             .items_center()
             .justify_center();
+
+        if config.shape == AvatarShape::Square {
+            inner = inner.class("cn-avatar--square");
+        }
 
         // Apply background if needed (for fallback)
         if let Some(bg) = background {
@@ -622,6 +627,10 @@ impl ElementBuilder for AvatarGroup {
     fn children_builders(&self) -> &[Box<dyn ElementBuilder>] {
         self.inner.children_builders()
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
+    }
 }
 
 /// Builder for avatar group
@@ -696,6 +705,10 @@ impl ElementBuilder for AvatarGroupBuilder {
 
     fn children_builders(&self) -> &[Box<dyn ElementBuilder>] {
         self.get_or_build().children_builders()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().element_classes()
     }
 }
 

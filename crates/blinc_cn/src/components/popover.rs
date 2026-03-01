@@ -393,6 +393,7 @@ fn show_popover_overlay(
 
             // Styled popover container
             let popover_content = div()
+                .class("cn-popover-content")
                 .id(&popover_id)
                 .flex_col()
                 .bg(bg)

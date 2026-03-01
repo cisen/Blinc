@@ -3192,6 +3192,15 @@ impl RenderTree {
         pinch_scale: f32,
     ) {
         let has_handler = self.handler_registry.has_handler(node_id, event_type);
+        // [DIAG] Log POINTER_UP dispatch (click events)
+        if event_type == blinc_core::events::event_types::POINTER_UP {
+            let eid = self.element_registry.get_id(node_id);
+            let is_select_item = self.element_registry.has_class(node_id, "cn-select-item");
+            eprintln!(
+                "[DISPATCH] POINTER_UP node={:?}(id={:?}, is_select_item={}), has_handler={}",
+                node_id, eid, is_select_item, has_handler
+            );
+        }
         tracing::debug!(
             "dispatch_event_full: node={:?}, event_type={}, has_handler={}, drag_delta=({:.1}, {:.1})",
             node_id,
@@ -4516,6 +4525,7 @@ impl RenderTree {
         }
         if let Some(ref cr) = style.corner_radius {
             props.border_radius = *cr;
+            props.border_radius_explicit = true;
         }
         if let Some(cs) = style.corner_shape {
             props.corner_shape = cs;
@@ -5965,6 +5975,14 @@ impl RenderTree {
                     &pressed_nodes,
                     focused_node,
                 ) {
+                    // [DIAG] Log CSS hover matches for select items
+                    if self.element_registry.has_class(node_id, "cn-select-item") {
+                        let eid = self.element_registry.get_id(node_id);
+                        eprintln!(
+                            "[CSS_HOVER] Matched hover rule for select-item node {:?} (id={:?})",
+                            node_id, eid
+                        );
+                    }
                     // Save base styles for nodes affected by state rules (for future reset)
                     if is_state_rule {
                         if !self.base_styles.contains_key(&node_id) {
@@ -7655,6 +7673,15 @@ impl RenderTree {
             }
         }
 
+        // Update Stateful base_render_props with CSS-applied values.
+        // This ensures that state changes (hover, press) start from CSS-enhanced
+        // base props, preserving CSS overrides like border-radius across state changes.
+        for (&node_id, render_node) in &self.render_nodes {
+            if crate::stateful::has_stateful_base_updater(node_id) {
+                crate::stateful::update_stateful_base_props(node_id, render_node.props.clone());
+            }
+        }
+
         // Apply base (non-state) SVG tag-name rules to SVG nodes
         let svg_tag_rules = stylesheet.svg_tag_rules();
         if !svg_tag_rules.is_empty() {
@@ -7871,6 +7898,18 @@ impl RenderTree {
                     if let Some(render_node) = self.render_nodes.get_mut(&node_id) {
                         Self::apply_element_style_to_props(&mut render_node.props, base_style);
                     }
+                }
+            }
+        }
+
+        // Update Stateful base_render_props for subtree nodes with CSS-applied values
+        for &node_id in &subtree_nodes {
+            if crate::stateful::has_stateful_base_updater(node_id) {
+                if let Some(render_node) = self.render_nodes.get(&node_id) {
+                    crate::stateful::update_stateful_base_props(
+                        node_id,
+                        render_node.props.clone(),
+                    );
                 }
             }
         }

@@ -28,7 +28,7 @@ use std::ops::{Deref, DerefMut};
 
 use blinc_layout::div::{Div, ElementBuilder, ElementTypeId};
 use blinc_layout::prelude::*;
-use blinc_theme::{ColorToken, RadiusToken, SpacingToken, ThemeState};
+use blinc_theme::{ColorToken, SpacingToken, ThemeState};
 
 /// Card component for content containers
 ///
@@ -40,23 +40,12 @@ pub struct Card {
 impl Card {
     /// Create a new empty card
     pub fn new() -> Self {
-        let theme = ThemeState::get();
-
-        let bg = theme.color(ColorToken::Surface);
-        let border_color = theme.color(ColorToken::Border);
-        let radius = theme.radius(RadiusToken::Lg);
-        let padding = theme.spacing_value(SpacingToken::Space6); // 24px
-        let gap = theme.spacing_value(SpacingToken::Space4); // 16px
-
+        // All visual props from CSS: .cn-card { background, border, border-radius, padding, gap }
         let inner = div()
-            .bg(bg)
-            .border(1.0, border_color)
-            .rounded(radius)
+            .class("cn-card")
             .shadow_sm()
-            .p_px(padding)
             .flex_col()
-            .items_start() // Align content to start, not center
-            .gap_px(gap); // 16px gap between sections
+            .items_start();
 
         Self { inner }
     }
@@ -128,6 +117,18 @@ impl Card {
         self.inner = self.inner.bg(color);
         self
     }
+
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.inner = self.inner.class(name);
+        self
+    }
+
+    /// Set the element ID for CSS selector matching
+    pub fn id(mut self, id: &str) -> Self {
+        self.inner = self.inner.id(id);
+        self
+    }
 }
 
 impl Default for Card {
@@ -174,6 +175,14 @@ impl ElementBuilder for Card {
     fn element_type_id(&self) -> ElementTypeId {
         ElementBuilder::element_type_id(&self.inner)
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
+    }
+
+    fn element_id(&self) -> Option<&str> {
+        self.inner.element_id()
+    }
 }
 
 /// Create an empty card
@@ -204,7 +213,7 @@ impl CardHeader {
     pub fn new() -> Self {
         let theme = ThemeState::get();
         let gap = theme.spacing_value(SpacingToken::Space1_5); // 6px
-        let inner = div().flex_col().items_start().w_full().gap_px(gap);
+        let inner = div().class("cn-card-header").flex_col().items_start().w_full().gap_px(gap);
 
         Self { inner }
     }
@@ -276,6 +285,14 @@ impl ElementBuilder for CardHeader {
 
     fn element_type_id(&self) -> ElementTypeId {
         ElementBuilder::element_type_id(&self.inner)
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
+    }
+
+    fn element_id(&self) -> Option<&str> {
+        self.inner.element_id()
     }
 }
 
@@ -351,6 +368,14 @@ impl ElementBuilder for CardContent {
     fn element_type_id(&self) -> ElementTypeId {
         ElementBuilder::element_type_id(&self.inner)
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
+    }
+
+    fn element_id(&self) -> Option<&str> {
+        self.inner.element_id()
+    }
 }
 
 /// Create a card content section
@@ -368,7 +393,7 @@ impl CardFooter {
     pub fn new() -> Self {
         let theme = ThemeState::get();
         let gap = theme.spacing_value(SpacingToken::Space2); // 8px
-        let inner = div().flex_row().w_full().gap_px(gap).justify_end();
+        let inner = div().class("cn-card-footer").flex_row().w_full().gap_px(gap).justify_end();
 
         Self { inner }
     }
@@ -423,6 +448,14 @@ impl ElementBuilder for CardFooter {
 
     fn element_type_id(&self) -> ElementTypeId {
         ElementBuilder::element_type_id(&self.inner)
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
+    }
+
+    fn element_id(&self) -> Option<&str> {
+        self.inner.element_id()
     }
 }
 

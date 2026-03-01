@@ -324,6 +324,7 @@ fn build_drawer_content(
 
     // Build drawer panel
     let mut drawer = div()
+        .class("cn-drawer")
         .w(size.width())
         .h_full()
         .bg(bg)
@@ -339,12 +340,13 @@ fn build_drawer_content(
     // Header section
     let has_header = header.is_some() || title.is_some() || show_close;
     if has_header {
+        // padding from CSS: .cn-drawer-header { padding: 16px; }
         let mut header_div = div()
+            .class("cn-drawer-header")
             .w_full()
             .flex_row()
             .items_center()
-            .justify_between()
-            .p_4();
+            .justify_between();
 
         // Custom header or title
         if let Some(ref header_fn) = header {
@@ -414,7 +416,8 @@ fn build_drawer_content(
         }
 
         drawer = drawer.child(div().w_full().h(1.0).bg(border)); // Separator
-        drawer = drawer.child(div().w_full().p_4().child(footer_fn()));
+        // padding from CSS: .cn-drawer-footer { padding: 16px; }
+        drawer = drawer.child(div().class("cn-drawer-footer").w_full().child(footer_fn()));
     }
 
     // Wrap drawer panel in motion for slide animations

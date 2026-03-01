@@ -372,6 +372,7 @@ impl MenubarBuilder {
         let trigger_style = self.trigger_style.clone();
 
         let mut menubar = div()
+            .class("cn-menubar")
             .flex_row()
             .items_center()
             .h_fit()
@@ -457,6 +458,7 @@ impl MenubarBuilder {
                     };
 
                     trigger_content
+                        .class("cn-menubar-trigger")
                         .h_fit()
                         .px(style_px / 4.0)
                         .py(style_py / 4.0)

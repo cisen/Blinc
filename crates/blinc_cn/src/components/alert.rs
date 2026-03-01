@@ -31,10 +31,9 @@
 
 use std::ops::{Deref, DerefMut};
 
-use blinc_core::Color;
 use blinc_layout::div::{Div, ElementBuilder, ElementTypeId};
 use blinc_layout::prelude::*;
-use blinc_theme::{ColorToken, RadiusToken, SpacingToken, ThemeState};
+use blinc_theme::ThemeState;
 
 /// Alert severity variants
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -50,38 +49,14 @@ pub enum AlertVariant {
     Destructive,
 }
 
-impl AlertVariant {
-    fn background(&self, theme: &ThemeState) -> Color {
-        match self {
-            AlertVariant::Default => theme.color(ColorToken::Surface),
-            AlertVariant::Success => theme.color(ColorToken::Success).with_alpha(0.1),
-            AlertVariant::Warning => theme.color(ColorToken::Warning).with_alpha(0.1),
-            AlertVariant::Destructive => theme.color(ColorToken::Error).with_alpha(0.1),
-        }
-    }
-
-    fn border(&self, theme: &ThemeState) -> Color {
-        match self {
-            AlertVariant::Default => theme.color(ColorToken::Border),
-            AlertVariant::Success => theme.color(ColorToken::Success),
-            AlertVariant::Warning => theme.color(ColorToken::Warning),
-            AlertVariant::Destructive => theme.color(ColorToken::Error),
-        }
-    }
-
-    fn text_color(&self, theme: &ThemeState) -> Color {
-        match self {
-            AlertVariant::Default => theme.color(ColorToken::TextPrimary),
-            AlertVariant::Success => theme.color(ColorToken::Success),
-            AlertVariant::Warning => theme.color(ColorToken::Warning),
-            AlertVariant::Destructive => theme.color(ColorToken::Error),
-        }
-    }
-}
+// All variant visuals (background, border, text color) defined in CSS:
+// .cn-alert--info, .cn-alert--success, .cn-alert--warning, .cn-alert--error
 
 /// Simple alert with a single message
 pub struct Alert {
     inner: Div,
+    message: String,
+    variant: AlertVariant,
 }
 
 impl Alert {
@@ -91,34 +66,31 @@ impl Alert {
     }
 
     fn with_variant(message: impl Into<String>, variant: AlertVariant) -> Self {
-        let theme = ThemeState::get();
         let message = message.into();
+        let inner = Self::build_div(&message, variant);
+        Self { inner, message, variant }
+    }
 
-        let bg = variant.background(theme);
-        let border_color = variant.border(theme);
-        let text_color = variant.text_color(theme);
-        let radius = theme.radius(RadiusToken::Md);
-        let padding = theme.spacing_value(SpacingToken::Space4); // 16px
+    fn build_div(message: &str, variant: AlertVariant) -> Div {
+        let variant_class = match variant {
+            AlertVariant::Default => "cn-alert--info",
+            AlertVariant::Success => "cn-alert--success",
+            AlertVariant::Warning => "cn-alert--warning",
+            AlertVariant::Destructive => "cn-alert--error",
+        };
 
-        let inner = div()
-            .bg(bg)
-            .border(1.0, border_color)
-            .rounded(radius)
-            .p_px(padding)
-            .child(text(&message).size(14.0).color(text_color));
-
-        Self { inner }
+        // All visual props from CSS: .cn-alert + .cn-alert--{variant}
+        div()
+            .class("cn-alert")
+            .class(variant_class)
+            .child(text(message).size(14.0))
     }
 
     /// Set the alert variant
-    pub fn variant(self, variant: AlertVariant) -> Self {
-        let theme = ThemeState::get();
-        let bg = variant.background(theme);
-        let border_color = variant.border(theme);
-
-        let inner = self.inner.bg(bg).border(1.0, border_color);
-
-        Self { inner }
+    pub fn variant(mut self, variant: AlertVariant) -> Self {
+        self.variant = variant;
+        self.inner = Self::build_div(&self.message, variant);
+        self
     }
 }
 
@@ -160,6 +132,10 @@ impl ElementBuilder for Alert {
     fn element_type_id(&self) -> ElementTypeId {
         ElementBuilder::element_type_id(&self.inner)
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
+    }
 }
 
 /// Create a simple alert with a message
@@ -187,21 +163,18 @@ impl AlertBox {
     }
 
     fn build_container(variant: AlertVariant) -> Div {
-        let theme = ThemeState::get();
+        let variant_class = match variant {
+            AlertVariant::Default => "cn-alert--info",
+            AlertVariant::Success => "cn-alert--success",
+            AlertVariant::Warning => "cn-alert--warning",
+            AlertVariant::Destructive => "cn-alert--error",
+        };
 
-        let bg = variant.background(theme);
-        let border_color = variant.border(theme);
-        let radius = theme.radius(RadiusToken::Md);
-        let padding = theme.spacing_value(SpacingToken::Space4);
-        let gap = theme.spacing_value(SpacingToken::Space1); // 4px
-
+        // All visual props from CSS: .cn-alert-box + .cn-alert--{variant}
         div()
-            .bg(bg)
-            .border(1.0, border_color)
-            .rounded(radius)
-            .p_px(padding)
+            .class("cn-alert-box")
+            .class(variant_class)
             .flex_col()
-            .gap_px(gap)
     }
 
     /// Set the alert variant
@@ -213,21 +186,15 @@ impl AlertBox {
 
     /// Set the alert title
     pub fn title(mut self, title: impl Into<String>) -> Self {
-        let theme = ThemeState::get();
-        let color = self.variant.text_color(theme);
-
         self.inner = self
             .inner
-            .child(text(title).size(14.0).semibold().color(color));
+            .child(text(title).size(14.0).semibold());
         self
     }
 
     /// Set the alert description
     pub fn description(mut self, desc: impl Into<String>) -> Self {
-        let theme = ThemeState::get();
-        let color = theme.color(ColorToken::TextSecondary);
-
-        self.inner = self.inner.child(text(desc).size(14.0).color(color));
+        self.inner = self.inner.child(text(desc).size(14.0));
         self
     }
 }
@@ -275,6 +242,10 @@ impl ElementBuilder for AlertBox {
 
     fn element_type_id(&self) -> ElementTypeId {
         ElementBuilder::element_type_id(&self.inner)
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
     }
 }
 

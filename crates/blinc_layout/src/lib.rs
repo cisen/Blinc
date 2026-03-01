@@ -75,6 +75,9 @@ pub mod overlay_state;
 // Continuous pointer query system
 pub mod pointer_query;
 
+// Click-outside detection for dropdown dismissal
+pub mod click_outside;
+
 // Recorder bridge for event capture (blinc_recorder integration)
 #[cfg(feature = "recorder")]
 pub mod recorder_bridge;
@@ -149,9 +152,10 @@ pub use render_state::{
 
 // Stateful elements
 pub use stateful::{
-    check_stateful_animations, check_stateful_deps, has_animating_statefuls,
-    has_pending_subtree_rebuilds, peek_needs_redraw, queue_prop_update, queue_subtree_rebuild,
-    request_redraw, take_needs_redraw, take_pending_prop_updates, take_pending_subtree_rebuilds,
+    check_stateful_animations, check_stateful_deps, clear_stateful_base_updaters,
+    has_animating_statefuls, has_pending_subtree_rebuilds, has_stateful_base_updater,
+    peek_needs_redraw, queue_prop_update, queue_subtree_rebuild, request_redraw, take_needs_redraw,
+    take_pending_prop_updates, take_pending_subtree_rebuilds, update_stateful_base_props,
     use_shared_state, use_shared_state_with, PendingSubtreeRebuild, SharedState, StateTransitions,
     StatefulInner,
 };

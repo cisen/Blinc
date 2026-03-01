@@ -97,7 +97,10 @@ impl Svg {
         self
     }
 
-    /// Alias for tint - set the color
+    /// Set the color (resolves `currentColor` in SVG)
+    ///
+    /// Maps to the CSS `color` property. During rasterization, any `currentColor`
+    /// references in the SVG source are replaced with this value.
     pub fn color(self, color: Color) -> Self {
         self.tint(color)
     }

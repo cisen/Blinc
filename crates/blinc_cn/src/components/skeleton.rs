@@ -46,7 +46,7 @@ impl Skeleton {
         let bg = theme.color(ColorToken::SurfaceElevated);
         let radius = theme.radius(RadiusToken::Default);
 
-        let inner = div().bg(bg).rounded(radius);
+        let inner = div().class("cn-skeleton").bg(bg).rounded(radius);
 
         Self { inner }
     }
@@ -57,6 +57,7 @@ impl Skeleton {
         let bg = theme.color(ColorToken::SurfaceElevated);
 
         let inner = div()
+            .class("cn-skeleton")
             .bg(bg)
             .w(size)
             .h(size)
@@ -277,6 +278,10 @@ impl ElementBuilder for Skeleton {
 
     fn element_type_id(&self) -> ElementTypeId {
         ElementBuilder::element_type_id(&self.inner)
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
     }
 }
 

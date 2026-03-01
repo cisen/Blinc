@@ -867,6 +867,10 @@ impl AndroidApp {
                     // Build UI
                     let element = ui_builder(windowed_ctx);
 
+                    // Clear stale Stateful base_render_props updaters before rebuild
+                    blinc_layout::clear_stateful_base_updaters();
+                    blinc_layout::click_outside::clear_click_outside_handlers();
+
                     // Create or update render tree
                     if render_tree.is_none() {
                         // First time: create tree

@@ -214,7 +214,7 @@ impl BuiltScrollArea {
 
 /// Scroll Area component with customizable scrollbar
 pub struct ScrollArea {
-    inner: Scroll,
+    inner: Div,
 }
 
 impl ElementBuilder for ScrollArea {
@@ -231,7 +231,11 @@ impl ElementBuilder for ScrollArea {
     }
 
     fn event_handlers(&self) -> Option<&blinc_layout::event_handler::EventHandlers> {
-        self.inner.event_handlers()
+        ElementBuilder::event_handlers(&self.inner)
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
     }
 }
 
@@ -256,7 +260,7 @@ impl ScrollAreaBuilder {
             // Take ownership of config, replacing with default
             let config = self.config.take();
             let built = BuiltScrollArea::from_config(config);
-            ScrollArea { inner: built.inner }
+            ScrollArea { inner: div().class("cn-scroll-area").child(built.inner) }
         })
     }
 
@@ -360,7 +364,7 @@ impl ScrollAreaBuilder {
     pub fn build_final(self) -> ScrollArea {
         let config = self.config.into_inner();
         let built = BuiltScrollArea::from_config(config);
-        ScrollArea { inner: built.inner }
+        ScrollArea { inner: div().class("cn-scroll-area").child(built.inner) }
     }
 }
 
@@ -385,6 +389,10 @@ impl ElementBuilder for ScrollAreaBuilder {
 
     fn event_handlers(&self) -> Option<&blinc_layout::event_handler::EventHandlers> {
         self.get_or_build().event_handlers()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().element_classes()
     }
 }
 

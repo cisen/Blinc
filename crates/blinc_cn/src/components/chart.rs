@@ -132,6 +132,10 @@ impl ElementBuilder for LineChart {
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.inner.layout_style()
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
+    }
 }
 
 /// Builder for LineChart
@@ -395,6 +399,10 @@ impl ElementBuilder for BarChart {
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.inner.layout_style()
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
+    }
 }
 
 /// Builder for BarChart
@@ -622,6 +630,10 @@ impl ElementBuilder for SparkLine {
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.inner.layout_style()
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
+    }
 }
 
 /// Builder for SparkLine
@@ -807,6 +819,10 @@ impl ElementBuilder for ThresholdLineChart {
 
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.inner.layout_style()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
     }
 }
 
@@ -1156,6 +1172,10 @@ impl ElementBuilder for Histogram {
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.inner.layout_style()
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
+    }
 }
 
 /// Builder for Histogram
@@ -1398,6 +1418,10 @@ impl ElementBuilder for ComparisonBarChart {
 
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.inner.layout_style()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
     }
 }
 

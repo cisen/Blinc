@@ -99,6 +99,7 @@ impl KbdBuilder {
 
         // Build the Kbd element
         let inner = div()
+            .class("cn-kbd")
             .items_center()
             .justify_center()
             .w_fit()
@@ -159,6 +160,10 @@ impl ElementBuilder for KbdBuilder {
     fn event_handlers(&self) -> Option<&blinc_layout::event_handler::EventHandlers> {
         ElementBuilder::event_handlers(&self.get_or_build().inner)
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().inner.element_classes()
+    }
 }
 
 impl ElementBuilder for Kbd {
@@ -184,6 +189,10 @@ impl ElementBuilder for Kbd {
 
     fn event_handlers(&self) -> Option<&blinc_layout::event_handler::EventHandlers> {
         ElementBuilder::event_handlers(&self.inner)
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
     }
 }
 

@@ -85,6 +85,10 @@ impl ElementBuilder for Collapsible {
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.inner.layout_style()
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
+    }
 }
 
 /// Builder for creating Collapsible components with fluent API
@@ -224,6 +228,10 @@ impl ElementBuilder for CollapsibleBuilder {
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.get_or_build().layout_style()
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().element_classes()
+    }
 }
 
 /// Collapsible builder with content set
@@ -312,6 +320,10 @@ where
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.get_or_build().layout_style()
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().element_classes()
+    }
 }
 
 /// Collapsible trigger button that toggles the state
@@ -364,6 +376,7 @@ impl CollapsibleTrigger {
                 };
 
                 div()
+                    .class("cn-collapsible-trigger")
                     .flex_row()
                     .w_full()
                     .justify_between()
@@ -416,6 +429,10 @@ impl ElementBuilder for CollapsibleTrigger {
 
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.inner.layout_style()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
     }
 }
 

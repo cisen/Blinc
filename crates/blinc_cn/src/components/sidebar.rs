@@ -208,6 +208,7 @@ impl Sidebar {
                 // Children conditionally render icon-only (collapsed) or icon+label (expanded)
                 // The infrastructure fix ensures children laid out at larger size during collapse
                 let mut items_container = div()
+                    .class("cn-sidebar")
                     .flex_col()
                     .border_right(1.0, border)
                     .bg(surface)
@@ -306,7 +307,8 @@ impl Sidebar {
                                 // Conditionally render: icon-only when collapsed, icon+label when expanded
                                 // Animate position so items slide smoothly when section titles disappear
                                 let item_anim_key = format!("{}_anim", ctx.key());
-                                div()
+                                let mut item_d = div()
+                                    .class("cn-sidebar-item")
                                     .w_fit()
                                     .h_fit()
                                     .flex_row()
@@ -341,7 +343,11 @@ impl Sidebar {
                                         d.child(div().flex_shrink_0().child(
                                             svg(&item_icon).size(18.0, 18.0).color(icon_color),
                                         ))
-                                    })
+                                    });
+                                if item_is_active {
+                                    item_d = item_d.class("cn-sidebar-item--active");
+                                }
+                                item_d
                             })
                             .on_click(move |_| {
                                 active_menu_for_trigger.update(|_| Some(item_for_trigger.clone()));

@@ -409,6 +409,10 @@ impl IOSRenderContext {
         // Build UI
         let element = ui_builder(&mut self.windowed_ctx);
 
+        // Clear stale Stateful base_render_props updaters before rebuild
+        blinc_layout::clear_stateful_base_updaters();
+        blinc_layout::click_outside::clear_click_outside_handlers();
+
         // Create or update render tree
         if self.render_tree.is_none() {
             // First time: create tree
@@ -797,6 +801,8 @@ where
     E: ElementBuilder + 'static,
 {
     let boxed_builder: RustUIBuilder = Box::new(move |ctx, _existing_tree| {
+        blinc_layout::clear_stateful_base_updaters();
+        blinc_layout::click_outside::clear_click_outside_handlers();
         let element = builder(ctx);
         let mut tree = RenderTree::from_element(&element);
         tree.set_scale_factor(ctx.scale_factor as f32);

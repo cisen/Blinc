@@ -161,6 +161,8 @@ struct TextElement {
     text_shadow: Option<blinc_core::Shadow>,
     /// 3D layer info if this text is inside a perspective-transformed parent
     transform_3d_layer: Option<Transform3DLayerInfo>,
+    /// Whether this text is inside a foreground-layer element (rendered after foreground primitives)
+    is_foreground: bool,
 }
 
 /// Image element data for rendering
@@ -1820,8 +1822,6 @@ impl RenderContext {
                     // Strip existing attributes from the <svg> tag
                     if let Some(svg_close) = modified.find('>') {
                         if svg.stroke.is_some() {
-                            strip_attr(&mut modified, 0, svg_close, "stroke-width");
-                            let svg_close = modified.find('>').unwrap_or(0);
                             strip_attr(&mut modified, 0, svg_close, "stroke");
                         }
                         if svg.fill.is_some() {
@@ -2294,6 +2294,13 @@ impl RenderContext {
         // Track if children should be considered inside glass
         let children_inside_glass = inside_glass || is_glass;
 
+        // Track if we're inside a foreground-layer element
+        let is_foreground_node = tree
+            .get_render_node(node)
+            .map(|n| n.props.layer == RenderLayer::Foreground)
+            .unwrap_or(false);
+        let children_inside_foreground = inside_foreground || is_foreground_node;
+
         // Check if this node clips its children (e.g., scroll containers)
         let clips_content = tree
             .get_render_node(node)
@@ -2733,6 +2740,7 @@ impl RenderContext {
                         css_affine: node_css_affine,
                         text_shadow: render_node.props.text_shadow,
                         transform_3d_layer: inside_3d_layer.clone(),
+                        is_foreground: children_inside_foreground,
                     });
                 }
                 ElementType::Svg(svg_data) => {
@@ -2784,11 +2792,15 @@ impl RenderContext {
                         y: scaled_y,
                         width: scaled_width,
                         height: scaled_height,
-                        tint: render_node
-                            .props
-                            .text_color
-                            .map(|c| blinc_core::Color::rgba(c[0], c[1], c[2], c[3]))
-                            .or(svg_data.tint),
+                        // Builder .color()/.tint() takes priority over inherited CSS color
+                        tint: svg_data
+                            .tint
+                            .or_else(|| {
+                                render_node
+                                    .props
+                                    .text_color
+                                    .map(|c| blinc_core::Color::rgba(c[0], c[1], c[2], c[3]))
+                            }),
                         // CSS fill/stroke override builder fill/stroke
                         fill: render_node
                             .props
@@ -3199,6 +3211,7 @@ impl RenderContext {
                             css_affine: node_css_affine,
                             text_shadow: render_node.props.text_shadow,
                             transform_3d_layer: inside_3d_layer.clone(),
+                            is_foreground: children_inside_foreground,
                         });
 
                         x_offset += segment_width;
@@ -3285,7 +3298,7 @@ impl RenderContext {
                 child_id,
                 new_offset,
                 children_inside_glass,
-                inside_foreground,
+                children_inside_foreground,
                 child_clip,
                 child_clip_radius,
                 effective_motion_opacity,
@@ -3398,6 +3411,7 @@ impl RenderContext {
         // Elements inside a 3D-transformed parent need to be rendered to an offscreen
         // texture and blitted with the same perspective transform.
         let mut texts = Vec::new();
+        let mut fg_texts = Vec::new();
         let mut layer_3d_texts: std::collections::HashMap<
             LayoutNodeId,
             (Transform3DLayerInfo, Vec<TextElement>),
@@ -3409,6 +3423,8 @@ impl RenderContext {
                     .or_insert_with(|| (info.clone(), Vec::new()))
                     .1
                     .push(text);
+            } else if text.is_foreground {
+                fg_texts.push(text);
             } else {
                 texts.push(text);
             }
@@ -3661,9 +3677,97 @@ impl RenderContext {
             }
         }
 
+        // Prepare foreground text glyphs (rendered after foreground primitives)
+        let mut fg_glyphs: Vec<GpuGlyph> = Vec::new();
+        for text in &fg_texts {
+            if let Some([clip_x, clip_y, clip_w, clip_h]) = text.clip_bounds {
+                let text_right = text.x + text.width;
+                let text_bottom = text.y + text.height;
+                let clip_right = clip_x + clip_w;
+                let clip_bottom = clip_y + clip_h;
+                if text.x >= clip_right
+                    || text_right <= clip_x
+                    || text.y >= clip_bottom
+                    || text_bottom <= clip_y
+                {
+                    continue;
+                }
+            }
+
+            let alignment = match text.align {
+                TextAlign::Left => TextAlignment::Left,
+                TextAlign::Center => TextAlignment::Center,
+                TextAlign::Right => TextAlignment::Right,
+            };
+
+            let color = if text.motion_opacity < 1.0 {
+                [
+                    text.color[0],
+                    text.color[1],
+                    text.color[2],
+                    text.color[3] * text.motion_opacity,
+                ]
+            } else {
+                text.color
+            };
+
+            let effective_width = if let Some(clip) = text.clip_bounds {
+                clip[2].min(text.width)
+            } else {
+                text.width
+            };
+            let needs_wrap = text.wrap && effective_width < text.measured_width - 2.0;
+            let wrap_width = Some(text.width);
+            let font_name = text.font_family.name.as_deref();
+            let generic = to_gpu_generic_font(text.font_family.generic);
+            let font_weight = text.weight.weight();
+
+            let (anchor, y_pos, use_layout_height) = match text.v_align {
+                TextVerticalAlign::Center => {
+                    (TextAnchor::Center, text.y + text.height / 2.0, false)
+                }
+                TextVerticalAlign::Top => (TextAnchor::Top, text.y, true),
+                TextVerticalAlign::Baseline => {
+                    let baseline_y = text.y + text.ascender;
+                    (TextAnchor::Baseline, baseline_y, false)
+                }
+            };
+            let layout_height = if use_layout_height {
+                Some(text.height)
+            } else {
+                None
+            };
+
+            if let Ok(mut glyphs) = self.text_ctx.prepare_text_with_style(
+                &text.content,
+                text.x,
+                y_pos,
+                text.font_size,
+                color,
+                anchor,
+                alignment,
+                wrap_width,
+                needs_wrap,
+                font_name,
+                generic,
+                font_weight,
+                text.italic,
+                layout_height,
+                text.letter_spacing,
+            ) {
+                if let Some(clip) = text.clip_bounds {
+                    for glyph in &mut glyphs {
+                        glyph.clip_bounds = clip;
+                    }
+                }
+                fg_glyphs.extend(glyphs);
+            }
+        }
+
         tracing::trace!(
-            "render_tree_with_motion: {} texts, {} z-layers with glyphs, {} css-transformed",
+            "render_tree_with_motion: {} texts, {} fg texts, {} z-layers with glyphs, {} css-transformed",
             texts.len(),
+            fg_texts.len(),
             glyphs_by_layer.len(),
             css_transformed_text_prims.len()
         );
@@ -3821,6 +3925,11 @@ impl RenderContext {
             if !svgs.is_empty() {
                 self.render_rasterized_svgs(target, &svgs, scale_factor);
             }
+
+            // Render foreground text (inside foreground-layer elements, after everything else)
+            if !fg_glyphs.is_empty() {
+                self.render_text(target, &fg_glyphs);
+            }
         } else {
             // Simple path (no glass)
             // Pre-generate text decorations grouped by layer for interleaved rendering
@@ -3904,6 +4013,11 @@ impl RenderContext {
                     self.renderer
                         .render_primitives_overlay(target, &batch.foreground_primitives);
                 }
+
+                // Render foreground text (inside foreground-layer elements, after foreground primitives)
+                if !fg_glyphs.is_empty() {
+                    self.render_text(target, &fg_glyphs);
+                }
             } else {
                 // Fast path: render full batch (handles layer effects like backdrop-filter)
                 self.renderer
@@ -3959,6 +4073,11 @@ impl RenderContext {
                         }
                         self.render_text_decorations_for_layer(target, &decorations_by_layer, z);
                     }
+                }
+
+                // Render foreground text (inside foreground-layer elements, after all z-layers)
+                if !fg_glyphs.is_empty() {
+                    self.render_text(target, &fg_glyphs);
                 }
             }
         }

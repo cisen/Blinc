@@ -35,17 +35,14 @@
 use std::cell::OnceCell;
 use std::sync::Arc;
 
-use blinc_animation::AnimationPreset;
 use blinc_core::context_state::BlincContextState;
 use blinc_core::State;
+use blinc_layout::click_outside;
 use blinc_layout::div::ElementTypeId;
 use blinc_layout::element::{CursorStyle, RenderProps};
-use blinc_layout::motion::motion_derived;
-use blinc_layout::overlay_state::get_overlay_manager;
 use blinc_layout::prelude::*;
 use blinc_layout::stateful::{stateful_with_key, ButtonState};
 use blinc_layout::tree::{LayoutNodeId, LayoutTree};
-use blinc_layout::widgets::overlay::{OverlayHandle, OverlayManagerExt};
 use blinc_theme::{ColorToken, RadiusToken, SpacingToken, ThemeState};
 
 use crate::ButtonVariant;
@@ -183,12 +180,6 @@ impl Select {
         let open_key = format!("{}_open", instance_key);
         let open_state = BlincContextState::get().use_state_keyed(&open_key, || false);
 
-        // Store overlay handle to track the dropdown overlay
-        let handle_key = format!("{}_handle", instance_key);
-        let overlay_handle_state: State<Option<u64>> =
-            BlincContextState::get().use_state_keyed(&handle_key, || None);
-
-        // Store dropdown width for overlay
         let dropdown_width = config.width.unwrap_or(200.0);
 
         // Clones for closures
@@ -196,29 +187,43 @@ impl Select {
         let open_state_for_display = open_state.clone();
         let options_for_display = config.options.clone();
         let placeholder_for_display = config.placeholder.clone();
+        let options_for_dropdown = config.options.clone();
+        let on_change_for_dropdown = config.on_change.clone();
+        let value_state_for_dropdown = config.value_state.clone();
+        let open_state_for_dropdown = open_state.clone();
 
         // Chevron SVG (down arrow)
         let chevron_svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>"#;
 
-        // Build dropdown options
-        let options = config.options.clone();
-        let on_change = config.on_change.clone();
-        let value_state_for_options = config.value_state.clone();
-        let open_state_for_click = open_state.clone();
-        let overlay_handle_for_click = overlay_handle_state.clone();
         let btn_variant = ButtonVariant::Outline;
         let select_btn_key = format!("{}_btn", instance_key);
-        // Clone instance_key for use in closures (it's a &str that needs to outlive 'static)
         let instance_key_owned = instance_key.to_string();
-        // The click handler is on the Stateful itself (not the inner div) so it gets registered
-        // Use w_full() to ensure the Stateful takes the same width as its parent container
+        // Unique element ID for click-outside detection
+        let wrapper_id = format!("cn-select-{}", instance_key);
+        let wrapper_id_for_state = wrapper_id.clone();
+        let open_state_for_dismiss = open_state.clone();
+
         let select_element = stateful_with_key::<ButtonState>(&select_btn_key)
             .deps([config.value_state.signal_id(), open_state.signal_id()])
             .on_state(move |ctx| {
                 let state = ctx.state();
                 let is_open = open_state_for_display.get();
+
+                // Register/unregister click-outside based on open state
+                if is_open {
+                    let dismiss_state = open_state_for_dismiss.clone();
+                    click_outside::register_click_outside(
+                        &wrapper_id_for_state,
+                        &wrapper_id_for_state,
+                        move || {
+                            dismiss_state.set(false);
+                        },
+                    );
+                } else {
+                    click_outside::unregister_click_outside(&wrapper_id_for_state);
+                }
+
                 let bg = btn_variant.background(theme, state);
-                // Get current display value and selected option
                 let current_val = value_state_for_display.get();
                 let selected_option = options_for_display
                     .iter()
@@ -232,32 +237,37 @@ impl Select {
                 };
                 let bdr = if is_open { border_hover } else { border };
 
-                // Build the content to display in the trigger
-                // Use custom content if available, otherwise fall back to label text
                 let display_content: Div = if let Some(opt) = selected_option {
                     if let Some(ref content_fn) = opt.content {
-                        // Use custom content builder for the selected option
                         content_fn()
                     } else {
-                        // Fall back to label text
                         div().h_fit().overflow_clip().child(text(&opt.label).size(font_size).no_cursor().color(text_clr))
                     }
                 } else {
-                    // Show placeholder
                     let placeholder_text = placeholder_for_display
                         .clone()
                         .unwrap_or_else(|| "Select...".to_string());
                     div().h_fit().overflow_clip().child(text(&placeholder_text).size(font_size).no_cursor().color(text_clr))
                 };
 
-                // Build trigger (visual only - click handler is on Stateful)
-                // Wrap content in a flex-1 overflow-hidden container to prevent growing
                 let content_wrapper = div()
                     .overflow_clip()
                     .flex_1()
                     .child(display_content);
 
-                div()
+                // Wrapper uses relative positioning so the dropdown can be absolutely positioned
+                let mut wrapper = div()
+                    .class("cn-select")
+                    .id(&wrapper_id)
+                    .relative()
+                    .overflow_visible()
+                    .w(dropdown_width);
+
+                // Trigger button — click handler is on the trigger itself (not the wrapper)
+                // so clicking dropdown items does NOT re-toggle the dropdown.
+                let open_state_trigger = open_state_for_display.clone();
+                let trigger = div()
+                    .class("cn-select-trigger")
                     .flex_row()
                     .w(dropdown_width)
                     .items_center()
@@ -271,7 +281,7 @@ impl Select {
                     .overflow_clip()
                     .flex_shrink_0()
                     .shadow_sm()
-                     .child(content_wrapper)
+                    .child(content_wrapper)
                     .child(
                         svg(chevron_svg)
                             .size(16.0, 16.0)
@@ -281,110 +291,45 @@ impl Select {
                     )
                     .when(!disabled, |t| t.cursor_pointer())
                     .when(disabled, |t| t.cursor_not_allowed())
-            })
-            .on_click(move |ctx| {
-                if disabled {
-                    return;
-                }
-                let is_currently_open = open_state_for_click.get();
-
-                if is_currently_open {
-                    // Close the dropdown - state updates are handled by on_close callback
-                    // after the exit animation completes (deferred in overlay manager)
-                    if let Some(handle_id) = overlay_handle_for_click.get() {
-                        let mgr = get_overlay_manager();
-                        let handle = OverlayHandle::from_raw(handle_id);
-
-                        // Check if overlay is already closing or pending close
-                        if mgr.is_closing(handle) || mgr.is_pending_close(handle) {
-                            // Close already in progress, don't trigger again
-                            return;
+                    .on_click(move |_ctx| {
+                        if !disabled {
+                            open_state_trigger.set(!open_state_trigger.get());
                         }
+                    });
 
-                        mgr.close(handle);
-                    }
-                    // Don't update state here - let on_close callback handle it after animation
-                } else {
-                    // Use EventContext bounds which are computed absolutely by the event router
-                    // These are set during hit testing and represent the actual screen position
-                    let (trigger_x, trigger_y, trigger_w, trigger_h) =
-                        (ctx.bounds_x, ctx.bounds_y, ctx.bounds_width, ctx.bounds_height);
+                wrapper = wrapper.child(trigger);
 
-                    // Position dropdown directly below the trigger, left-aligned (same as DropdownMenuBuilder)
-                    let offset = 4.0;
-                    let dropdown_x = trigger_x;
-                    let dropdown_y = trigger_y + trigger_h + offset;
-                    tracing::debug!(
-                        "Select dropdown position: x={:.1}, y={:.1} (trigger bounds: {:.1}, {:.1}, {:.1}, {:.1})",
-                        dropdown_x, dropdown_y, trigger_x, trigger_y, trigger_w, trigger_h
+                // Dropdown content (only when open)
+                if is_open {
+                    let current_selected = value_state_for_dropdown.get();
+                    let dropdown = build_dropdown_content(
+                        &options_for_dropdown,
+                        &current_selected,
+                        &value_state_for_dropdown,
+                        &open_state_for_dropdown,
+                        &on_change_for_dropdown,
+                        &instance_key_owned,
+                        dropdown_width,
+                        height,
+                        font_size,
+                        padding,
+                        radius,
+                        bg,
+                        border,
+                        text_color,
+                        text_tertiary,
+                        surface_elevated,
                     );
 
-                    // Clone values for the dropdown content closure
-                    let opts = options.clone();
-                    let val_state = value_state_for_options.clone();
-                    let open_st = open_state_for_click.clone();
-                    let handle_st = overlay_handle_for_click.clone();
-                    let on_chg = on_change.clone();
-                    let current_selected = val_state.get();
-                    let dw = dropdown_width;
-                    let key_for_content = instance_key_owned.clone();
-
-
-
-                    // Clone for on_close callback
-                    let open_state_for_close = open_state_for_click.clone();
-                    let handle_state_for_close = overlay_handle_for_click.clone();
-
-                    // Show dropdown via overlay manager
-                    let mgr = get_overlay_manager();
-
-                    // Create a unique motion key for this select instance
-                    // The motion is on the child of the wrapper div, so we need ":child:0" suffix
-                    let motion_key_str = format!("select_{}", key_for_content);
-                    let motion_key_with_child = format!("{}:child:0", motion_key_str);
-
-                    let handle = mgr
-                        .dropdown()
-                        .at(dropdown_x, dropdown_y)
-                        // .size(dropdown_width, estimated_height)
-                        .dismiss_on_escape(true)
-                        .motion_key(&motion_key_with_child)
-                        .content(move || {
-                            build_dropdown_content(
-                                &opts,
-                                &current_selected,
-                                &val_state,
-                                &open_st,
-                                &handle_st,
-                                &on_chg,
-                                &motion_key_str,
-                                dw,
-                                font_size,
-                                padding,
-                                radius,
-                                bg,
-                                border,
-                                text_color,
-                                text_tertiary,
-                                surface_elevated,
-                            )
-                        })
-                        .on_close(move || {
-                            // Sync state when dropdown is dismissed externally
-                            open_state_for_close.set(false);
-                            handle_state_for_close.set(None);
-                        })
-                        .show();
-
-                    open_state_for_click.set(true);
-                    overlay_handle_for_click.set(Some(handle.id()));
+                    wrapper = wrapper.child(dropdown);
                 }
+
+                wrapper
             });
 
         // If there's a label, wrap in a container
         let inner = if let Some(ref label_text) = config.label {
             let spacing = theme.spacing_value(SpacingToken::Space2);
-            // Use same width as container for consistency
             let mut outer = div().flex_col().gap_px(spacing).w(dropdown_width).h_fit();
 
             let mut lbl = label(label_text).size(LabelSize::Medium);
@@ -417,6 +362,10 @@ impl ElementBuilder for Select {
 
     fn element_type_id(&self) -> ElementTypeId {
         self.inner.element_type_id()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
     }
 }
 
@@ -566,6 +515,10 @@ impl ElementBuilder for SelectBuilder {
     fn event_handlers(&self) -> Option<&blinc_layout::event_handler::EventHandlers> {
         Some(self.get_or_build().inner.event_handlers())
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().inner.element_classes()
+    }
 }
 
 /// Create a select with value state
@@ -594,9 +547,7 @@ pub fn select(value_state: &State<String>) -> SelectBuilder {
     SelectBuilder::new(value_state)
 }
 
-/// Build the dropdown content for the overlay
-///
-/// This is extracted as a separate function to be called from the overlay content closure.
+/// Build the dropdown content as an absolutely positioned child.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 fn build_dropdown_content(
@@ -604,10 +555,10 @@ fn build_dropdown_content(
     current_selected: &str,
     value_state: &State<String>,
     open_state: &State<bool>,
-    overlay_handle_state: &State<Option<u64>>,
     on_change: &Option<Arc<dyn Fn(&str) + Send + Sync>>,
     key: &str,
     width: f32,
+    trigger_height: f32,
     font_size: f32,
     padding: f32,
     radius: f32,
@@ -617,10 +568,10 @@ fn build_dropdown_content(
     text_tertiary: blinc_core::Color,
     surface_elevated: blinc_core::Color,
 ) -> Div {
-    // Generate a unique ID for the dropdown based on the key
     let dropdown_id = key;
 
     let mut dropdown_div = div()
+        .class("cn-select-content")
         .id(dropdown_id)
         .flex_col()
         .w(width)
@@ -629,10 +580,13 @@ fn build_dropdown_content(
         .rounded(radius)
         .shadow_lg()
         .overflow_clip()
-        .h_fit();
-
-    // Note: on_ready callback removed - overlay manager now uses initial size estimation
-    // If accurate sizing is needed, register via ctx.query("select-dropdown-{handle}").on_ready(...)
+        .h_fit()
+        // Absolutely positioned below the trigger, rendered in foreground pass
+        // so it appears above all sibling content regardless of tree order
+        .absolute()
+        .top(trigger_height + 4.0)
+        .left(0.0)
+        .foreground();
 
     for (idx, opt) in options.iter().enumerate() {
         let opt_value = opt.value.clone();
@@ -642,7 +596,7 @@ fn build_dropdown_content(
         let is_opt_disabled = opt.disabled;
 
         let value_state_for_opt = value_state.clone();
-        let handle_state_for_opt = overlay_handle_state.clone();
+        let open_state_for_opt = open_state.clone();
         let on_change_for_opt = on_change.clone();
         let opt_value_for_click = opt_value.clone();
 
@@ -652,100 +606,55 @@ fn build_dropdown_content(
             text_color
         };
 
-        // Background color - selected items get elevated bg, others get normal bg
         let base_bg = if is_selected { surface_elevated } else { bg };
 
-        // Create a stable key for this option's button state
-        let item_key = format!("{}_opt-{}", key, idx);
-
-        // Build option item with Stateful for hover visual updates
-        let option_item = stateful_with_key::<ButtonState>(&item_key)
-            .on_state(move |ctx| {
-                let state = ctx.state();
-                let theme = ThemeState::get();
-                // Apply hover background based on button state
-                let item_bg = if (state == ButtonState::Hovered || state == ButtonState::Pressed)
-                    && !is_opt_disabled
-                {
-                    theme.color(ColorToken::SecondaryHover).with_alpha(0.65)
-                } else {
-                    base_bg
-                };
-
-                let text_color = if (state == ButtonState::Hovered || state == ButtonState::Pressed)
-                    && !is_opt_disabled
-                {
-                    theme.color(ColorToken::TextSecondary)
-                } else {
-                    option_text_color
-                };
-
-                div()
-                    .w_full()
-                    .h_fit()
-                    .py(padding / 4.0)
-                    .px(padding / 2.0)
-                    .cursor(if is_opt_disabled {
-                        CursorStyle::NotAllowed
-                    } else {
-                        CursorStyle::Pointer
-                    })
-                    .flex_row()
-                    .items_center()
-                    .bg(item_bg)
-                    .child(
-                        // Use custom content if available, otherwise fall back to label text
-                        if let Some(ref content_fn) = opt_content {
-                            content_fn()
-                        } else {
-                            div().child(
-                                text(&opt_label)
-                                    .size(font_size)
-                                    .no_cursor()
-                                    .color(text_color),
-                            )
-                        },
-                    )
+        // Plain div with element ID for proper event registration during subtree rebuilds.
+        // Hover styles come from `.cn-select-item:hover` in cn_styles.rs.
+        let item_id = format!("{}_opt_{}", key, idx);
+        let mut item = div()
+            .id(&item_id)
+            .class("cn-select-item")
+            .w_full()
+            .h_fit()
+            .cursor(if is_opt_disabled {
+                CursorStyle::NotAllowed
+            } else {
+                CursorStyle::Pointer
             })
+            .flex_row()
+            .items_center()
+            .bg(base_bg)
+            .child(
+                if let Some(ref content_fn) = opt_content {
+                    content_fn()
+                } else {
+                    div().child(
+                        text(&opt_label)
+                            .size(font_size)
+                            .no_cursor()
+                            .color(option_text_color),
+                    )
+                },
+            )
             .on_click(move |_ctx| {
                 if !is_opt_disabled {
-                    // Close the overlay - state updates are handled by on_close callback
-                    // after the exit animation completes (deferred in overlay manager)
-                    if let Some(handle_id) = handle_state_for_opt.get() {
-                        let mgr = get_overlay_manager();
-                        let handle = OverlayHandle::from_raw(handle_id);
+                    value_state_for_opt.set(opt_value_for_click.clone());
+                    open_state_for_opt.set(false);
 
-                        // Check if overlay is already closing or pending close
-                        if mgr.is_closing(handle) || mgr.is_pending_close(handle) {
-                            // Close already in progress, don't trigger again
-                            return;
-                        }
-
-                        // Set the new value
-                        value_state_for_opt.set(opt_value_for_click.clone());
-
-                        mgr.close(handle);
-                    }
-                    // Don't update state here - let on_close callback handle it after animation
-
-                    // Call on_change callback
                     if let Some(ref cb) = on_change_for_opt {
                         cb(&opt_value_for_click);
                     }
                 }
             });
 
-        dropdown_div = dropdown_div.child(option_item);
+        if is_selected {
+            item = item.class("cn-select-item--selected");
+        }
+
+        dropdown_div = dropdown_div.child(item);
     }
 
-    // Wrap dropdown in motion container for enter/exit animations
-    // Use motion_derived with the key so the overlay can trigger exit animation
-    div().child(
-        motion_derived(key)
-            .enter_animation(AnimationPreset::dropdown_in(150))
-            .exit_animation(AnimationPreset::dropdown_out(100))
-            .child(dropdown_div),
-    )
+    dropdown_div
 }
 
 #[cfg(test)]

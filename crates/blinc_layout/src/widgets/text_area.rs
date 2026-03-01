@@ -55,39 +55,58 @@ impl TextPosition {
 fn apply_css_overrides_textarea(
     cfg: &mut TextAreaConfig,
     stylesheet: &Stylesheet,
-    element_id: &str,
+    element_id: Option<&str>,
+    css_classes: &[String],
     visual: &TextFieldState,
 ) {
-    // 1. Apply base style
-    if let Some(base) = stylesheet.get(element_id) {
-        apply_style_to_textarea_config(cfg, base, visual);
-    }
-
-    // 2. Layer state-specific style
     let state = match visual {
         TextFieldState::Hovered | TextFieldState::FocusedHovered => Some(ElementState::Hover),
         TextFieldState::Focused => Some(ElementState::Focus),
         TextFieldState::Disabled => Some(ElementState::Disabled),
         TextFieldState::Idle => None,
     };
-    if matches!(visual, TextFieldState::FocusedHovered) {
-        if let Some(focus_style) = stylesheet.get_with_state(element_id, ElementState::Focus) {
-            apply_style_to_textarea_config(cfg, focus_style, visual);
+
+    // 1. Apply class-based styles (lowest priority — overridden by ID)
+    for class in css_classes {
+        if let Some(base) = stylesheet.get_class(class) {
+            apply_style_to_textarea_config(cfg, base, visual);
         }
-    }
-    if let Some(s) = state {
-        if let Some(state_style) = stylesheet.get_with_state(element_id, s) {
-            apply_style_to_textarea_config(cfg, state_style, visual);
+        if matches!(visual, TextFieldState::FocusedHovered) {
+            if let Some(s) = stylesheet.get_class_with_state(class, ElementState::Focus) {
+                apply_style_to_textarea_config(cfg, s, visual);
+            }
+        }
+        if let Some(s) = state {
+            if let Some(state_style) = stylesheet.get_class_with_state(class, s) {
+                apply_style_to_textarea_config(cfg, state_style, visual);
+            }
         }
     }
 
-    // 3. Apply ::placeholder style
-    if let Some(placeholder_style) = stylesheet.get_placeholder_style(element_id) {
-        if let Some(color) = placeholder_style.text_color {
-            cfg.placeholder_color = color;
+    // 2. Apply ID-based styles (higher priority — overrides class)
+    if let Some(element_id) = element_id {
+        if let Some(base) = stylesheet.get(element_id) {
+            apply_style_to_textarea_config(cfg, base, visual);
         }
-        if let Some(color) = placeholder_style.placeholder_color {
-            cfg.placeholder_color = color;
+        if matches!(visual, TextFieldState::FocusedHovered) {
+            if let Some(focus_style) = stylesheet.get_with_state(element_id, ElementState::Focus) {
+                apply_style_to_textarea_config(cfg, focus_style, visual);
+            }
+        }
+        if let Some(s) = state {
+            if let Some(state_style) = stylesheet.get_with_state(element_id, s) {
+                apply_style_to_textarea_config(cfg, state_style, visual);
+            }
+        }
+
+        // 3. Apply ::placeholder style (ID-only)
+        if let Some(placeholder_style) = stylesheet.get_placeholder_style(element_id) {
+            if let Some(color) = placeholder_style.text_color {
+                cfg.placeholder_color = color;
+            }
+            if let Some(color) = placeholder_style.placeholder_color {
+                cfg.placeholder_color = color;
+            }
         }
     }
 }
@@ -386,6 +405,8 @@ pub struct TextAreaState {
     pub layout_bounds_storage: crate::renderer::LayoutBoundsStorage,
     /// CSS element ID for stylesheet matching (set via TextArea::id())
     pub(crate) css_element_id: Option<String>,
+    /// CSS class names for stylesheet matching (set via TextArea::class())
+    pub(crate) css_classes: Vec<String>,
 }
 
 impl std::fmt::Debug for TextAreaState {
@@ -429,6 +450,7 @@ impl Default for TextAreaState {
             change_signal_id: None,
             layout_bounds_storage: Arc::new(Mutex::new(None)),
             css_element_id: None,
+            css_classes: Vec::new(),
         }
     }
 }
@@ -1444,15 +1466,27 @@ impl TextArea {
                     let mut cfg = config_for_callback.lock().unwrap().clone();
                     let mut data_guard = data_for_callback.lock().unwrap();
 
-                    // Apply CSS stylesheet overrides if element has an ID
-                    let css_outline = if let Some(ref element_id) = data_guard.css_element_id {
+                    // Apply CSS stylesheet overrides (class-based and/or ID-based)
+                    let has_css_target = data_guard.css_element_id.is_some()
+                        || !data_guard.css_classes.is_empty();
+                    let css_outline = if has_css_target {
                         if let Some(stylesheet) = active_stylesheet() {
-                            apply_css_overrides_textarea(&mut cfg, &stylesheet, element_id, visual);
-                            extract_outline_from_textarea_stylesheet(
+                            apply_css_overrides_textarea(
+                                &mut cfg,
                                 &stylesheet,
-                                element_id,
+                                data_guard.css_element_id.as_deref(),
+                                &data_guard.css_classes,
                                 visual,
-                            )
+                            );
+                            if let Some(ref element_id) = data_guard.css_element_id {
+                                extract_outline_from_textarea_stylesheet(
+                                    &stylesheet,
+                                    element_id,
+                                    visual,
+                                )
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         }
@@ -2367,6 +2401,9 @@ impl TextArea {
 
     /// Add a CSS class name for selector matching
     pub fn class(mut self, name: &str) -> Self {
+        if let Ok(mut d) = self.state.lock() {
+            d.css_classes.push(name.to_string());
+        }
         self.inner = std::mem::take(&mut self.inner).class(name);
         self
     }

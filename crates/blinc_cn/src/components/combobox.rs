@@ -40,17 +40,14 @@
 use std::cell::OnceCell;
 use std::sync::Arc;
 
-use blinc_animation::AnimationPreset;
 use blinc_core::context_state::BlincContextState;
 use blinc_core::State;
+use blinc_layout::click_outside;
 use blinc_layout::div::ElementTypeId;
 use blinc_layout::element::{CursorStyle, RenderProps};
-use blinc_layout::motion::motion_derived;
-use blinc_layout::overlay_state::get_overlay_manager;
 use blinc_layout::prelude::*;
 use blinc_layout::stateful::{stateful_with_key, ButtonState};
 use blinc_layout::tree::{LayoutNodeId, LayoutTree};
-use blinc_layout::widgets::overlay::{OverlayHandle, OverlayManagerExt};
 use blinc_layout::widgets::scroll::scroll;
 use blinc_layout::widgets::text_input::SharedTextInputData;
 use blinc_theme::{ColorToken, RadiusToken, SpacingToken, ThemeState};
@@ -199,13 +196,7 @@ impl Combobox {
         let open_key = format!("{}_open", instance_key);
         let open_state = BlincContextState::get().use_state_keyed(&open_key, || false);
 
-        // Store overlay handle to track the dropdown overlay
-        let handle_key = format!("{}_handle", instance_key);
-        let overlay_handle_state: State<Option<u64>> =
-            BlincContextState::get().use_state_keyed(&handle_key, || None);
-
-        // Create search input data - use the text_input_data helper function
-        // Note: We use a State to persist across rebuilds, storing the Arc<Mutex<TextInputData>>
+        // Create search input data
         let search_key = format!("{}_search", instance_key);
         let search_input_data: SharedTextInputData = BlincContextState::get()
             .use_state_keyed(&search_key, || {
@@ -213,13 +204,11 @@ impl Combobox {
             })
             .get();
 
-        // Create a State<String> for reactive filtering - this is updated from SharedTextInputData
-        // and used by the options list Stateful to trigger re-renders when search text changes
+        // Create a State<String> for reactive filtering
         let search_query_key = format!("{}_search_query", instance_key);
         let search_query_state: State<String> =
             BlincContextState::get().use_state_keyed(&search_query_key, String::new);
 
-        // Store dropdown width for overlay
         let dropdown_width = config.width.unwrap_or(200.0);
 
         // Clones for closures
@@ -228,37 +217,60 @@ impl Combobox {
         let options_for_display = config.options.clone();
         let placeholder_for_display = config.placeholder.clone();
         let search_data_for_display = search_input_data.clone();
+        let options_for_dropdown = config.options.clone();
+        let on_change_for_dropdown = config.on_change.clone();
+        let value_state_for_dropdown = config.value_state.clone();
+        let open_state_for_dropdown = open_state.clone();
+        let search_data_for_dropdown = search_input_data.clone();
+        let search_query_for_dropdown = search_query_state.clone();
+        let allow_custom = config.allow_custom;
+        let placeholder_for_content = config.placeholder.clone();
 
         // Chevron SVG (down arrow)
         let chevron_svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>"#;
 
-        // Search icon SVG
-        let _search_svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>"#;
-
-        // Build dropdown options
-        let options = config.options.clone();
-        let on_change = config.on_change.clone();
-        let value_state_for_options = config.value_state.clone();
-        let open_state_for_click = open_state.clone();
-        let overlay_handle_for_click = overlay_handle_state.clone();
         let select_btn_key = format!("{}_btn", instance_key);
-        let search_data_for_click = search_input_data.clone();
-        let allow_custom = config.allow_custom;
-        let placeholder_for_content = config.placeholder.clone();
-        // Clone instance_key for use in closures (it's a &str that needs to outlive 'static)
         let instance_key_owned = instance_key.to_string();
+        // Unique element ID for click-outside detection
+        let wrapper_id = format!("cn-combobox-{}", instance_key);
+        let wrapper_id_for_state = wrapper_id.clone();
+        let open_state_for_dismiss = open_state.clone();
+        let search_data_for_dismiss = search_input_data.clone();
+        let search_query_for_dismiss = search_query_state.clone();
 
-        // The click handler is on the Stateful itself (not the inner div) so it gets registered
-        // Use w_full() to ensure the Stateful takes the same width as its parent container
         let combobox_element = stateful_with_key::<ButtonState>(&select_btn_key)
-            .deps([config.value_state.signal_id(), open_state.signal_id()])
+            .deps([
+                config.value_state.signal_id(),
+                open_state.signal_id(),
+                search_query_state.signal_id(),
+            ])
             .on_state(move |ctx| {
                 let state = ctx.state();
                 let is_open = open_state_for_display.get();
+
+                // Register/unregister click-outside based on open state
+                if is_open {
+                    let dismiss_state = open_state_for_dismiss.clone();
+                    let dismiss_search_data = search_data_for_dismiss.clone();
+                    let dismiss_search_query = search_query_for_dismiss.clone();
+                    click_outside::register_click_outside(
+                        &wrapper_id_for_state,
+                        &wrapper_id_for_state,
+                        move || {
+                            dismiss_state.set(false);
+                            // Clear search text on dismiss
+                            if let Ok(mut data) = dismiss_search_data.lock() {
+                                data.value.clear();
+                                data.cursor = 0;
+                            }
+                            dismiss_search_query.set(String::new());
+                        },
+                    );
+                } else {
+                    click_outside::unregister_click_outside(&wrapper_id_for_state);
+                }
                 let current_val = value_state_for_display.get();
 
-                // Get display text: if we have a selected value, show its label
-                // Otherwise show placeholder or search text
                 let selected_option = options_for_display
                     .iter()
                     .find(|opt| opt.value == current_val);
@@ -266,10 +278,8 @@ impl Combobox {
                 let display_text = if let Some(opt) = selected_option {
                     opt.label.clone()
                 } else if !current_val.is_empty() {
-                    // Custom value entered
                     current_val.clone()
                 } else {
-                    // Get search text if dropdown is open
                     let search_text = search_data_for_display
                         .lock()
                         .ok()
@@ -299,7 +309,6 @@ impl Combobox {
                     border
                 };
 
-                // Build trigger with text display
                 let display_content = div().flex_1().overflow_clip().child(
                     text(&display_text)
                         .size(font_size)
@@ -307,7 +316,21 @@ impl Combobox {
                         .color(text_clr),
                 );
 
-                div()
+                // Wrapper uses relative positioning so the dropdown can be absolutely positioned
+                let mut wrapper = div()
+                    .class("cn-combobox")
+                    .id(&wrapper_id)
+                    .relative()
+                    .overflow_visible()
+                    .w(dropdown_width);
+
+                // Trigger button — click handler is on the trigger itself (not the wrapper)
+                // so clicking dropdown items does NOT re-toggle the dropdown.
+                let open_state_trigger = open_state_for_display.clone();
+                let search_data_trigger = search_data_for_display.clone();
+                let search_query_trigger = search_query_for_dropdown.clone();
+                let trigger = div()
+                    .class("cn-combobox-trigger")
                     .flex_row()
                     .w_full()
                     .items_center()
@@ -327,114 +350,55 @@ impl Combobox {
                             .flex_shrink_0(),
                     )
                     .cursor_pointer()
-            })
-            .on_click(move |ctx| {
-                let is_currently_open = open_state_for_click.get();
-
-                if is_currently_open {
-                    // Close the dropdown - state updates are handled by on_close callback
-                    // after the exit animation completes (deferred in overlay manager)
-                    if let Some(handle_id) = overlay_handle_for_click.get() {
-                        let mgr = get_overlay_manager();
-                        let handle = OverlayHandle::from_raw(handle_id);
-
-                        // Check if overlay is already closing or pending close
-                        if mgr.is_closing(handle) || mgr.is_pending_close(handle) {
-                            // Close already in progress, don't trigger again
+                    .on_click(move |_ctx| {
+                        if disabled {
                             return;
                         }
-
-                        mgr.close(handle);
-                    }
-                    // Don't update state here - let on_close callback handle it after animation
-                } else {
-                    // Use EventContext bounds which are computed absolutely by the event router
-                    let (trigger_x, trigger_y, _trigger_w, trigger_h) = (
-                        ctx.bounds_x,
-                        ctx.bounds_y,
-                        ctx.bounds_width,
-                        ctx.bounds_height,
-                    );
-
-                    // Position dropdown directly below the trigger, left-aligned
-                    //let offset = -24.0;
-                    let dropdown_x = trigger_x;
-                    let dropdown_y = trigger_y; //+ trigger_h + offset;
-
-                    // Clone values for the dropdown content closure
-                    let opts = options.clone();
-                    let val_state = value_state_for_options.clone();
-                    let open_st = open_state_for_click.clone();
-                    let handle_st = overlay_handle_for_click.clone();
-                    let on_chg = on_change.clone();
-                    let current_selected = val_state.get();
-                    let dw = dropdown_width;
-                    let key_for_content = instance_key_owned.clone();
-                    let search_data = search_data_for_click.clone();
-                    let placeholder_for_dropdown = placeholder_for_content.clone();
-                    let search_query_for_dropdown = search_query_state.clone();
-
-                    // Clone for on_close callback
-                    let open_state_for_close = open_state_for_click.clone();
-                    let handle_state_for_close = overlay_handle_for_click.clone();
-                    let search_data_for_close = search_data_for_click.clone();
-                    let search_query_for_close = search_query_state.clone();
-
-                    // Create a unique motion key for this combobox instance
-                    // The motion is on the child of the wrapper div, so we need ":child:0" suffix
-                    let motion_key_str = format!("combobox_{}", key_for_content);
-                    let motion_key_with_child = format!("{}:child:0", motion_key_str);
-
-                    // Show dropdown via overlay manager
-                    let mgr = get_overlay_manager();
-                    let handle = mgr
-                        .dropdown()
-                        .at(dropdown_x, dropdown_y)
-                        .dismiss_on_escape(true)
-                        .motion_key(&motion_key_with_child)
-                        .content(move || {
-                            build_dropdown_content(
-                                &opts,
-                                &current_selected,
-                                &val_state,
-                                &open_st,
-                                &handle_st,
-                                &on_chg,
-                                &key_for_content,
-                                &search_data,
-                                &search_query_for_dropdown,
-                                dw,
-                                height,
-                                font_size,
-                                padding,
-                                radius,
-                                bg,
-                                border,
-                                border_focus,
-                                text_color,
-                                text_tertiary,
-                                surface_elevated,
-                                allow_custom,
-                                &placeholder_for_dropdown,
-                            )
-                        })
-                        .on_close(move || {
-                            // Sync state when dropdown is dismissed externally
-                            open_state_for_close.set(false);
-                            handle_state_for_close.set(None);
-
-                            // Clear search text
-                            if let Ok(mut data) = search_data_for_close.lock() {
+                        let is_currently_open = open_state_trigger.get();
+                        if is_currently_open {
+                            // Closing: clear search text
+                            if let Ok(mut data) = search_data_trigger.lock() {
                                 data.value.clear();
                                 data.cursor = 0;
                             }
-                            search_query_for_close.set(String::new());
-                        })
-                        .show();
+                            search_query_trigger.set(String::new());
+                        }
+                        open_state_trigger.set(!is_currently_open);
+                    });
 
-                    open_state_for_click.set(true);
-                    overlay_handle_for_click.set(Some(handle.id()));
+                wrapper = wrapper.child(trigger);
+
+                // Dropdown content (only when open)
+                if is_open {
+                    let current_selected = value_state_for_dropdown.get();
+                    let dropdown = build_dropdown_content(
+                        &options_for_dropdown,
+                        &current_selected,
+                        &value_state_for_dropdown,
+                        &open_state_for_dropdown,
+                        &on_change_for_dropdown,
+                        &instance_key_owned,
+                        &search_data_for_dropdown,
+                        &search_query_for_dropdown,
+                        dropdown_width,
+                        height,
+                        font_size,
+                        padding,
+                        radius,
+                        bg,
+                        border,
+                        border_focus,
+                        text_color,
+                        text_tertiary,
+                        surface_elevated,
+                        allow_custom,
+                        &placeholder_for_content,
+                    );
+
+                    wrapper = wrapper.child(dropdown);
                 }
+
+                wrapper
             });
 
         // Build the outer container with optional label
@@ -445,7 +409,6 @@ impl Combobox {
             combobox_container = combobox_container.opacity(0.5);
         }
 
-        // If there's a label, wrap in a container
         let inner = if let Some(ref label_text) = config.label {
             let spacing = theme.spacing_value(SpacingToken::Space2);
             let mut outer = div().flex_col().gap_px(spacing).w(container_width).h_fit();
@@ -480,6 +443,10 @@ impl ElementBuilder for Combobox {
 
     fn element_type_id(&self) -> ElementTypeId {
         self.inner.element_type_id()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
     }
 }
 
@@ -638,6 +605,10 @@ impl ElementBuilder for ComboboxBuilder {
     fn event_handlers(&self) -> Option<&blinc_layout::event_handler::EventHandlers> {
         Some(self.get_or_build().inner.event_handlers())
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().inner.element_classes()
+    }
 }
 
 /// Create a combobox with value state
@@ -666,7 +637,7 @@ pub fn combobox(value_state: &State<String>) -> ComboboxBuilder {
     ComboboxBuilder::new(value_state)
 }
 
-/// Build the dropdown content for the overlay
+/// Build the dropdown content as an absolutely positioned child.
 ///
 /// This includes a search input and filtered options list.
 #[allow(clippy::too_many_arguments)]
@@ -676,13 +647,12 @@ fn build_dropdown_content(
     current_selected: &str,
     value_state: &State<String>,
     open_state: &State<bool>,
-    overlay_handle_state: &State<Option<u64>>,
     on_change: &Option<Arc<dyn Fn(&str) + Send + Sync>>,
     key: &str,
     search_data: &SharedTextInputData,
     search_query_state: &State<String>,
     width: f32,
-    height: f32,
+    trigger_height: f32,
     font_size: f32,
     padding: f32,
     radius: f32,
@@ -699,6 +669,7 @@ fn build_dropdown_content(
     let dropdown_id = key;
 
     let mut dropdown_div = div()
+        .class("cn-combobox-content")
         .id(dropdown_id)
         .flex_col()
         .w(width)
@@ -706,21 +677,24 @@ fn build_dropdown_content(
         .border(1.0, border)
         .rounded(radius)
         .shadow_lg()
-        .overflow_clip();
+        .overflow_clip()
+        // Absolutely positioned below the trigger, rendered in foreground pass
+        // so it appears above all sibling content regardless of tree order
+        .absolute()
+        .top(trigger_height + 4.0)
+        .left(0.0)
+        .foreground();
 
-    // Search input at the top - use placeholder from config or default
+    // Search input at the top
     let search_placeholder = placeholder
         .clone()
         .unwrap_or_else(|| "Type to search...".to_string());
 
-    // Clone search_query_state for the text input's on_change sync
     let search_query_for_sync = search_query_state.clone();
 
-    // Use w_full() on the input and flex_grow() to fill the container
-    // This prevents the input from shrinking when focused
     let search_input = blinc_layout::widgets::text_input::text_input(search_data)
         .w_full()
-        .h(height)
+        .h(trigger_height)
         .text_size(font_size)
         .rounded(theme.radii().radius_sm)
         .placeholder(search_placeholder)
@@ -732,54 +706,44 @@ fn build_dropdown_content(
         .focused_bg_color(bg)
         .text_color(text_color)
         .placeholder_color(text_tertiary)
-        .flex_grow() // Ensure it takes full width
+        .flex_grow()
         .on_change(move |new_value: &str| {
-            // Sync the search query state when text changes - this triggers deps updates
             search_query_for_sync.set(new_value.to_string());
         });
 
-    // Search container with explicit width and flex properties to prevent shrinking
     let search_container = div()
-        .w(width) // Explicit width to prevent resize on focus
-        .flex_shrink_0() // Prevent container from shrinking
-        // .p_px(padding / 2.0)
+        .w(width)
+        .flex_shrink_0()
         .border_bottom(1.0, border)
         .child(search_input);
 
     dropdown_div = dropdown_div.child(search_container);
 
-    // Create a Stateful container for the options list that reacts to search changes
-    // Clone all values needed inside the on_state callback
+    // Stateful container for the options list that reacts to search changes
     let options_for_filter = options.to_vec();
     let current_selected_owned = current_selected.to_string();
     let value_state_for_opts = value_state.clone();
     let open_state_for_opts = open_state.clone();
-    let handle_state_for_opts = overlay_handle_state.clone();
     let on_change_for_opts = on_change.clone();
     let search_data_for_opts = search_data.clone();
     let search_query_for_opts = search_query_state.clone();
     let key_for_opts = key.to_string();
 
-    // Create a key for the options container (used for deps-based updates)
     let options_container_key = format!("{}_options_container", key);
 
     let options_stateful = stateful_with_key::<ButtonState>(&options_container_key)
         .deps([search_query_state.signal_id()])
         .on_state(move |_ctx| {
-            // Get search text from State<String> (updated by text_input's on_change callback)
             let search_text = search_query_for_opts.get();
 
-            // Filter options based on current search text
             let filtered_options: Vec<_> = options_for_filter
                 .iter()
                 .filter(|opt| opt.matches(&search_text))
                 .collect();
 
-            // Build options content
             let mut options_content = div().flex_col().w_full();
 
             if filtered_options.is_empty() {
-                // Show "no results" message
                 let no_results = div().w_full().p_px(padding).child(
                     text("No results found")
                         .size(font_size)
@@ -787,80 +751,58 @@ fn build_dropdown_content(
                 );
                 options_content = options_content.child(no_results);
 
-                // If allow_custom and there's search text, show option to use custom value
                 if allow_custom && !search_text.is_empty() {
                     let custom_value = search_text.clone();
                     let value_state_for_custom = value_state_for_opts.clone();
                     let open_state_for_custom = open_state_for_opts.clone();
-                    let handle_state_for_custom = handle_state_for_opts.clone();
                     let on_change_for_custom = on_change_for_opts.clone();
                     let search_data_for_custom = search_data_for_opts.clone();
                     let search_query_for_custom = search_query_for_opts.clone();
 
-                    let custom_item_key = format!("{}_custom", key_for_opts);
-
-                    let custom_item = stateful_with_key::<ButtonState>(&custom_item_key)
-                        .on_state(move |ctx| {
-                            let state = ctx.state();
-                            let item_bg = if state == ButtonState::Hovered {
-                                surface_elevated
-                            } else {
-                                bg
-                            };
-
-                            div()
-                                .w_full()
-                                .h_fit()
-                                .py(padding / 4.0)
-                                .px(padding / 2.0)
-                                .cursor(CursorStyle::Pointer)
-                                .flex_row()
-                                .items_center()
-                                .bg(item_bg)
-                                .child(
-                                    div().child(
-                                        text(format!("Use \"{}\"", custom_value))
-                                            .size(font_size)
-                                            .no_cursor()
-                                            .color(text_color),
-                                    ),
-                                )
-                        })
+                    // Plain div with element ID for proper event registration during subtree rebuilds.
+                    let custom_item_id = format!("{}_custom", key_for_opts);
+                    let custom_item = div()
+                        .id(&custom_item_id)
+                        .class("cn-combobox-item")
+                        .w_full()
+                        .h_fit()
+                        .cursor(CursorStyle::Pointer)
+                        .flex_row()
+                        .items_center()
+                        .bg(bg)
+                        .child(
+                            div().child(
+                                text(format!("Use \"{}\"", custom_value))
+                                    .size(font_size)
+                                    .no_cursor()
+                                    .color(text_color),
+                            ),
+                        )
                         .on_click(move |_ctx| {
-                            // Close the overlay - state updates are handled by on_close callback
-                            // after the exit animation completes (deferred in overlay manager)
-                            if let Some(handle_id) = handle_state_for_custom.get() {
-                                let mgr = get_overlay_manager();
-                                let handle = OverlayHandle::from_raw(handle_id);
+                            // Set the custom value and close
+                            let custom_val = search_data_for_custom
+                                .lock()
+                                .ok()
+                                .map(|d| d.value.clone())
+                                .unwrap_or_default();
+                            value_state_for_custom.set(custom_val.clone());
+                            open_state_for_custom.set(false);
 
-                                // Check if overlay is already closing or pending close
-                                if mgr.is_closing(handle) || mgr.is_pending_close(handle) {
-                                    // Close already in progress, don't trigger again
-                                    return;
-                                }
-
-                                // Set the custom value
-                                let custom_val = search_data_for_custom
-                                    .lock()
-                                    .ok()
-                                    .map(|d| d.value.clone())
-                                    .unwrap_or_default();
-                                value_state_for_custom.set(custom_val.clone());
-
-                                mgr.close(handle);
-
-                                // Call on_change callback
-                                if let Some(ref cb) = on_change_for_custom {
-                                    cb(&custom_val);
-                                }
+                            // Clear search
+                            if let Ok(mut data) = search_data_for_custom.lock() {
+                                data.value.clear();
+                                data.cursor = 0;
                             }
-                            // Don't update state here - let on_close callback handle it after animation
+                            search_query_for_custom.set(String::new());
+
+                            if let Some(ref cb) = on_change_for_custom {
+                                cb(&custom_val);
+                            }
                         });
 
                     options_content = options_content.child(custom_item);
                 }
             } else {
-                // Render filtered options
                 for (idx, opt) in filtered_options.iter().enumerate() {
                     let opt_value = opt.value.clone();
                     let opt_label = opt.label.clone();
@@ -870,7 +812,6 @@ fn build_dropdown_content(
 
                     let value_state_for_opt = value_state_for_opts.clone();
                     let open_state_for_opt = open_state_for_opts.clone();
-                    let handle_state_for_opt = handle_state_for_opts.clone();
                     let on_change_for_opt = on_change_for_opts.clone();
                     let opt_value_for_click = opt_value.clone();
                     let search_data_for_opt = search_data_for_opts.clone();
@@ -884,63 +825,44 @@ fn build_dropdown_content(
 
                     let base_bg = if is_selected { surface_elevated } else { bg };
 
-                    let item_key = format!("{}_opt-{}", key_for_opts, idx);
-
-                    let option_item = stateful_with_key::<ButtonState>(&item_key)
-                        .on_state(move |ctx| {
-                            let state = ctx.state();
-                            let item_bg = if state == ButtonState::Hovered && !is_opt_disabled {
-                                surface_elevated
-                            } else {
-                                base_bg
-                            };
-
-                            div()
-                                .w_full()
-                                .h_fit()
-                                .py(padding / 4.0)
-                                .px(padding / 2.0)
-                                .cursor(if is_opt_disabled {
-                                    CursorStyle::NotAllowed
-                                } else {
-                                    CursorStyle::Pointer
-                                })
-                                .flex_row()
-                                .items_center()
-                                .bg(item_bg)
-                                .child(if let Some(ref content_fn) = opt_content {
-                                    content_fn()
-                                } else {
-                                    div().child(
-                                        text(&opt_label)
-                                            .size(font_size)
-                                            .no_cursor()
-                                            .color(option_text_color),
-                                    )
-                                })
+                    // Plain div with element ID for proper event registration during subtree rebuilds.
+                    let item_id = format!("{}_opt_{}", key_for_opts, idx);
+                    let option_item = div()
+                        .id(&item_id)
+                        .class("cn-combobox-item")
+                        .w_full()
+                        .h_fit()
+                        .cursor(if is_opt_disabled {
+                            CursorStyle::NotAllowed
+                        } else {
+                            CursorStyle::Pointer
+                        })
+                        .flex_row()
+                        .items_center()
+                        .bg(base_bg)
+                        .child(if let Some(ref content_fn) = opt_content {
+                            content_fn()
+                        } else {
+                            div().child(
+                                text(&opt_label)
+                                    .size(font_size)
+                                    .no_cursor()
+                                    .color(option_text_color),
+                            )
                         })
                         .on_click(move |_ctx| {
                             if !is_opt_disabled {
-                                // Close the overlay - state updates are handled by on_close callback
-                                // after the exit animation completes (deferred in overlay manager)
-                                if let Some(handle_id) = handle_state_for_opt.get() {
-                                    let mgr = get_overlay_manager();
-                                    let handle = OverlayHandle::from_raw(handle_id);
+                                // Set the new value and close
+                                value_state_for_opt.set(opt_value_for_click.clone());
+                                open_state_for_opt.set(false);
 
-                                    // Check if overlay is already closing or pending close
-                                    if mgr.is_closing(handle) || mgr.is_pending_close(handle) {
-                                        // Close already in progress, don't trigger again
-                                        return;
-                                    }
-
-                                    // Set the new value
-                                    value_state_for_opt.set(opt_value_for_click.clone());
-
-                                    mgr.close(handle);
+                                // Clear search
+                                if let Ok(mut data) = search_data_for_opt.lock() {
+                                    data.value.clear();
+                                    data.cursor = 0;
                                 }
-                                // Don't update state here - let on_close callback handle it after animation
+                                search_query_for_opt.set(String::new());
 
-                                // Call on_change callback
                                 if let Some(ref cb) = on_change_for_opt {
                                     cb(&opt_value_for_click);
                                 }
@@ -961,17 +883,7 @@ fn build_dropdown_content(
 
     dropdown_div = dropdown_div.child(options_stateful);
 
-    let motion_key_str = format!("combobox_{}", key);
-    let motion_key_with_child = format!("{}:child:0", motion_key_str);
-
-    // Wrap dropdown in motion container for enter/exit animations
-    // Use motion_derived with key so the overlay can trigger exit animation
-    div().child(
-        motion_derived(&motion_key_with_child)
-            .enter_animation(AnimationPreset::dropdown_in(150))
-            .exit_animation(AnimationPreset::dropdown_out(100))
-            .child(dropdown_div),
-    )
+    dropdown_div
 }
 
 #[cfg(test)]

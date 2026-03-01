@@ -383,6 +383,59 @@ pub fn has_pending_subtree_rebuilds() -> bool {
     !PENDING_SUBTREE_REBUILDS.lock().unwrap().is_empty()
 }
 
+// =========================================================================
+// Stateful Base Render Props Updaters
+// =========================================================================
+
+/// Registry mapping LayoutNodeId → closure that updates a Stateful's base_render_props.
+///
+/// After `apply_stylesheet_base_styles()` applies CSS rules to render nodes,
+/// it calls these updaters so that Stateful elements' `base_render_props` includes
+/// CSS-applied values. Without this, state changes (hover, press) would start
+/// from pre-CSS base props and lose CSS overrides like border-radius.
+#[allow(clippy::type_complexity, clippy::incompatible_msrv)]
+static STATEFUL_BASE_UPDATERS: LazyLock<
+    Mutex<HashMap<LayoutNodeId, Arc<dyn Fn(RenderProps) + Send + Sync>>>,
+> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Register a callback to update a Stateful's base_render_props for a given node.
+///
+/// Called by `Stateful::build()` after the node_id is assigned.
+pub(crate) fn register_stateful_base_updater(
+    node_id: LayoutNodeId,
+    updater: Arc<dyn Fn(RenderProps) + Send + Sync>,
+) {
+    STATEFUL_BASE_UPDATERS
+        .lock()
+        .unwrap()
+        .insert(node_id, updater);
+}
+
+/// Update a Stateful's base_render_props with CSS-applied values.
+///
+/// Called by the renderer after applying CSS base styles to a node.
+/// If the node is not a Stateful, this is a no-op.
+pub fn update_stateful_base_props(node_id: LayoutNodeId, props: RenderProps) {
+    if let Some(updater) = STATEFUL_BASE_UPDATERS.lock().unwrap().get(&node_id) {
+        updater(props);
+    }
+}
+
+/// Check if a node has a registered Stateful base updater.
+///
+/// Used by the renderer to avoid cloning props for non-Stateful nodes.
+pub fn has_stateful_base_updater(node_id: LayoutNodeId) -> bool {
+    STATEFUL_BASE_UPDATERS
+        .lock()
+        .unwrap()
+        .contains_key(&node_id)
+}
+
+/// Clear all Stateful base updaters (called on full tree rebuild).
+pub fn clear_stateful_base_updaters() {
+    STATEFUL_BASE_UPDATERS.lock().unwrap().clear();
+}
+
 /// Registry of stateful elements with signal dependencies
 ///
 /// Maps stateful_key -> (deps, refresh_fn) where refresh_fn triggers a rebuild.
@@ -3930,6 +3983,18 @@ impl<S: StateTransitions> ElementBuilder for Stateful<S> {
 
         // Store node_id for incremental updates
         self.shared_state.lock().unwrap().node_id = Some(node);
+
+        // Register a base_render_props updater so CSS base styles can be
+        // pushed back into this Stateful after apply_stylesheet_base_styles()
+        let shared_for_css = Arc::clone(&self.shared_state);
+        register_stateful_base_updater(
+            node,
+            Arc::new(move |props: RenderProps| {
+                if let Ok(mut guard) = shared_for_css.lock() {
+                    guard.base_render_props = Some(props);
+                }
+            }),
+        );
 
         node
     }

@@ -151,7 +151,7 @@ impl Breadcrumb {
         let key = builder.key.get();
         let items_count = builder.items.len();
 
-        let mut container = div().flex_row().items_center().gap(gap);
+        let mut container = div().class("cn-breadcrumb").flex_row().items_center().gap(gap);
 
         for (idx, item) in builder.items.iter().enumerate() {
             let is_last = idx == items_count - 1;
@@ -178,7 +178,7 @@ impl Breadcrumb {
                                 _ => theme.color(ColorToken::TextSecondary),
                             };
 
-                            let mut item_div = div().flex_row().items_center().gap(4.0);
+                            let mut item_div = div().class("cn-breadcrumb-item").flex_row().items_center().gap(4.0);
 
                             // Add icon if present
                             if let Some(ref icon_svg) = icon {
@@ -204,7 +204,7 @@ impl Breadcrumb {
                 container = container.child(clickable_item);
             } else {
                 // Non-clickable item (current page)
-                let mut item_div = div().flex_row().items_center().gap(4.0);
+                let mut item_div = div().class("cn-breadcrumb-item").class("cn-breadcrumb-item--active").flex_row().items_center().gap(4.0);
 
                 // Add icon if present
                 if let Some(ref icon_svg) = item.icon {
@@ -291,6 +291,10 @@ impl ElementBuilder for Breadcrumb {
 
     fn element_type_id(&self) -> ElementTypeId {
         ElementBuilder::element_type_id(&self.inner)
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
     }
 }
 
@@ -424,6 +428,10 @@ impl ElementBuilder for BreadcrumbBuilder {
 
     fn element_type_id(&self) -> ElementTypeId {
         self.get_or_build().element_type_id()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().element_classes()
     }
 }
 

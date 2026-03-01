@@ -83,6 +83,7 @@ impl Icon {
         let svg_str = blinc_icons::to_svg_with_stroke(config.path_data, size, stroke_width);
 
         let inner = div()
+            .class("cn-icon")
             .w(size)
             .h(size)
             .flex()
@@ -113,6 +114,10 @@ impl ElementBuilder for Icon {
 
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.inner.layout_style()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
     }
 }
 
@@ -228,6 +233,10 @@ impl ElementBuilder for IconBuilder {
 
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.get_or_build().layout_style()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().element_classes()
     }
 }
 

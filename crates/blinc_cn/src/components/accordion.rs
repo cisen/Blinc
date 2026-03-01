@@ -257,6 +257,7 @@ impl AccordionBuilder {
             .on_state(move |_state: &(), container: &mut Div| {
                 // Outer container animates height so border follows children expansion
                 let mut content = div()
+                    .class("cn-accordion")
                     .flex_col()
                     .w_full()
                     .flex_shrink()
@@ -296,9 +297,9 @@ impl AccordionBuilder {
                     };
 
                     let mut trigger = div()
+                        .class("cn-accordion-trigger")
                         .flex_row()
                         .w_full()
-                        .padding_x(Length::Px(12.0))
                         .justify_between()
                         .items_center()
                         .cursor(CursorStyle::Pointer)
@@ -334,10 +335,8 @@ impl AccordionBuilder {
                                 .set_target(target_opacity);
                         });
 
-                    // Trigger always has consistent padding
                     // Note: No position animation on trigger - it doesn't move relative to item_div.
                     // The item_div itself animates position within the container.
-                    trigger = trigger.padding_y(Length::Px(16.0));
 
                     // Structure: item_wrapper contains trigger (always visible) + collapsible content
                     // Only the collapsible content area animates, keeping trigger always visible
@@ -359,6 +358,7 @@ impl AccordionBuilder {
                     // The content is always present but clipped by overflow_clip and animate_bounds.
                     // Padding is only applied when open to avoid gaps when collapsed.
                     let collapsible_content = div()
+                        .class("cn-accordion-content")
                         .flex_col()
                         .w_full()
                         .bg(theme.color(ColorToken::Surface))

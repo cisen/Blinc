@@ -38,7 +38,7 @@ use blinc_layout::overlay_state::get_overlay_manager;
 use blinc_layout::prelude::*;
 use blinc_layout::tree::{LayoutNodeId, LayoutTree};
 use blinc_layout::widgets::overlay::{AnchorDirection, OverlayHandle, OverlayManagerExt};
-use blinc_theme::{ColorToken, RadiusToken, SpacingToken, ThemeState};
+use blinc_theme::{ColorToken, RadiusToken, ThemeState};
 
 use blinc_layout::InstanceKey;
 
@@ -347,8 +347,7 @@ fn show_tooltip_overlay(
     let bg = theme.color(ColorToken::TooltipBackground);
     let text_color = theme.color(ColorToken::TooltipText);
     let radius = theme.radius(RadiusToken::Sm);
-    let padding_x = theme.spacing_value(SpacingToken::Space3);
-    let padding_y = theme.spacing_value(SpacingToken::Space2);
+    // padding from CSS: .cn-tooltip { padding: 6px 12px; }
 
     let mgr = get_overlay_manager();
 
@@ -376,15 +375,13 @@ fn show_tooltip_overlay(
         .motion_key(&motion_key_with_child)
         .follows_scroll(true)
         .content(move || {
-            // Styled tooltip container
-            // px/py take units that are scaled by 4, so convert raw pixels
+            // padding from CSS: .cn-tooltip { padding: 6px 12px; }
             let tooltip_content = div()
+                .class("cn-tooltip")
                 .flex_row()
                 .items_center()
                 .bg(bg)
                 .rounded(radius)
-                .px(padding_x / 4.0)
-                .py(padding_y / 4.0)
                 .shadow_sm()
                 .child(text(&tooltip_text).size(12.0).color(text_color).no_wrap());
 
@@ -448,6 +445,10 @@ impl ElementBuilder for TooltipBuilder {
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.get_or_build().inner.layout_style()
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().inner.element_classes()
+    }
 }
 
 impl ElementBuilder for Tooltip {
@@ -473,6 +474,10 @@ impl ElementBuilder for Tooltip {
 
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.inner.layout_style()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
     }
 }
 

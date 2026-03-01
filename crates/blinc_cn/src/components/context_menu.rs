@@ -537,6 +537,7 @@ fn build_submenu_content(
         BlincContextState::get().use_state_keyed(&format!("{}_nested", key), || None);
 
     let mut menu = div()
+        .class("cn-context-menu")
         .id(menu_id)
         .flex_col()
         .w(width)
@@ -624,6 +625,7 @@ fn build_submenu_content(
                     };
 
                     let mut row_content = div()
+                        .class("cn-context-menu-item")
                         .w_full()
                         .h_fit()
                         .py(padding / 4.0)
@@ -750,6 +752,7 @@ fn build_menu_content(
         BlincContextState::get().use_state_keyed(&format!("{}_submenu", key), || None);
 
     let mut menu = div()
+        .class("cn-context-menu")
         .id(menu_id)
         .flex_col()
         .w(width)
@@ -847,6 +850,7 @@ fn build_menu_content(
                     };
 
                     let mut row_content = div()
+                        .class("cn-context-menu-item")
                         .w_full()
                         .h_fit()
                         .py(padding / 4.0)

@@ -80,6 +80,8 @@ pub struct Text {
     element_id: Option<String>,
     /// Semantic type name for CSS type selectors (e.g., "h1", "p", "span")
     semantic_type: Option<&'static str>,
+    /// CSS class names for selector matching
+    classes: Vec<String>,
 }
 
 impl Text {
@@ -119,6 +121,7 @@ impl Text {
             cursor: Some(crate::element::CursorStyle::Text), // Text cursor by default
             element_id: None,
             semantic_type: None,
+            classes: Vec::new(),
         };
         text.update_size_estimate();
         text
@@ -133,6 +136,15 @@ impl Text {
     /// Set the semantic type for CSS type selector matching (e.g., "h1", "p", "span")
     pub fn semantic_type(mut self, name: &'static str) -> Self {
         self.semantic_type = Some(name);
+        self
+    }
+
+    /// Add a CSS class name for selector matching
+    ///
+    /// Classes can be used with `.class` selectors in stylesheets.
+    /// Multiple classes can be added by chaining `.class()` calls.
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.classes.push(name.into());
         self
     }
 
@@ -629,6 +641,10 @@ impl ElementBuilder for Text {
 
     fn element_id(&self) -> Option<&str> {
         self.element_id.as_deref()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        &self.classes
     }
 
     fn text_render_info(&self) -> Option<TextRenderInfo> {

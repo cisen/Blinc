@@ -608,6 +608,7 @@ fn build_submenu_content(
         BlincContextState::get().use_state_keyed(&format!("{}_nested", key), || None);
 
     let mut menu = div()
+        .class("cn-dropdown-menu")
         .id(menu_id)
         .flex_col()
         .w(width)
@@ -696,6 +697,7 @@ fn build_submenu_content(
                     };
 
                     let mut row_content = div()
+                        .class("cn-dropdown-item")
                         .w_full()
                         .h_fit()
                         .py(padding / 4.0)
@@ -710,6 +712,10 @@ fn build_submenu_content(
                         .items_center()
                         .justify_between()
                         .child(left_side);
+
+                    if item_disabled {
+                        row_content = row_content.class("cn-dropdown-item--disabled");
+                    }
 
                     if let Some(right) = right_side {
                         row_content = row_content.child(right);
@@ -821,6 +827,7 @@ fn build_dropdown_content(
         BlincContextState::get().use_state_keyed(&format!("{}_submenu", key), || None);
 
     let mut menu = div()
+        .class("cn-dropdown-menu")
         .id(menu_id)
         .flex_col()
         .w(width)
@@ -913,6 +920,7 @@ fn build_dropdown_content(
                     };
 
                     let mut row_content = div()
+                        .class("cn-dropdown-item")
                         .w_full()
                         .h_fit()
                         .py(padding / 4.0)
@@ -927,6 +935,10 @@ fn build_dropdown_content(
                         .items_center()
                         .justify_between()
                         .child(left_side);
+
+                    if item_disabled {
+                        row_content = row_content.class("cn-dropdown-item--disabled");
+                    }
 
                     if let Some(right) = right_side {
                         row_content = row_content.child(right);

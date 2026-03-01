@@ -512,7 +512,9 @@ fn build_dialog_content(
         .child(inner_content);
 
     // Build the dialog container (card styling)
+    // padding and gap from CSS: .cn-dialog { padding: 24px; gap: 16px; }
     let dialog = div()
+        .class("cn-dialog")
         .min_w(300.0)
         .max_w(max_width)
         .bg(bg)
@@ -520,7 +522,6 @@ fn build_dialog_content(
         .rounded(radius)
         .shadow_xl()
         .flex_col()
-        .p_6() // 24px padding from theme
         .child(animated_inner);
 
     // Wrap dialog in outer motion container for scale+fade animations

@@ -220,7 +220,11 @@ fn build_radio_button(
         .map(|id| format!("radio-{id}"))
         .unwrap_or_else(|| format!("radio-{}", option.value));
 
-    // Build the radio button circle
+    // Build the radio button circle — CSS handles border, scale, opacity via classes
+    let has_custom_colors = config.selected_color.is_some()
+        || config.border_color.is_some()
+        || config.hover_border_color.is_some();
+
     let mut radio = stateful_with_key::<ButtonState>(&stateful_key)
         .deps([selected_state.signal_id()])
         .on_state(move |ctx| {
@@ -228,9 +232,8 @@ fn build_radio_button(
             let theme = ThemeState::get();
             let is_selected = selected_state.get() == option_value;
             let is_hovered = matches!(state, ButtonState::Hovered | ButtonState::Pressed);
-            let is_pressed = matches!(state, ButtonState::Pressed);
 
-            // Start with builder-configured colors
+            // Start with builder-configured colors for CSS override resolution
             let mut overrides = RadioStyleOverrides {
                 selected_color,
                 border_color: border,
@@ -263,22 +266,21 @@ fn build_radio_button(
                 overrides.border_color
             };
 
-            // Scale effect on hover
             let scale = if is_hovered && !option_disabled {
                 1.05
             } else {
                 1.0
             };
 
-            // Scale effect on press
-            let inner_scale = if is_pressed && !option_disabled {
+            let inner_scale = if matches!(state, ButtonState::Pressed) && !option_disabled {
                 0.8
             } else {
                 1.0
             };
 
-            // Build the radio circle (outer ring)
+            // Build the radio circle with builder properties + CSS classes
             let mut circle = div()
+                .class("cn-radio")
                 .w(outer_size)
                 .h(outer_size)
                 .rounded(outer_size / 2.0)
@@ -287,6 +289,14 @@ fn build_radio_button(
                 .justify_center()
                 .transform(Transform::scale(scale, scale));
 
+            if is_selected {
+                circle = circle.class("cn-radio--selected");
+            }
+
+            if option_disabled {
+                circle = circle.class("cn-radio--disabled");
+            }
+
             if let Some(bg) = overrides.background {
                 circle = circle.bg(bg);
             }
@@ -294,6 +304,7 @@ fn build_radio_button(
             // Add inner dot if selected
             if is_selected {
                 let inner_dot = div()
+                    .class("cn-radio-dot")
                     .w(inner_size)
                     .h(inner_size)
                     .rounded(inner_size / 2.0)
@@ -593,6 +604,10 @@ impl ElementBuilder for RadioGroup {
     fn element_type_id(&self) -> ElementTypeId {
         self.inner.element_type_id()
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
+    }
 }
 
 impl ElementBuilder for RadioGroupBuilder {
@@ -610,6 +625,10 @@ impl ElementBuilder for RadioGroupBuilder {
 
     fn element_type_id(&self) -> ElementTypeId {
         self.get_or_build().element_type_id()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().element_classes()
     }
 }
 

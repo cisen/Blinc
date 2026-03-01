@@ -438,6 +438,7 @@ fn show_hover_card_overlay(
             // This prevents the "blip" when moving mouse from trigger to card
             tracing::debug!("HOVER_CARD: building card content");
             let card = div()
+                .class("cn-hover-card-content")
                 .id(&card_id)
                 .flex_col()
                 .bg(bg)
@@ -546,6 +547,10 @@ impl ElementBuilder for HoverCardBuilder {
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.get_or_build().inner.layout_style()
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().inner.element_classes()
+    }
 }
 
 impl ElementBuilder for HoverCard {
@@ -571,6 +576,10 @@ impl ElementBuilder for HoverCard {
 
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.inner.layout_style()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
     }
 }
 

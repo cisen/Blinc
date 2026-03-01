@@ -372,6 +372,8 @@ pub struct Div {
     pub(crate) children: Vec<Box<dyn ElementBuilder>>,
     pub(crate) background: Option<Brush>,
     pub(crate) border_radius: CornerRadius,
+    /// Tracks whether border_radius was explicitly set (distinguishes "set to 0" from "not set" in merges)
+    pub(crate) border_radius_explicit: bool,
     pub(crate) corner_shape: CornerShape,
     pub(crate) border_color: Option<Color>,
     pub(crate) border_width: f32,
@@ -454,6 +456,7 @@ impl Div {
             children: Vec::new(),
             background: None,
             border_radius: CornerRadius::default(),
+            border_radius_explicit: false,
             corner_shape: CornerShape::default(),
             border_color: None,
             border_width: 0.0,
@@ -510,6 +513,7 @@ impl Div {
             children: Vec::new(),
             background: None,
             border_radius: CornerRadius::default(),
+            border_radius_explicit: false,
             corner_shape: CornerShape::default(),
             border_color: None,
             border_width: 0.0,
@@ -797,6 +801,7 @@ impl Div {
     #[inline]
     pub fn set_rounded(&mut self, radius: f32) {
         self.border_radius = CornerRadius::uniform(radius);
+        self.border_radius_explicit = true;
     }
 
     /// Set the transform without consuming self
@@ -1215,8 +1220,9 @@ impl Div {
         if other.background.is_some() {
             self.background = other.background;
         }
-        if other.border_radius != default.border_radius {
+        if other.border_radius_explicit || other.border_radius != default.border_radius {
             self.border_radius = other.border_radius;
+            self.border_radius_explicit = true;
         }
         if other.border_color.is_some() {
             self.border_color = other.border_color;
@@ -1241,6 +1247,17 @@ impl Div {
         }
         if other.cursor.is_some() {
             self.cursor = other.cursor;
+        }
+
+        // Merge element identity (ID and CSS classes)
+        // These are critical for event routing (click-outside detection) and
+        // CSS selector matching. Without this, Stateful containers lose the
+        // element_id and classes set on the Div returned from on_state.
+        if other.element_id.is_some() {
+            self.element_id = other.element_id;
+        }
+        if !other.classes.is_empty() {
+            self.classes = other.classes;
         }
 
         // Merge children - if other has children, replace ours
@@ -2483,6 +2500,7 @@ impl Div {
     /// Set corner radius (all corners)
     pub fn rounded(mut self, radius: f32) -> Self {
         self.border_radius = CornerRadius::uniform(radius);
+        self.border_radius_explicit = true;
         self
     }
 
@@ -2490,12 +2508,14 @@ impl Div {
     pub fn rounded_full(mut self) -> Self {
         // Use a large value; actual pill shape depends on element size
         self.border_radius = CornerRadius::uniform(9999.0);
+        self.border_radius_explicit = true;
         self
     }
 
     /// Set individual corner radii
     pub fn rounded_corners(mut self, tl: f32, tr: f32, br: f32, bl: f32) -> Self {
         self.border_radius = CornerRadius::new(tl, tr, br, bl);
+        self.border_radius_explicit = true;
         self
     }
 
@@ -3926,6 +3946,7 @@ impl ElementBuilder for Div {
         RenderProps {
             background: self.background.clone(),
             border_radius: self.border_radius,
+            border_radius_explicit: self.border_radius_explicit,
             corner_shape: self.corner_shape,
             border_color: self.border_color,
             border_width: self.border_width,

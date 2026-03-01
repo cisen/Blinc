@@ -1307,6 +1307,9 @@ pub const SVG_TAG_NAMES: &[&str] = &[
 pub struct Stylesheet {
     /// Simple rules: styles keyed by selector (id or id:state) for O(1) lookup
     styles: HashMap<String, ElementStyle>,
+    /// Class-based rules: styles keyed by class name (or class:state) for O(1) lookup
+    /// Populated alongside `complex_rules` for simple `.class` and `.class:state` selectors.
+    class_styles: HashMap<String, ElementStyle>,
     /// Complex selector rules (class selectors, combinators, structural pseudos)
     complex_rules: Vec<(ComplexSelector, ElementStyle)>,
     /// CSS custom properties (variables) defined in :root
@@ -1369,6 +1372,7 @@ impl Stylesheet {
                     stylesheet.styles.insert(id, style);
                 }
                 stylesheet.complex_rules = parsed.complex_rules;
+                stylesheet.index_class_styles();
                 for keyframes in parsed.keyframes {
                     stylesheet
                         .keyframes
@@ -1445,6 +1449,7 @@ impl Stylesheet {
                     stylesheet.styles.insert(id, style);
                 }
                 stylesheet.complex_rules = parsed.complex_rules;
+                stylesheet.index_class_styles();
                 for keyframes in parsed.keyframes {
                     stylesheet
                         .keyframes
@@ -1551,6 +1556,26 @@ impl Stylesheet {
     pub fn get_with_state(&self, id: &str, state: ElementState) -> Option<&ElementStyle> {
         let key = format!("{}:{}", id, state);
         self.styles.get(&key)
+    }
+
+    /// Get a base style by CSS class name (without the `.` prefix)
+    ///
+    /// Returns `None` if no simple `.class { ... }` rule exists in the stylesheet.
+    /// Only populated for simple single-class selectors (not combinators).
+    pub fn get_class(&self, class: &str) -> Option<&ElementStyle> {
+        self.class_styles.get(class)
+    }
+
+    /// Get a class style with state (e.g., `.class:hover`)
+    ///
+    /// Looks up `class:state` in the class_styles HashMap.
+    pub fn get_class_with_state(
+        &self,
+        class: &str,
+        state: ElementState,
+    ) -> Option<&ElementStyle> {
+        let key = format!("{}:{}", class, state);
+        self.class_styles.get(&key)
     }
 
     /// Get the ::placeholder pseudo-element style for an element ID
@@ -1674,6 +1699,40 @@ impl Stylesheet {
         results
     }
 
+    /// Index simple class selectors from complex_rules into class_styles for O(1) lookup.
+    ///
+    /// A "simple class selector" is a ComplexSelector with exactly one segment
+    /// whose CompoundSelector has exactly one Class part, or one Class + one State part.
+    fn index_class_styles(&mut self) {
+        for (selector, style) in &self.complex_rules {
+            if !selector.is_simple() {
+                continue;
+            }
+            let compound = &selector.segments[0].0;
+            let parts = &compound.parts;
+
+            match parts.len() {
+                1 => {
+                    // Single .class selector
+                    if let SelectorPart::Class(class_name) = &parts[0] {
+                        self.class_styles.insert(class_name.clone(), style.clone());
+                    }
+                }
+                2 => {
+                    // .class:state selector
+                    let (class_part, state_part) = (&parts[0], &parts[1]);
+                    if let (SelectorPart::Class(class_name), SelectorPart::State(state)) =
+                        (class_part, state_part)
+                    {
+                        let key = format!("{}:{}", class_name, state);
+                        self.class_styles.insert(key, style.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Merge another stylesheet into this one (cascade — later rules override earlier)
     ///
     /// This follows CSS cascade rules: styles from `other` override matching
@@ -1688,6 +1747,9 @@ impl Stylesheet {
         }
         for (key, kf) in other.keyframes {
             self.keyframes.insert(key, kf);
+        }
+        for (key, style) in other.class_styles {
+            self.class_styles.insert(key, style);
         }
     }
 

@@ -509,7 +509,7 @@ impl ResizableGroup {
                 }
 
                 // Wrap in hit area container
-                let mut hit_area = div().items_center().justify_center();
+                let mut hit_area = div().class("cn-resizable-handle").items_center().justify_center();
 
                 match direction {
                     ResizeDirection::Horizontal => {
@@ -618,6 +618,10 @@ impl ElementBuilder for ResizableGroup {
     fn children_builders(&self) -> &[Box<dyn ElementBuilder>] {
         self.inner.children_builders()
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
+    }
 }
 
 /// Builder for resizable group
@@ -724,6 +728,10 @@ impl ElementBuilder for ResizableGroupBuilder {
 
     fn children_builders(&self) -> &[Box<dyn ElementBuilder>] {
         self.get_or_build().inner.children_builders()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().inner.element_classes()
     }
 }
 

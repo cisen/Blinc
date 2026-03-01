@@ -176,7 +176,10 @@ impl Textarea {
             ta = ta.max_length(max);
         }
 
-        // If no label, description, or error, wrap textarea in a div
+        // Add CSS class directly to the TextArea widget (it supports .class())
+        let ta = ta.class("cn-textarea");
+
+        // If no label, description, or error, wrap in a minimal container
         let inner =
             if config.label.is_none() && config.description.is_none() && config.error.is_none() {
                 div().child(ta)
@@ -204,7 +207,7 @@ impl Textarea {
                     container = container.child(lbl);
                 }
 
-                // Textarea
+                // Textarea (added directly — TextArea has the cn-textarea class)
                 container = container.child(ta);
 
                 // Error or description
@@ -244,6 +247,10 @@ impl ElementBuilder for Textarea {
 
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.inner.layout_style()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
     }
 }
 
@@ -398,6 +405,10 @@ impl ElementBuilder for TextareaBuilder {
 
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.get_or_build().layout_style()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().element_classes()
     }
 }
 

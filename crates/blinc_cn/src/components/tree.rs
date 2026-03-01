@@ -381,6 +381,7 @@ impl TreeViewBuilder {
                         let expand_state_for_row = expand_state.clone();
 
                         let mut row = div()
+                            .class("cn-tree-node")
                             .flex_row()
                             .items_center()
                             .flex_shrink_0()
@@ -389,8 +390,13 @@ impl TreeViewBuilder {
                             .pr(2.0)
                             .rounded(radius)
                             .bg(bg)
-                            .cursor(CursorStyle::Pointer)
-                            .on_click(move |_| {
+                            .cursor(CursorStyle::Pointer);
+
+                        if is_selected {
+                            row = row.class("cn-tree-node--selected");
+                        }
+
+                        row = row.on_click(move |_| {
                                 // Update selection
                                 selected_for_click.set(Some(node_key.clone()));
 

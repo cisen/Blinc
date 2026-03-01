@@ -21,10 +21,9 @@
 
 use std::ops::{Deref, DerefMut};
 
-use blinc_core::Color;
 use blinc_layout::div::{Div, ElementBuilder, ElementTypeId};
 use blinc_layout::prelude::*;
-use blinc_theme::{ColorToken, RadiusToken, SpacingToken, ThemeState, TypographyToken};
+use blinc_theme::ThemeState;
 
 /// Badge visual variants
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -44,36 +43,8 @@ pub enum BadgeVariant {
     Outline,
 }
 
-impl BadgeVariant {
-    fn background(&self, theme: &ThemeState) -> Color {
-        match self {
-            BadgeVariant::Default => theme.color(ColorToken::Primary),
-            BadgeVariant::Secondary => theme.color(ColorToken::Secondary),
-            BadgeVariant::Success => theme.color(ColorToken::Success),
-            BadgeVariant::Warning => theme.color(ColorToken::Warning),
-            BadgeVariant::Destructive => theme.color(ColorToken::Error),
-            BadgeVariant::Outline => Color::TRANSPARENT,
-        }
-    }
-
-    fn foreground(&self, theme: &ThemeState) -> Color {
-        match self {
-            BadgeVariant::Default
-            | BadgeVariant::Secondary
-            | BadgeVariant::Success
-            | BadgeVariant::Warning
-            | BadgeVariant::Destructive => theme.color(ColorToken::TextInverse),
-            BadgeVariant::Outline => theme.color(ColorToken::TextPrimary),
-        }
-    }
-
-    fn border(&self, theme: &ThemeState) -> Option<Color> {
-        match self {
-            BadgeVariant::Outline => Some(theme.color(ColorToken::Border)),
-            _ => None,
-        }
-    }
-}
+// All variant visuals (background, color, border) defined in CSS:
+// .cn-badge--default, .cn-badge--secondary, .cn-badge--success, etc.
 
 /// Badge component for status indicators
 ///
@@ -91,30 +62,24 @@ impl Badge {
     }
 
     fn with_variant(label: impl Into<String>, variant: BadgeVariant) -> Self {
-        let theme = ThemeState::get();
         let label = label.into();
 
-        let bg = variant.background(theme);
-        let fg = variant.foreground(theme);
-        let border = variant.border(theme);
+        let variant_class = match variant {
+            BadgeVariant::Default => "cn-badge--default",
+            BadgeVariant::Secondary => "cn-badge--secondary",
+            BadgeVariant::Success => "cn-badge--success",
+            BadgeVariant::Warning => "cn-badge--warning",
+            BadgeVariant::Destructive => "cn-badge--destructive",
+            BadgeVariant::Outline => "cn-badge--outline",
+        };
 
-        let padding_x = theme.spacing_value(SpacingToken::Space2_5); // 10px
-        let padding_y = theme.spacing_value(SpacingToken::Space0_5); // 2px
-        let radius = theme.radius(RadiusToken::Full); // Pill shape
-        let font_size = theme.typography().get(TypographyToken::TextXs);
-
-        let mut badge = div()
-            .bg(bg)
-            .padding_x_px(padding_x)
-            .padding_y_px(padding_y)
-            .rounded(radius)
+        // All visual props from CSS: .cn-badge + .cn-badge--{variant}
+        let badge = div()
+            .class("cn-badge")
+            .class(variant_class)
             .items_center()
             .justify_center()
-            .child(text(&label).size(font_size).color(fg).medium());
-
-        if let Some(border_color) = border {
-            badge = badge.border(1.0, border_color);
-        }
+            .child(text(&label).medium());
 
         Self {
             inner: badge,
@@ -166,6 +131,10 @@ impl ElementBuilder for Badge {
 
     fn element_type_id(&self) -> ElementTypeId {
         ElementBuilder::element_type_id(&self.inner)
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
     }
 }
 

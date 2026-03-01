@@ -282,6 +282,7 @@ impl ToastBuilder {
                     &description,
                     &icon_svg,
                     accent_color,
+                    variant,
                     bg,
                     border,
                     text_primary,
@@ -337,6 +338,7 @@ fn build_toast_content(
     description: &Option<String>,
     icon_svg: &Option<String>,
     accent_color: Color,
+    variant: ToastVariant,
     bg: Color,
     border: Color,
     text_primary: Color,
@@ -357,6 +359,7 @@ fn build_toast_content(
     // If fully custom content is provided, use that directly
     if let Some(ref custom_fn) = custom_content {
         let toast = custom_fn()
+            .class("cn-toast")
             .w(360.0)
             .bg(bg)
             .border(1.0, border)
@@ -376,11 +379,20 @@ fn build_toast_content(
 
     // Main toast container - use left border for accent
     let mut toast = div()
+        .class("cn-toast")
         .w(360.0)
         .bg(bg)
         .border(1.0, border)
         .rounded(radius)
         .shadow_lg();
+
+    // Add variant-specific class
+    match variant {
+        ToastVariant::Success => toast = toast.class("cn-toast--success"),
+        ToastVariant::Warning => toast = toast.class("cn-toast--warning"),
+        ToastVariant::Destructive => toast = toast.class("cn-toast--error"),
+        ToastVariant::Default => toast = toast.class("cn-toast--info"),
+    }
 
     // Add left border accent for variant toasts
     if has_accent {

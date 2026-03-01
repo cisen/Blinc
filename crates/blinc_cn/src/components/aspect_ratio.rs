@@ -125,7 +125,7 @@ impl BuiltAspectRatio {
         };
 
         // Build outer container with fixed dimensions
-        let mut container = div().w(final_width).h(final_height).overflow_clip();
+        let mut container = div().class("cn-aspect-ratio").w(final_width).h(final_height).overflow_clip();
 
         // Apply background if set
         if let Some(bg) = config.background {
@@ -173,6 +173,10 @@ impl ElementBuilder for AspectRatio {
 
     fn children_builders(&self) -> &[Box<dyn ElementBuilder>] {
         self.inner.children_builders()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
     }
 }
 
@@ -263,6 +267,10 @@ impl ElementBuilder for AspectRatioBuilder {
 
     fn children_builders(&self) -> &[Box<dyn ElementBuilder>] {
         self.get_or_build().children_builders()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().element_classes()
     }
 }
 

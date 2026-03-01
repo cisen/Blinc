@@ -27,7 +27,27 @@ fn main() -> Result<()> {
         ..Default::default()
     };
 
-    WindowedApp::run(config, |ctx| build_ui(ctx))
+    let mut cn_styles_loaded = false;
+    WindowedApp::run(config, move |ctx| {
+        if !cn_styles_loaded {
+            // Register default component CSS styles (uses var() for theme token references)
+            ctx.add_css(blinc_cn::cn_styles::CN_STYLES);
+
+            // User CSS overrides — loaded AFTER defaults, so they take priority
+            // Scoped to #css-overrides so they don't affect other sections
+            ctx.add_css(
+                r#"
+                #css-overrides .cn-button--primary { border-radius: 0; }
+                #css-overrides .cn-button--destructive:hover { background: var(--primary); }
+                #css-overrides .cn-badge--success { background: #00cc66; }
+                #css-demo-card { border-width: 2px; border-color: var(--primary); }
+            "#,
+            );
+
+            cn_styles_loaded = true;
+        }
+        build_ui(ctx)
+    })
 }
 
 fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
@@ -68,6 +88,7 @@ fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
                         // Component sections
                         .child(progress_section(ctx, &scroll_ref))
                         .child(buttons_section(ctx))
+                        .child(css_overrides_section())
                         .child(badges_section())
                         .child(cards_section())
                         .child(alerts_section())
@@ -361,6 +382,50 @@ fn section_container() -> Div {
         .p(theme.spacing().space_2)
         .flex_col()
         .gap(theme.spacing().space_4)
+}
+
+// ============================================================================
+// CSS OVERRIDE DEMO SECTION
+// ============================================================================
+
+fn css_overrides_section() -> impl ElementBuilder {
+    let theme = ThemeState::get();
+    let text_secondary = theme.color(ColorToken::TextSecondary);
+
+    section_container()
+        .id("css-overrides")
+        .child(section_title("CSS Overrides"))
+        .child(
+            text("Components below demonstrate CSS overrides applied after default styles. \
+                  Primary buttons have square corners, destructive hover turns primary, \
+                  and cards have a primary-colored border.")
+                .size(13.0)
+                .color(text_secondary),
+        )
+        .child(
+            div()
+                .flex_row()
+                .flex_wrap()
+                .gap(12.0)
+                .child(cn::button("Square Primary (CSS override)"))
+                .child(
+                    cn::button("Hover me (destructive)")
+                        .variant(ButtonVariant::Destructive),
+                )
+                .child(cn::button("Outline (default)").variant(ButtonVariant::Outline))
+                .child(cn::button("Ghost (default)").variant(ButtonVariant::Ghost)),
+        )
+        .child(
+            cn::card()
+                .id("css-demo-card")
+                .w(350.0)
+                .child(cn::card_header().title("Card with CSS border override"))
+                .child(cn::card_content().child(
+                    text("This card has a 2px primary-colored border via CSS override")
+                        .size(14.0)
+                        .color(text_secondary),
+                )),
+        )
 }
 
 // ============================================================================
@@ -724,7 +789,7 @@ fn combobox_section(ctx: &WindowedContext) -> impl ElementBuilder {
     section_container().child(section_title("Combobox")).child(
         div()
             .flex_row()
-            .overflow_clip()
+            .overflow_visible()
             .items_start() // Prevent height stretching
             .gap(4.0)
             .h_fit()

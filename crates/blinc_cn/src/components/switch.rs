@@ -143,23 +143,26 @@ impl Switch {
 
         // Build background layers outside of on_state so motion bindings are properly registered
         // Off layer is always visible as the base
-        let off_layer = div().absolute().inset(0.0).rounded(radius).bg(off_bg);
+        let off_layer = div().class("cn-switch-track").absolute().inset(0.0).rounded(radius).bg(off_bg);
 
         // On layer with animated opacity
         // The motion container must be absolutely positioned and sized to cover the track
         // (motion's child being absolute would make motion collapse to 0x0)
+        let on_track_div = div()
+            .class("cn-switch-track")
+            .class("cn-switch-track--on")
+            .w(track_width)
+            .h(track_height)
+            .rounded(radius)
+            .bg(on_bg);
+
         let on_layer = div().absolute().inset(0.0).child(
-            motion().opacity(color_anim).child(
-                div()
-                    .w(track_width)
-                    .h(track_height)
-                    .rounded(radius)
-                    .bg(on_bg),
-            ),
+            motion().opacity(color_anim).child(on_track_div),
         );
 
         // Thumb with animated position
         let thumb_element = div()
+            .class("cn-switch-thumb")
             .w(thumb_size)
             .h(thumb_size)
             .rounded(thumb_size / 2.0)
@@ -169,6 +172,7 @@ impl Switch {
 
         // Main switch container
         let mut switch = div()
+            .class("cn-switch")
             .w(track_width)
             .h(track_height)
             .rounded(radius)
@@ -183,7 +187,7 @@ impl Switch {
             .child(animated_thumb);
 
         if disabled {
-            switch = switch.opacity(0.5);
+            switch = switch.class("cn-switch--disabled").opacity(0.5);
         }
 
         // Add click handler to toggle the state
@@ -256,6 +260,10 @@ impl ElementBuilder for Switch {
 
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.inner.layout_style()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
     }
 }
 
@@ -424,6 +432,10 @@ impl ElementBuilder for SwitchBuilder {
 
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.get_or_build().layout_style()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().element_classes()
     }
 }
 

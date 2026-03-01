@@ -279,6 +279,7 @@ impl Slider {
             .on_state(move |_ctx| {
                 let dragging = is_dragging_for_thumb.get();
                 let mut thumb_div = div()
+                    .class("cn-slider-thumb")
                     .w(thumb_size)
                     .h(thumb_size)
                     .rounded(thumb_size / 2.0)
@@ -306,6 +307,7 @@ impl Slider {
 
         // The fill bar - full track width
         let fill_bar = div()
+            .class("cn-slider-fill")
             .w(track_width)
             .h(track_height)
             .rounded(radius)
@@ -337,6 +339,7 @@ impl Slider {
         // Track visual element (the thin bar) - owns click-to-jump behavior
         // Track is absolutely positioned and centered vertically
         let track_visual = div()
+            .class("cn-slider-track")
             .absolute()
             .left(0.0)
             .right(0.0)
@@ -550,6 +553,10 @@ impl ElementBuilder for Slider {
 
     fn element_type_id(&self) -> ElementTypeId {
         self.inner.element_type_id()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
     }
 }
 

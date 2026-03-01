@@ -993,6 +993,8 @@ pub struct RenderProps {
     pub background: Option<Brush>,
     /// Corner radius for rounded rectangles
     pub border_radius: CornerRadius,
+    /// Tracks whether border_radius was explicitly set (distinguishes "set to 0" from "not set" in merges)
+    pub border_radius_explicit: bool,
     /// Corner shape (superellipse n parameter per corner). Default is ROUND (n=1.0).
     pub corner_shape: CornerShape,
     /// Border color (None = no border) - used for uniform borders
@@ -1168,6 +1170,7 @@ impl Default for RenderProps {
         Self {
             background: None,
             border_radius: CornerRadius::default(),
+            border_radius_explicit: false,
             corner_shape: CornerShape::default(),
             border_color: None,
             border_width: 0.0,
@@ -1345,9 +1348,10 @@ impl RenderProps {
         if other.background.is_some() {
             self.background = other.background.clone();
         }
-        // Override border_radius if non-zero
-        if other.border_radius != CornerRadius::default() {
+        // Override border_radius if explicitly set or non-zero
+        if other.border_radius_explicit || other.border_radius != CornerRadius::default() {
             self.border_radius = other.border_radius;
+            self.border_radius_explicit = other.border_radius_explicit;
         }
         // Override border_color if set
         if other.border_color.is_some() {

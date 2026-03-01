@@ -36,7 +36,7 @@ use blinc_layout::div::ElementTypeId;
 use blinc_layout::element::RenderProps;
 use blinc_layout::prelude::*;
 use blinc_layout::tree::{LayoutNodeId, LayoutTree};
-use blinc_theme::{ColorToken, RadiusToken, ThemeState};
+use blinc_theme::{ColorToken, ThemeState};
 use std::sync::Arc;
 
 use blinc_layout::stateful::{stateful, ButtonState};
@@ -84,13 +84,6 @@ impl CheckboxSize {
         }
     }
 
-    fn corner_radius(&self, theme: &ThemeState) -> f32 {
-        match self {
-            CheckboxSize::Small => theme.radius(RadiusToken::Sm) * 0.75,
-            CheckboxSize::Medium => theme.radius(RadiusToken::Sm),
-            CheckboxSize::Large => theme.radius(RadiusToken::Sm),
-        }
-    }
 }
 
 /// Checkbox component
@@ -120,9 +113,12 @@ impl Checkbox {
         let box_size = config.size.size();
         let border_width = config.size.border_width();
         let checkmark_size = config.size.checkmark_size();
-        let radius = config.size.corner_radius(theme);
+        let radius = match config.size {
+            CheckboxSize::Small => theme.radius(blinc_theme::RadiusToken::Sm) * 0.75,
+            _ => theme.radius(blinc_theme::RadiusToken::Sm),
+        };
 
-        // Get colors
+        // Get colors — used as builder defaults, CSS can override via classes
         let checked_bg = config
             .checked_color
             .unwrap_or_else(|| theme.color(ColorToken::Primary));
@@ -151,19 +147,16 @@ impl Checkbox {
                 let is_checked = checked_state.get();
                 let is_hovered = matches!(state, ButtonState::Hovered | ButtonState::Pressed);
 
-                // Background and border with smooth color transitions
                 let bg = if is_checked { checked_bg } else { unchecked_bg };
                 let current_border = if is_hovered && !disabled {
                     hover_border
                 } else {
                     border
                 };
-
-                // Apply scale effect on hover for subtle motion feedback
                 let scale = if is_hovered && !disabled { 1.05 } else { 1.0 };
 
-                // Build visual
                 let mut visual = div()
+                    .class("cn-checkbox")
                     .w(box_size)
                     .h(box_size)
                     .rounded(radius)
@@ -174,8 +167,12 @@ impl Checkbox {
                     .border(border_width, current_border)
                     .transform(blinc_core::Transform::scale(scale, scale));
 
+                if is_checked {
+                    visual = visual.class("cn-checkbox--checked");
+                }
+
                 if disabled {
-                    visual = visual.opacity(0.5);
+                    visual = visual.class("cn-checkbox--disabled").opacity(0.5);
                 }
 
                 // Add checkmark if checked using SVG
@@ -263,6 +260,10 @@ impl ElementBuilder for Checkbox {
 
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.inner.layout_style()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
     }
 }
 
@@ -417,6 +418,10 @@ impl ElementBuilder for CheckboxBuilder {
 
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.get_or_build().layout_style()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().element_classes()
     }
 }
 

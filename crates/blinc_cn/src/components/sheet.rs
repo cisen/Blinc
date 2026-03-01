@@ -405,6 +405,7 @@ fn build_sheet_content(
 
     // Build sheet panel
     let mut sheet = div()
+        .class("cn-sheet")
         .bg(bg)
         .border(1.0, border)
         .shadow_xl()

@@ -99,7 +99,7 @@ impl NavigationMenu {
             .deps([active_menu.signal_id()])
             .on_state(move |_ctx| {
                 let current_active = active_menu_for_container.get();
-                let mut nav = div().flex_row().items_center().h_fit().gap(1.0);
+                let mut nav = div().class("cn-nav-menu").flex_row().items_center().h_fit().gap(1.0);
 
                 for (idx, item) in items.iter().enumerate() {
                     let item_key = format!("{}_{}", key_base, idx);
@@ -125,6 +125,7 @@ impl NavigationMenu {
                                     };
 
                                     div()
+                                        .class("cn-nav-link")
                                         .flex_row()
                                         .items_center()
                                         .h_fit()
@@ -194,25 +195,32 @@ impl NavigationMenu {
                                     // Chevron down icon
                                     let chevron = r#"<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>"#;
 
-                                    div()
-                                        .flex_row()
-                                        .items_center()
-                                        .h_fit()
-                                        .gap(1.0)
-                                        .px(3.0)
-                                        .py(2.0)
-                                        .rounded(radius)
-                                        .bg(bg)
-                                        .cursor(CursorStyle::Pointer)
-                                        .child(
-                                            text(&label)
-                                                .size(14.0)
-                                                .medium()
-                                                .color(text_color)
-                                                .no_cursor()
-                                                .pointer_events_none(),
-                                        )
-                                        .child(div().pointer_events_none().child(svg(chevron).size(12.0, 12.0).color(text_color)))
+                                    {
+                                        let mut trigger_div = div()
+                                            .class("cn-nav-link")
+                                            .flex_row()
+                                            .items_center()
+                                            .h_fit()
+                                            .gap(1.0)
+                                            .px(3.0)
+                                            .py(2.0)
+                                            .rounded(radius)
+                                            .bg(bg)
+                                            .cursor(CursorStyle::Pointer)
+                                            .child(
+                                                text(&label)
+                                                    .size(14.0)
+                                                    .medium()
+                                                    .color(text_color)
+                                                    .no_cursor()
+                                                    .pointer_events_none(),
+                                            )
+                                            .child(div().pointer_events_none().child(svg(chevron).size(12.0, 12.0).color(text_color)));
+                                        if is_active {
+                                            trigger_div = trigger_div.class("cn-nav-link--active");
+                                        }
+                                        trigger_div
+                                    }
                                 })
                                 .on_hover_enter(move |ctx| {
                                     let current_active = active_menu_for_hover.get();
@@ -419,6 +427,10 @@ impl ElementBuilder for NavigationMenu {
     fn element_type_id(&self) -> ElementTypeId {
         ElementBuilder::element_type_id(&self.inner)
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
+    }
 }
 
 /// Builder for navigation menu
@@ -508,6 +520,10 @@ impl ElementBuilder for NavigationMenuBuilder {
     fn element_type_id(&self) -> ElementTypeId {
         self.get_or_build().element_type_id()
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().element_classes()
+    }
 }
 
 /// A navigation link component for use inside navigation menu content
@@ -540,6 +556,7 @@ impl NavigationLink {
                 };
 
                 let mut content = div()
+                    .class("cn-nav-link")
                     .flex_col()
                     .w_full()
                     .gap(1.0)
@@ -619,6 +636,10 @@ impl ElementBuilder for NavigationLink {
     fn element_type_id(&self) -> ElementTypeId {
         ElementBuilder::element_type_id(&self.inner)
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
+    }
 }
 
 /// Builder for navigation link
@@ -688,6 +709,10 @@ impl ElementBuilder for NavigationLinkBuilder {
 
     fn element_type_id(&self) -> ElementTypeId {
         self.get_or_build().element_type_id()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().element_classes()
     }
 }
 

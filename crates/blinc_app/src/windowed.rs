@@ -112,6 +112,9 @@ pub struct WindowedContext {
     /// CSS stylesheet for automatic style application (hover, animations, base styles)
     /// Multiple stylesheets cascade — later rules override earlier ones.
     pub stylesheet: Option<Arc<blinc_layout::css_parser::Stylesheet>>,
+    /// Raw CSS source strings, preserved for reparsing on theme changes.
+    /// Each entry corresponds to one `add_css()` call, in order.
+    css_sources: Vec<String>,
     /// Continuous pointer query state (per-element pointer tracking)
     pub pointer_query: blinc_layout::pointer_query::PointerQueryState,
 }
@@ -157,6 +160,7 @@ impl WindowedContext {
             element_registry,
             ready_callbacks,
             stylesheet: None,
+            css_sources: Vec::new(),
             pointer_query: blinc_layout::pointer_query::PointerQueryState::new(),
         }
     }
@@ -198,6 +202,7 @@ impl WindowedContext {
             element_registry,
             ready_callbacks,
             stylesheet: None,
+            css_sources: Vec::new(),
             pointer_query: blinc_layout::pointer_query::PointerQueryState::new(),
         }
     }
@@ -239,6 +244,7 @@ impl WindowedContext {
             element_registry,
             ready_callbacks,
             stylesheet: None,
+            css_sources: Vec::new(),
             pointer_query: blinc_layout::pointer_query::PointerQueryState::new(),
         }
     }
@@ -280,6 +286,7 @@ impl WindowedContext {
             element_registry,
             ready_callbacks,
             stylesheet: None,
+            css_sources: Vec::new(),
             pointer_query: blinc_layout::pointer_query::PointerQueryState::new(),
         }
     }
@@ -1288,6 +1295,9 @@ impl WindowedContext {
     /// Stylesheets are visual-only: they update render props on existing nodes
     /// and trigger redraws. They never cause tree rebuilds.
     pub fn add_css(&mut self, css: &str) {
+        // Store raw CSS for reparsing on theme changes
+        self.css_sources.push(css.to_string());
+
         // Seed parser with theme variables + any previously defined CSS variables
         let mut external_vars = blinc_theme::ThemeState::try_get()
             .map(|t| t.to_css_variable_map())
@@ -1309,8 +1319,8 @@ impl WindowedContext {
     ///
     /// Multiple calls cascade — later rules override earlier ones.
     pub fn load_css(&mut self, path: &str) {
-        match blinc_layout::css_parser::Stylesheet::from_file(path) {
-            Ok(sheet) => self.add_stylesheet(sheet),
+        match std::fs::read_to_string(path) {
+            Ok(css) => self.add_css(&css),
             Err(e) => {
                 tracing::warn!("Failed to load CSS file '{}': {}", path, e);
             }
@@ -1334,6 +1344,42 @@ impl WindowedContext {
         // overrides during tree construction, before set_stylesheet_arc() runs
         if let Some(ref stylesheet) = self.stylesheet {
             blinc_layout::css_parser::set_active_stylesheet(std::sync::Arc::clone(stylesheet));
+        }
+    }
+
+    /// Reparse all stored CSS sources with fresh theme variables.
+    ///
+    /// Called automatically when the theme color scheme changes to ensure
+    /// CSS `var()` and `theme()` references resolve to the new colors.
+    pub fn reparse_css(&mut self) {
+        if self.css_sources.is_empty() {
+            return;
+        }
+
+        tracing::debug!(
+            "Reparsing {} CSS sources with updated theme variables",
+            self.css_sources.len()
+        );
+
+        // Clear existing stylesheet
+        self.stylesheet = None;
+
+        // Reparse each CSS source with fresh theme variables
+        for css in self.css_sources.clone() {
+            let mut external_vars = blinc_theme::ThemeState::try_get()
+                .map(|t| t.to_css_variable_map())
+                .unwrap_or_default();
+            if let Some(existing) = &self.stylesheet {
+                for (k, v) in existing.variables() {
+                    external_vars.insert(k.clone(), v.clone());
+                }
+            }
+            match blinc_layout::css_parser::Stylesheet::parse_with_variables(&css, &external_vars) {
+                Ok(sheet) => self.add_stylesheet(sheet),
+                Err(e) => {
+                    tracing::warn!("Failed to reparse CSS on theme change: {}", e);
+                }
+            }
         }
     }
 
@@ -1548,7 +1594,8 @@ impl WindowedApp {
         // 2. Layout recompute - recalculate flexbox layout
         // 3. Visual redraw - render the frame
         set_redraw_callback(|| {
-            tracing::debug!("Theme changed - requesting full rebuild");
+            tracing::debug!("Theme changed - requesting full rebuild + CSS reparse");
+            blinc_layout::widgets::request_css_reparse();
             blinc_layout::widgets::request_full_rebuild();
         });
     }
@@ -2621,6 +2668,13 @@ impl WindowedApp {
                             if blinc_layout::widgets::take_needs_relayout() {
                                 tracing::debug!("Relayout triggered by: theme or global state change");
                                 needs_relayout = true;
+                            }
+
+                            // Check if CSS stylesheets need reparsing (e.g., theme color scheme changed)
+                            // This must happen before tree rebuild so the new stylesheet is available
+                            if blinc_layout::widgets::take_needs_css_reparse() {
+                                tracing::debug!("Reparsing CSS stylesheets due to theme change");
+                                windowed_ctx.reparse_css();
                             }
 
                             // Process pending motion exit starts BEFORE overlay update

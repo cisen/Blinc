@@ -50,6 +50,7 @@ pub const CURSOR_BLINK_INTERVAL_MS: u64 = 400;
 static GLOBAL_FOCUS_COUNT: AtomicU64 = AtomicU64::new(0);
 static NEEDS_REBUILD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static NEEDS_RELAYOUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static NEEDS_CSS_REPARSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static NEEDS_CONTINUOUS_REDRAW: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 static FOCUSED_TEXT_INPUT: Mutex<Option<Weak<Mutex<TextInputData>>>> = Mutex::new(None);
@@ -127,6 +128,16 @@ pub fn request_full_rebuild() {
     NEEDS_RELAYOUT.store(true, Ordering::SeqCst);
     // Also trigger stateful redraw to ensure visual updates
     crate::stateful::request_redraw();
+}
+
+/// Check and clear the CSS reparse flag
+pub fn take_needs_css_reparse() -> bool {
+    NEEDS_CSS_REPARSE.swap(false, Ordering::SeqCst)
+}
+
+/// Request CSS stylesheet reparsing (e.g., after theme color scheme change)
+pub fn request_css_reparse() {
+    NEEDS_CSS_REPARSE.store(true, Ordering::SeqCst);
 }
 
 pub(crate) fn increment_focus_count() {

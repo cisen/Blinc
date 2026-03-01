@@ -4459,6 +4459,12 @@ impl RenderTree {
                 props.text_color = Some(c);
             }
         }
+        // text-align (CSS spec: inherited)
+        if props.text_align.is_none() {
+            if let Some(ta) = parent_props.text_align {
+                props.text_align = Some(ta);
+            }
+        }
     }
 
     /// Build TextData from TextRenderInfo, applying CSS overrides from RenderProps
@@ -4486,11 +4492,13 @@ impl RenderTree {
                 WhiteSpace::Normal | WhiteSpace::PreWrap => wrap = true,
             }
         }
+        // CSS text-align overrides builder value
+        let align = props.text_align.unwrap_or(info.align);
         TextData {
             content: info.content,
             font_size: info.font_size,
             color: info.color,
-            align: info.align,
+            align,
             weight: info.weight,
             italic: info.italic,
             v_align: info.v_align,
@@ -7657,6 +7665,16 @@ impl RenderTree {
             }
         }
 
+        // Sync CSS text-align into baked TextData for text nodes.
+        // text-align may have been set by CSS above but TextData was built before CSS.
+        for render_node in self.render_nodes.values_mut() {
+            if let Some(ta) = render_node.props.text_align {
+                if let ElementType::Text(ref mut text_data) = render_node.element_type {
+                    text_data.align = ta;
+                }
+            }
+        }
+
         // Update Stateful base_render_props with CSS-applied values.
         // This ensures that state changes (hover, press) start from CSS-enhanced
         // base props, preserving CSS overrides like border-radius across state changes.
@@ -7782,9 +7800,9 @@ impl RenderTree {
         }
 
         // Post-pass: propagate inherited text properties (text-decoration, white-space,
-        // text-overflow) from parent to child nodes. This must run AFTER all CSS styles
-        // are applied above, because during initial tree construction the stylesheet
-        // wasn't set yet and inherit_text_props_from_parent found no parent values.
+        // text-overflow, text-align) from parent to child nodes. This must run AFTER all
+        // CSS styles are applied above, because during initial tree construction the
+        // stylesheet wasn't set yet and inherit_text_props_from_parent found no parent values.
         let all_node_ids: Vec<LayoutNodeId> = self.render_nodes.keys().copied().collect();
         for node_id in all_node_ids {
             let parent_id = match self.element_registry.get_parent(node_id) {
@@ -7800,9 +7818,10 @@ impl RenderTree {
                     n.props.white_space,
                     n.props.text_overflow,
                     n.props.text_color,
+                    n.props.text_align,
                 )
             });
-            if let Some((td, td_color, td_thick, ws, to, tc)) = parent_text_props {
+            if let Some((td, td_color, td_thick, ws, to, tc, ta)) = parent_text_props {
                 if let Some(node) = self.render_nodes.get_mut(&node_id) {
                     if node.props.text_decoration.is_none() {
                         node.props.text_decoration = td;
@@ -7821,6 +7840,16 @@ impl RenderTree {
                     }
                     if node.props.text_color.is_none() {
                         node.props.text_color = tc;
+                    }
+                    if node.props.text_align.is_none() {
+                        if let Some(ta) = ta {
+                            node.props.text_align = Some(ta);
+                            // Also update baked TextData.align so rendering uses the
+                            // inherited value (TextData is built before CSS post-pass)
+                            if let ElementType::Text(ref mut text_data) = node.element_type {
+                                text_data.align = ta;
+                            }
+                        }
                     }
                 }
             }
@@ -7913,9 +7942,10 @@ impl RenderTree {
                     n.props.white_space,
                     n.props.text_overflow,
                     n.props.text_color,
+                    n.props.text_align,
                 )
             });
-            if let Some((td, td_color, td_thick, ws, to, tc)) = parent_text_props {
+            if let Some((td, td_color, td_thick, ws, to, tc, ta)) = parent_text_props {
                 if let Some(node) = self.render_nodes.get_mut(&node_id) {
                     if node.props.text_decoration.is_none() {
                         node.props.text_decoration = td;
@@ -7934,6 +7964,14 @@ impl RenderTree {
                     }
                     if node.props.text_color.is_none() {
                         node.props.text_color = tc;
+                    }
+                    if node.props.text_align.is_none() {
+                        if let Some(ta) = ta {
+                            node.props.text_align = Some(ta);
+                            if let ElementType::Text(ref mut text_data) = node.element_type {
+                                text_data.align = ta;
+                            }
+                        }
                     }
                 }
             }

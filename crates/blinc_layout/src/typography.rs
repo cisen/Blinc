@@ -172,7 +172,7 @@ pub fn heading(level: u8, content: impl Into<String>) -> Text {
         _ => "h6",
     };
 
-    let t = text(content).size(size).no_wrap().semantic_type(semantic);
+    let t = text(content).size(size).semantic_type(semantic);
 
     match weight {
         HeadingWeight::Medium => t.medium(),

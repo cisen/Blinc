@@ -4465,6 +4465,24 @@ impl RenderTree {
                 props.text_align = Some(ta);
             }
         }
+        // SVG fill (CSS spec: inherited in SVG)
+        if props.fill.is_none() {
+            if let Some(f) = parent_props.fill {
+                props.fill = Some(f);
+            }
+        }
+        // SVG stroke (CSS spec: inherited in SVG)
+        if props.stroke.is_none() {
+            if let Some(s) = parent_props.stroke {
+                props.stroke = Some(s);
+            }
+        }
+        // SVG stroke-width (CSS spec: inherited in SVG)
+        if props.stroke_width.is_none() {
+            if let Some(sw) = parent_props.stroke_width {
+                props.stroke_width = Some(sw);
+            }
+        }
     }
 
     /// Build TextData from TextRenderInfo, applying CSS overrides from RenderProps
@@ -7819,9 +7837,12 @@ impl RenderTree {
                     n.props.text_overflow,
                     n.props.text_color,
                     n.props.text_align,
+                    n.props.fill,
+                    n.props.stroke,
+                    n.props.stroke_width,
                 )
             });
-            if let Some((td, td_color, td_thick, ws, to, tc, ta)) = parent_text_props {
+            if let Some((td, td_color, td_thick, ws, to, tc, ta, fill, stroke, stroke_w)) = parent_text_props {
                 if let Some(node) = self.render_nodes.get_mut(&node_id) {
                     if node.props.text_decoration.is_none() {
                         node.props.text_decoration = td;
@@ -7850,6 +7871,16 @@ impl RenderTree {
                                 text_data.align = ta;
                             }
                         }
+                    }
+                    // SVG fill/stroke (CSS spec: inherited in SVG)
+                    if node.props.fill.is_none() {
+                        node.props.fill = fill;
+                    }
+                    if node.props.stroke.is_none() {
+                        node.props.stroke = stroke;
+                    }
+                    if node.props.stroke_width.is_none() {
+                        node.props.stroke_width = stroke_w;
                     }
                 }
             }

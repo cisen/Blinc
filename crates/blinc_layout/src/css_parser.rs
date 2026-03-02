@@ -654,6 +654,21 @@ impl ComplexSelector {
     pub fn is_simple(&self) -> bool {
         self.segments.len() == 1
     }
+
+    /// If this is a simple `.class` selector (single segment, single Class part, no state),
+    /// returns the class name. Used for O(1) class-based style lookups.
+    pub fn simple_class_name(&self) -> Option<&str> {
+        if self.segments.len() != 1 {
+            return None;
+        }
+        let parts = &self.segments[0].0.parts;
+        if parts.len() == 1 {
+            if let SelectorPart::Class(name) = &parts[0] {
+                return Some(name.as_str());
+            }
+        }
+        None
+    }
 }
 
 /// A CSS keyframe animation definition

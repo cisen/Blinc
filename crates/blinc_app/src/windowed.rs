@@ -2852,11 +2852,9 @@ impl WindowedApp {
                                         if let Some(ref stylesheet) = windowed_ctx.stylesheet {
                                             tree.set_stylesheet_arc(stylesheet.clone());
                                         }
-                                        // Apply base CSS styles to all registered elements
-                                        // (stylesheet was set after tree construction, so collect_render_props missed them)
-                                        tree.apply_stylesheet_base_styles();
-                                        // Apply stylesheet layout overrides before layout computation
-                                        tree.apply_stylesheet_layout_overrides();
+                                        // Apply CSS visual + layout styles in a single optimized pass
+                                        // (builds class index once, iterates rules once)
+                                        tree.apply_all_stylesheet_styles();
 
                                         // Register pointer-space elements from stylesheet
                                         if let Some(ref stylesheet) = windowed_ctx.stylesheet {
@@ -2911,6 +2909,10 @@ impl WindowedApp {
                                                 // Children changed - subtrees were rebuilt in place
                                                 tracing::debug!("Incremental update: ChildrenChanged - subtrees rebuilt");
 
+                                                // Apply CSS styles to new nodes from rebuilt subtrees
+                                                // (collect_render_props only applies ID-based CSS;
+                                                // class selectors need apply_stylesheet_base_styles)
+                                                existing_tree.apply_stylesheet_base_styles();
                                                 // Recompute layout since structure changed
                                                 existing_tree.apply_stylesheet_layout_overrides();
                                                 existing_tree.compute_layout(windowed_ctx.width, windowed_ctx.height);
@@ -2955,11 +2957,8 @@ impl WindowedApp {
                                     if let Some(ref stylesheet) = windowed_ctx.stylesheet {
                                         tree.set_stylesheet_arc(stylesheet.clone());
                                     }
-                                    // Apply base CSS styles to all registered elements
-                                    // (stylesheet was set after tree construction, so collect_render_props missed them)
-                                    tree.apply_stylesheet_base_styles();
-                                    // Apply stylesheet layout overrides before layout computation
-                                    tree.apply_stylesheet_layout_overrides();
+                                    // Apply CSS visual + layout styles in a single optimized pass
+                                    tree.apply_all_stylesheet_styles();
 
                                     // Register pointer-space elements from stylesheet
                                     if let Some(ref stylesheet) = windowed_ctx.stylesheet {

@@ -427,8 +427,7 @@ impl IOSRenderContext {
             if let Some(ref stylesheet) = self.windowed_ctx.stylesheet {
                 tree.set_stylesheet_arc(stylesheet.clone());
             }
-            tree.apply_stylesheet_base_styles();
-            tree.apply_stylesheet_layout_overrides();
+            tree.apply_all_stylesheet_styles();
             tree.compute_layout(self.windowed_ctx.width, self.windowed_ctx.height);
             tree.update_flip_bounds();
             tree.start_all_css_animations();
@@ -441,8 +440,7 @@ impl IOSRenderContext {
             if let Some(ref stylesheet) = self.windowed_ctx.stylesheet {
                 tree.set_stylesheet_arc(stylesheet.clone());
             }
-            tree.apply_stylesheet_base_styles();
-            tree.apply_stylesheet_layout_overrides();
+            tree.apply_all_stylesheet_styles();
             tree.compute_layout(self.windowed_ctx.width, self.windowed_ctx.height);
             tree.update_flip_bounds();
             tree.start_all_css_animations();
@@ -809,8 +807,7 @@ where
         if let Some(ref stylesheet) = ctx.stylesheet {
             tree.set_stylesheet_arc(stylesheet.clone());
         }
-        tree.apply_stylesheet_base_styles();
-        tree.apply_stylesheet_layout_overrides();
+        tree.apply_all_stylesheet_styles();
         tree.compute_layout(ctx.width, ctx.height);
         tree.update_flip_bounds();
         tree.start_all_css_animations();

@@ -163,6 +163,22 @@ impl ElementRegistry {
             .unwrap_or(false)
     }
 
+    /// Build an inverted index: class_name → Vec<LayoutNodeId>.
+    ///
+    /// Takes a single read lock on the classes map and builds the full index.
+    /// Used by stylesheet application to avoid O(rules × nodes) iteration.
+    pub fn class_to_nodes_index(&self) -> HashMap<String, Vec<LayoutNodeId>> {
+        let mut index: HashMap<String, Vec<LayoutNodeId>> = HashMap::new();
+        if let Ok(guard) = self.classes.read() {
+            for (&node_id, classes) in guard.iter() {
+                for class in classes {
+                    index.entry(class.clone()).or_default().push(node_id);
+                }
+            }
+        }
+        index
+    }
+
     /// Get child index within parent (0-based)
     pub fn get_child_index(&self, node_id: LayoutNodeId) -> Option<usize> {
         self.child_indices.read().ok()?.get(&node_id).copied()

@@ -436,6 +436,19 @@ pub fn clear_stateful_base_updaters() {
     STATEFUL_BASE_UPDATERS.lock().unwrap().clear();
 }
 
+/// Clear all Stateful dependency registrations (called on full tree rebuild).
+///
+/// On rebuild, all Stateful elements are recreated with new keys.
+/// Old entries with stale keys would accumulate forever without this.
+pub fn clear_stateful_deps() {
+    STATEFUL_DEPS.lock().unwrap().clear();
+}
+
+/// Clear all Stateful animation registrations (called on full tree rebuild).
+pub fn clear_stateful_animations() {
+    STATEFUL_ANIMATIONS.lock().unwrap().clear();
+}
+
 /// Registry of stateful elements with signal dependencies
 ///
 /// Maps stateful_key -> (deps, refresh_fn) where refresh_fn triggers a rebuild.

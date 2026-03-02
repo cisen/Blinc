@@ -879,8 +879,7 @@ impl AndroidApp {
                         if let Some(ref stylesheet) = windowed_ctx.stylesheet {
                             tree.set_stylesheet_arc(stylesheet.clone());
                         }
-                        tree.apply_stylesheet_base_styles();
-                        tree.apply_stylesheet_layout_overrides();
+                        tree.apply_all_stylesheet_styles();
                         tree.compute_layout(windowed_ctx.width, windowed_ctx.height);
                         tree.update_flip_bounds();
                         tree.start_all_css_animations();
@@ -893,8 +892,7 @@ impl AndroidApp {
                         if let Some(ref stylesheet) = windowed_ctx.stylesheet {
                             tree.set_stylesheet_arc(stylesheet.clone());
                         }
-                        tree.apply_stylesheet_base_styles();
-                        tree.apply_stylesheet_layout_overrides();
+                        tree.apply_all_stylesheet_styles();
                         tree.compute_layout(windowed_ctx.width, windowed_ctx.height);
                         tree.update_flip_bounds();
                         tree.start_all_css_animations();

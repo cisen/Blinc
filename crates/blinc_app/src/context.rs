@@ -24,10 +24,10 @@ use std::sync::{Arc, Mutex};
 use crate::error::Result;
 
 /// Maximum number of images to keep in cache (prevents unbounded memory growth)
-const IMAGE_CACHE_CAPACITY: usize = 128;
+const IMAGE_CACHE_CAPACITY: usize = 32;
 
 /// Maximum number of parsed SVG documents to cache
-const SVG_CACHE_CAPACITY: usize = 64;
+const SVG_CACHE_CAPACITY: usize = 32;
 
 /// Intersect two axis-aligned clip rects [x, y, w, h], returning their overlap.
 fn intersect_clip_rects(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
@@ -57,7 +57,7 @@ fn effective_single_clip(primary: Option<[f32; 4]>, scroll: Option<[f32; 4]>) ->
 
 /// Maximum number of rasterized SVG textures to cache
 /// Key is (svg_hash, width, height, tint_hash) - separate textures for different sizes/tints
-const RASTERIZED_SVG_CACHE_CAPACITY: usize = 64;
+const RASTERIZED_SVG_CACHE_CAPACITY: usize = 32;
 
 /// Internal render context that manages GPU resources and rendering
 pub struct RenderContext {
@@ -1663,13 +1663,30 @@ impl RenderContext {
             let raster_width = ((svg.width * scale_factor).ceil() as u32).max(1);
             let raster_height = ((svg.height * scale_factor).ceil() as u32).max(1);
 
+            // Detect tintable SVGs: simple currentColor icons that can use shader tinting
+            // instead of CPU re-rasterization per color variant.
+            // Tintable = has tint, no other overrides, source uses currentColor.
+            let is_tintable = svg.tint.is_some()
+                && svg.fill.is_none()
+                && svg.stroke.is_none()
+                && svg.stroke_width.is_none()
+                && svg.stroke_dasharray.is_none()
+                && svg.stroke_dashoffset.is_none()
+                && svg.svg_path_data.is_none()
+                && svg.tag_overrides.is_empty()
+                && svg.source.contains("currentColor");
+
             // Compute cache key: hash of (svg_source, width, height, scale, tint, fill, stroke, stroke_width)
+            // For tintable SVGs, exclude tint from hash so all color variants share one texture.
             let cache_key = {
                 let mut hasher = DefaultHasher::new();
                 svg.source.hash(&mut hasher);
                 raster_width.hash(&mut hasher);
                 raster_height.hash(&mut hasher);
-                if let Some(tint) = &svg.tint {
+                if is_tintable {
+                    // Sentinel byte to distinguish from non-tintable hashes
+                    255u8.hash(&mut hasher);
+                } else if let Some(tint) = &svg.tint {
                     tint.r.to_bits().hash(&mut hasher);
                     tint.g.to_bits().hash(&mut hasher);
                     tint.b.to_bits().hash(&mut hasher);
@@ -1998,11 +2015,14 @@ impl RenderContext {
                     std::borrow::Cow::Borrowed(&svg.source)
                 };
 
-                // Resolve currentColor references in SVG source using tint value.
-                // This replaces e.g. stroke="currentColor" with the actual color,
-                // letting the SVG renderer handle fill/stroke natively instead of
-                // doing pixel-level tint replacement post-rasterization.
-                let final_source = if let Some(tint) = svg.tint {
+                // Resolve currentColor references in SVG source.
+                // For tintable SVGs: rasterize as white — color applied via shader tint.
+                // For non-tintable: replace with actual tint color for CPU rasterization.
+                let final_source = if is_tintable {
+                    std::borrow::Cow::Owned(
+                        effective_source.replace("currentColor", "#ffffff"),
+                    )
+                } else if let Some(tint) = svg.tint {
                     if effective_source.contains("currentColor") {
                         std::borrow::Cow::Owned(
                             effective_source.replace("currentColor", &color_val(tint)),
@@ -2076,6 +2096,14 @@ impl RenderContext {
             let mut instance = GpuImageInstance::new(draw_x, draw_y, draw_w, draw_h)
                 .with_opacity(svg.motion_opacity)
                 .with_transform(ta, tb, tc, td);
+
+            // For tintable SVGs, apply color via shader tint multiplication
+            // (white texture * tint = correctly colored output)
+            if is_tintable {
+                if let Some(tint) = svg.tint {
+                    instance = instance.with_tint(tint.r, tint.g, tint.b, tint.a);
+                }
+            }
 
             // Apply clip bounds if specified
             if let Some([clip_x, clip_y, clip_w, clip_h]) = svg.clip_bounds {

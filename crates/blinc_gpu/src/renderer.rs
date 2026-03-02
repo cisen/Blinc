@@ -168,11 +168,11 @@ pub struct RendererConfig {
 impl Default for RendererConfig {
     fn default() -> Self {
         Self {
-            // Reduced defaults for lower memory footprint (~1 MB total vs ~5+ MB)
-            // These can still handle typical UI scenes while using less memory
-            max_primitives: 2_000,     // ~384 KB (was 1.92 MB)
-            max_glass_primitives: 100, // ~25 KB (was 256 KB)
-            max_glyphs: 10_000,        // ~640 KB (was 3.2 MB)
+            // Conservative defaults for low memory footprint
+            // Buffers are re-created if scenes exceed these limits, so no hard cap
+            max_primitives: 1_000,     // ~192 KB — handles complex UI screens
+            max_glass_primitives: 32,  // ~8 KB
+            max_glyphs: 4_000,         // ~256 KB — handles full-screen text content
             sample_count: 1,
             texture_format: None,
             unified_text_rendering: true, // Enabled for consistent transforms during animations
@@ -186,10 +186,6 @@ struct Pipelines {
     sdf: wgpu::RenderPipeline,
     /// Pipeline for SDF primitives rendering on top of existing content (1x sampled)
     sdf_overlay: wgpu::RenderPipeline,
-    /// Pipeline for glass/vibrancy effects (liquid glass with refraction)
-    glass: wgpu::RenderPipeline,
-    /// Pipeline for simple frosted glass (pure blur, no refraction)
-    simple_glass: wgpu::RenderPipeline,
     /// Pipeline for text rendering (MSAA)
     #[allow(dead_code)]
     text: wgpu::RenderPipeline,
@@ -206,16 +202,24 @@ struct Pipelines {
     path_overlay: wgpu::RenderPipeline,
     /// Pipeline for layer composition (blend modes)
     layer_composite: wgpu::RenderPipeline,
+}
+
+/// Effect pipelines lazily created on first use to reduce GPU memory for simple apps
+struct EffectPipelines {
     /// Pipeline for Kawase blur effect
-    blur: wgpu::RenderPipeline,
+    blur: Option<wgpu::RenderPipeline>,
     /// Pipeline for color matrix transformation
-    color_matrix: wgpu::RenderPipeline,
+    color_matrix: Option<wgpu::RenderPipeline>,
     /// Pipeline for drop shadow effect
-    drop_shadow: wgpu::RenderPipeline,
+    drop_shadow: Option<wgpu::RenderPipeline>,
     /// Pipeline for glow effect
-    glow: wgpu::RenderPipeline,
+    glow: Option<wgpu::RenderPipeline>,
     /// Pipeline for mask image effect
-    mask_image: wgpu::RenderPipeline,
+    mask_image: Option<wgpu::RenderPipeline>,
+    /// Pipeline for glass/vibrancy effects (liquid glass with refraction)
+    glass: Option<wgpu::RenderPipeline>,
+    /// Pipeline for simple frosted glass (pure blur, no refraction)
+    simple_glass: Option<wgpu::RenderPipeline>,
 }
 
 /// Cached MSAA pipelines for dynamic sample counts
@@ -247,14 +251,14 @@ struct Buffers {
     path_vertices: Option<wgpu::Buffer>,
     /// Index buffer for path geometry (dynamic, recreated as needed)
     path_indices: Option<wgpu::Buffer>,
-    /// Pre-allocated uniform buffers for multi-pass blur (one per pass, max 8)
-    blur_uniforms_pool: Vec<wgpu::Buffer>,
-    /// Cached uniform buffer for drop shadow effect
-    drop_shadow_uniforms: wgpu::Buffer,
-    /// Cached uniform buffer for glow effect
-    glow_uniforms: wgpu::Buffer,
-    /// Cached uniform buffer for color matrix effect
-    color_matrix_uniforms: wgpu::Buffer,
+    /// Pre-allocated uniform buffers for multi-pass blur (one per pass, max 8) — lazily created
+    blur_uniforms_pool: Option<Vec<wgpu::Buffer>>,
+    /// Cached uniform buffer for drop shadow effect — lazily created
+    drop_shadow_uniforms: Option<wgpu::Buffer>,
+    /// Cached uniform buffer for glow effect — lazily created
+    glow_uniforms: Option<wgpu::Buffer>,
+    /// Cached uniform buffer for color matrix effect — lazily created
+    color_matrix_uniforms: Option<wgpu::Buffer>,
     /// Storage buffer for auxiliary per-primitive data (group shapes, polygon clips)
     aux_data: wgpu::Buffer,
 }
@@ -515,12 +519,12 @@ impl LayerTextureCache {
     pub fn new(format: wgpu::TextureFormat) -> Self {
         Self {
             named_textures: std::collections::HashMap::new(),
-            pool_small: Vec::with_capacity(4),
-            pool_medium: Vec::with_capacity(4),
-            pool_large: Vec::with_capacity(4),
-            pool_xlarge: Vec::with_capacity(4),
+            pool_small: Vec::with_capacity(2),
+            pool_medium: Vec::with_capacity(2),
+            pool_large: Vec::with_capacity(2),
+            pool_xlarge: Vec::with_capacity(2),
             format,
-            max_per_bucket: 4,
+            max_per_bucket: 2,
             stats: TextureCacheStats::default(),
         }
     }
@@ -796,6 +800,8 @@ pub struct GpuRenderer {
     queue: Arc<wgpu::Queue>,
     /// Render pipelines
     pipelines: Pipelines,
+    /// Effect pipelines (lazily created on first use)
+    effect_pipelines: EffectPipelines,
     /// Cached MSAA pipelines for overlay rendering
     msaa_pipelines: Option<MsaaPipelines>,
     /// GPU buffers
@@ -1184,16 +1190,6 @@ impl GpuRenderer {
             source: wgpu::ShaderSource::Wgsl(SDF_SHADER.into()),
         });
 
-        let glass_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Glass Shader"),
-            source: wgpu::ShaderSource::Wgsl(GLASS_SHADER.into()),
-        });
-
-        let simple_glass_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Simple Glass Shader"),
-            source: wgpu::ShaderSource::Wgsl(SIMPLE_GLASS_SHADER.into()),
-        });
-
         let text_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Text Shader"),
             source: wgpu::ShaderSource::Wgsl(TEXT_SHADER.into()),
@@ -1214,42 +1210,15 @@ impl GpuRenderer {
             source: wgpu::ShaderSource::Wgsl(LAYER_COMPOSITE_SHADER.into()),
         });
 
-        // Effect shaders
-        let blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Blur Effect Shader"),
-            source: wgpu::ShaderSource::Wgsl(BLUR_SHADER.into()),
-        });
-
-        let color_matrix_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Color Matrix Effect Shader"),
-            source: wgpu::ShaderSource::Wgsl(COLOR_MATRIX_SHADER.into()),
-        });
-
-        let drop_shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Drop Shadow Effect Shader"),
-            source: wgpu::ShaderSource::Wgsl(DROP_SHADOW_SHADER.into()),
-        });
-
-        let glow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Glow Effect Shader"),
-            source: wgpu::ShaderSource::Wgsl(GLOW_SHADER.into()),
-        });
-
-        // Create pipelines
+        // Create pipelines (core only — effect pipelines are lazy)
         let pipelines = Self::create_pipelines(
             &device,
             &bind_group_layouts,
             &sdf_shader,
-            &glass_shader,
-            &simple_glass_shader,
             &text_shader,
             &composite_shader,
             &path_shader,
             &layer_composite_shader,
-            &blur_shader,
-            &color_matrix_shader,
-            &drop_shadow_shader,
-            &glow_shader,
             texture_format,
             config.sample_count,
         );
@@ -1417,6 +1386,15 @@ impl GpuRenderer {
             device,
             queue,
             pipelines,
+            effect_pipelines: EffectPipelines {
+                blur: None,
+                color_matrix: None,
+                drop_shadow: None,
+                glow: None,
+                mask_image: None,
+                glass: None,
+                simple_glass: None,
+            },
             msaa_pipelines: None,
             buffers,
             bind_groups,
@@ -2015,16 +1993,10 @@ impl GpuRenderer {
         device: &wgpu::Device,
         layouts: &BindGroupLayouts,
         sdf_shader: &wgpu::ShaderModule,
-        glass_shader: &wgpu::ShaderModule,
-        simple_glass_shader: &wgpu::ShaderModule,
         text_shader: &wgpu::ShaderModule,
         composite_shader: &wgpu::ShaderModule,
         path_shader: &wgpu::ShaderModule,
         layer_composite_shader: &wgpu::ShaderModule,
-        blur_shader: &wgpu::ShaderModule,
-        color_matrix_shader: &wgpu::ShaderModule,
-        drop_shadow_shader: &wgpu::ShaderModule,
-        glow_shader: &wgpu::ShaderModule,
         texture_format: wgpu::TextureFormat,
         sample_count: u32,
     ) -> Pipelines {
@@ -2117,66 +2089,6 @@ impl GpuRenderer {
             primitive: primitive_state,
             depth_stencil: None,
             multisample: overlay_multisample_state,
-            multiview: None,
-            cache: None,
-        });
-
-        // Glass pipeline - always uses sample_count=1 since it renders on resolved textures
-        // (glass effects require sampling from a single-sampled backdrop texture)
-        let glass_multisample_state = wgpu::MultisampleState {
-            count: 1,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        };
-
-        let glass_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Glass Pipeline Layout"),
-            bind_group_layouts: &[&layouts.glass],
-            push_constant_ranges: &[],
-        });
-
-        let glass = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Glass Pipeline"),
-            layout: Some(&glass_layout),
-            vertex: wgpu::VertexState {
-                module: glass_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: glass_shader,
-                entry_point: Some("fs_main"),
-                targets: color_targets,
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: primitive_state,
-            depth_stencil: None,
-            multisample: glass_multisample_state,
-            multiview: None,
-            cache: None,
-        });
-
-        // Simple glass pipeline - pure frosted glass without liquid effects
-        // Uses the same bind group layout as liquid glass
-        let simple_glass = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Simple Glass Pipeline"),
-            layout: Some(&glass_layout),
-            vertex: wgpu::VertexState {
-                module: simple_glass_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: simple_glass_shader,
-                entry_point: Some("fs_main"),
-                targets: color_targets,
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: primitive_state,
-            depth_stencil: None,
-            multisample: glass_multisample_state,
             multiview: None,
             cache: None,
         });
@@ -2452,212 +2364,9 @@ impl GpuRenderer {
             cache: None,
         });
 
-        // -------------------------------------------------------------------------
-        // Effect Pipelines (post-processing)
-        // -------------------------------------------------------------------------
-
-        // Effect pipelines share similar configuration: no vertex buffers, fullscreen quad
-        let effect_primitive_state = wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            strip_index_format: None,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: None,
-            unclipped_depth: false,
-            polygon_mode: wgpu::PolygonMode::Fill,
-            conservative: false,
-        };
-
-        // Blur pipeline layout
-        let blur_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Blur Effect Pipeline Layout"),
-            bind_group_layouts: &[&layouts.blur],
-            push_constant_ranges: &[],
-        });
-
-        // Blur outputs processed texture data - no blending needed
-        // With blending, (1.0, 1.0, 1.0, 0.5) would become (0.5, 0.5, 0.5, 0.5) = gray!
-        let blur_targets = &[Some(wgpu::ColorTargetState {
-            format: texture_format,
-            blend: None, // No blending - write blur output directly
-            write_mask: wgpu::ColorWrites::ALL,
-        })];
-
-        let blur = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Blur Effect Pipeline"),
-            layout: Some(&blur_layout),
-            vertex: wgpu::VertexState {
-                module: blur_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: blur_shader,
-                entry_point: Some("fs_kawase_blur"),
-                targets: blur_targets,
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: effect_primitive_state,
-            depth_stencil: None,
-            multisample: overlay_multisample_state, // 1x sampled
-            multiview: None,
-            cache: None,
-        });
-
-        // Color matrix pipeline layout
-        let color_matrix_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Color Matrix Effect Pipeline Layout"),
-            bind_group_layouts: &[&layouts.color_matrix],
-            push_constant_ranges: &[],
-        });
-
-        // Color matrix outputs transformed texture data - no blending needed
-        let color_matrix_targets = &[Some(wgpu::ColorTargetState {
-            format: texture_format,
-            blend: None, // No blending - write transformed output directly
-            write_mask: wgpu::ColorWrites::ALL,
-        })];
-
-        let color_matrix = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Color Matrix Effect Pipeline"),
-            layout: Some(&color_matrix_layout),
-            vertex: wgpu::VertexState {
-                module: color_matrix_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: color_matrix_shader,
-                entry_point: Some("fs_color_matrix"),
-                targets: color_matrix_targets,
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: effect_primitive_state,
-            depth_stencil: None,
-            multisample: overlay_multisample_state, // 1x sampled
-            multiview: None,
-            cache: None,
-        });
-
-        // Drop shadow pipeline layout
-        let drop_shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Drop Shadow Effect Pipeline Layout"),
-            bind_group_layouts: &[&layouts.drop_shadow],
-            push_constant_ranges: &[],
-        });
-
-        // Drop shadow outputs final composited result - no blending needed
-        // The shader composites shadow behind original, so we just write directly
-        let drop_shadow_targets = &[Some(wgpu::ColorTargetState {
-            format: texture_format,
-            blend: None, // No blending - shader outputs final result
-            write_mask: wgpu::ColorWrites::ALL,
-        })];
-
-        let drop_shadow = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Drop Shadow Effect Pipeline"),
-            layout: Some(&drop_shadow_layout),
-            vertex: wgpu::VertexState {
-                module: drop_shadow_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: drop_shadow_shader,
-                entry_point: Some("fs_drop_shadow"),
-                targets: drop_shadow_targets,
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: effect_primitive_state,
-            depth_stencil: None,
-            multisample: overlay_multisample_state, // 1x sampled
-            multiview: None,
-            cache: None,
-        });
-
-        // Glow effect pipeline
-        let glow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Glow Effect Pipeline Layout"),
-            bind_group_layouts: &[&layouts.glow],
-            push_constant_ranges: &[],
-        });
-
-        // Glow also outputs final composited result (glow behind original)
-        let glow_targets = &[Some(wgpu::ColorTargetState {
-            format: texture_format,
-            blend: None, // No blending - shader outputs final result
-            write_mask: wgpu::ColorWrites::ALL,
-        })];
-
-        let glow = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Glow Effect Pipeline"),
-            layout: Some(&glow_layout),
-            vertex: wgpu::VertexState {
-                module: glow_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: glow_shader,
-                entry_point: Some("fs_glow"),
-                targets: glow_targets,
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: effect_primitive_state,
-            depth_stencil: None,
-            multisample: overlay_multisample_state, // 1x sampled
-            multiview: None,
-            cache: None,
-        });
-
-        // Mask image effect pipeline
-        let mask_image_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Mask Image Shader"),
-            source: wgpu::ShaderSource::Wgsl(MASK_IMAGE_SHADER.into()),
-        });
-
-        let mask_image_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Mask Image Effect Pipeline Layout"),
-            bind_group_layouts: &[&layouts.mask_image],
-            push_constant_ranges: &[],
-        });
-
-        let mask_image_targets = &[Some(wgpu::ColorTargetState {
-            format: texture_format,
-            blend: None, // No blending - shader writes final masked result
-            write_mask: wgpu::ColorWrites::ALL,
-        })];
-
-        let mask_image = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Mask Image Effect Pipeline"),
-            layout: Some(&mask_image_layout),
-            vertex: wgpu::VertexState {
-                module: &mask_image_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &mask_image_shader,
-                entry_point: Some("fs_mask"),
-                targets: mask_image_targets,
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: effect_primitive_state,
-            depth_stencil: None,
-            multisample: overlay_multisample_state,
-            multiview: None,
-            cache: None,
-        });
-
         Pipelines {
             sdf,
             sdf_overlay,
-            glass,
-            simple_glass,
             text,
             text_overlay,
             composite,
@@ -2665,11 +2374,6 @@ impl GpuRenderer {
             path,
             path_overlay,
             layer_composite,
-            blur,
-            color_matrix,
-            drop_shadow,
-            glow,
-            mask_image,
         }
     }
 
@@ -2716,39 +2420,6 @@ impl GpuRenderer {
             mapped_at_creation: false,
         });
 
-        // Pre-allocate 8 uniform buffers for multi-pass blur (one per pass)
-        let blur_uniforms_pool: Vec<wgpu::Buffer> = (0..8)
-            .map(|i| {
-                device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some(&format!("Blur Uniforms Pass {i}")),
-                    size: std::mem::size_of::<BlurUniforms>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                })
-            })
-            .collect();
-
-        let drop_shadow_uniforms = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Drop Shadow Uniforms Buffer"),
-            size: std::mem::size_of::<DropShadowUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let glow_uniforms = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Glow Uniforms Buffer"),
-            size: std::mem::size_of::<GlowUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let color_matrix_uniforms = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Color Matrix Uniforms Buffer"),
-            size: std::mem::size_of::<ColorMatrixUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         // Auxiliary data buffer for variable-length per-primitive data
         // Initial size: 1 vec4 (minimum for valid binding, will be recreated if needed)
         let aux_data = device.create_buffer(&wgpu::BufferDescriptor {
@@ -2767,10 +2438,10 @@ impl GpuRenderer {
             path_uniforms,
             path_vertices: None,
             path_indices: None,
-            blur_uniforms_pool,
-            drop_shadow_uniforms,
-            glow_uniforms,
-            color_matrix_uniforms,
+            blur_uniforms_pool: None,
+            drop_shadow_uniforms: None,
+            glow_uniforms: None,
+            color_matrix_uniforms: None,
             aux_data,
         }
     }
@@ -4042,6 +3713,7 @@ impl GpuRenderer {
         if batch.glass_primitives.is_empty() {
             return;
         }
+        self.ensure_glass_pipelines();
 
         // Split primitives: simple glass first, then liquid glass
         // This allows us to render each group with its respective pipeline
@@ -4180,14 +3852,14 @@ impl GpuRenderer {
 
             // Render simple glass primitives with the simple_glass pipeline
             if simple_count > 0 {
-                render_pass.set_pipeline(&self.pipelines.simple_glass);
+                render_pass.set_pipeline(self.effect_pipelines.simple_glass.as_ref().unwrap());
                 render_pass.set_bind_group(0, glass_bind_group, &[]);
                 render_pass.draw(0..6, 0..simple_count as u32);
             }
 
             // Render liquid glass primitives with the glass pipeline
             if liquid_count > 0 {
-                render_pass.set_pipeline(&self.pipelines.glass);
+                render_pass.set_pipeline(self.effect_pipelines.glass.as_ref().unwrap());
                 render_pass.set_bind_group(0, glass_bind_group, &[]);
                 render_pass.draw(
                     0..6,
@@ -4289,6 +3961,8 @@ impl GpuRenderer {
         batch: &PrimitiveBatch,
         has_backdrop_content: bool,
     ) {
+        self.ensure_glass_pipelines();
+
         // Update uniforms for rendering (always use full viewport size)
         // The GPU maps NDC space to actual texture size automatically
         let main_uniforms = Uniforms {
@@ -4509,14 +4183,14 @@ impl GpuRenderer {
 
             // Render simple glass primitives with simple_glass pipeline
             if simple_count > 0 {
-                render_pass.set_pipeline(&self.pipelines.simple_glass);
+                render_pass.set_pipeline(self.effect_pipelines.simple_glass.as_ref().unwrap());
                 render_pass.set_bind_group(0, glass_bind_group, &[]);
                 render_pass.draw(0..6, 0..simple_count as u32);
             }
 
             // Render liquid glass primitives with glass pipeline
             if liquid_count > 0 {
-                render_pass.set_pipeline(&self.pipelines.glass);
+                render_pass.set_pipeline(self.effect_pipelines.glass.as_ref().unwrap());
                 render_pass.set_bind_group(0, glass_bind_group, &[]);
                 render_pass.draw(
                     0..6,
@@ -4616,13 +4290,13 @@ impl GpuRenderer {
                 .unwrap();
 
             if nested_simple_count > 0 {
-                render_pass.set_pipeline(&self.pipelines.simple_glass);
+                render_pass.set_pipeline(self.effect_pipelines.simple_glass.as_ref().unwrap());
                 render_pass.set_bind_group(0, nested_bind_group, &[]);
                 render_pass.draw(0..6, 0..nested_simple_count as u32);
             }
 
             if nested_liquid_count > 0 {
-                render_pass.set_pipeline(&self.pipelines.glass);
+                render_pass.set_pipeline(self.effect_pipelines.glass.as_ref().unwrap());
                 render_pass.set_bind_group(0, nested_bind_group, &[]);
                 render_pass.draw(
                     0..6,
@@ -6076,6 +5750,439 @@ impl GpuRenderer {
         });
     }
 
+    /// Lazily create the blur effect pipeline and its uniform buffers
+    fn ensure_blur_pipeline(&mut self) {
+        if self.effect_pipelines.blur.is_some() {
+            return;
+        }
+
+        let shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Blur Effect Shader"),
+                source: wgpu::ShaderSource::Wgsl(BLUR_SHADER.into()),
+            });
+
+        let layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Blur Effect Pipeline Layout"),
+                bind_group_layouts: &[&self.bind_group_layouts.blur],
+                push_constant_ranges: &[],
+            });
+
+        let targets = &[Some(wgpu::ColorTargetState {
+            format: self.texture_format,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+
+        self.effect_pipelines.blur =
+            Some(self.device.create_render_pipeline(
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("Blur Effect Pipeline"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_kawase_blur"),
+                        targets,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                },
+            ));
+
+        // Also create the 8 uniform buffers for multi-pass blur
+        if self.buffers.blur_uniforms_pool.is_none() {
+            self.buffers.blur_uniforms_pool = Some(
+                (0..8)
+                    .map(|i| {
+                        self.device.create_buffer(&wgpu::BufferDescriptor {
+                            label: Some(&format!("Blur Uniforms Pass {i}")),
+                            size: std::mem::size_of::<BlurUniforms>() as u64,
+                            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                            mapped_at_creation: false,
+                        })
+                    })
+                    .collect(),
+            );
+        }
+    }
+
+    /// Lazily create the color matrix effect pipeline and its uniform buffer
+    fn ensure_color_matrix_pipeline(&mut self) {
+        if self.effect_pipelines.color_matrix.is_some() {
+            return;
+        }
+
+        let shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Color Matrix Effect Shader"),
+                source: wgpu::ShaderSource::Wgsl(COLOR_MATRIX_SHADER.into()),
+            });
+
+        let layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Color Matrix Effect Pipeline Layout"),
+                bind_group_layouts: &[&self.bind_group_layouts.color_matrix],
+                push_constant_ranges: &[],
+            });
+
+        let targets = &[Some(wgpu::ColorTargetState {
+            format: self.texture_format,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+
+        self.effect_pipelines.color_matrix =
+            Some(self.device.create_render_pipeline(
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("Color Matrix Effect Pipeline"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_color_matrix"),
+                        targets,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                },
+            ));
+
+        if self.buffers.color_matrix_uniforms.is_none() {
+            self.buffers.color_matrix_uniforms = Some(self.device.create_buffer(
+                &wgpu::BufferDescriptor {
+                    label: Some("Color Matrix Uniforms Buffer"),
+                    size: std::mem::size_of::<ColorMatrixUniforms>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            ));
+        }
+    }
+
+    /// Lazily create the drop shadow effect pipeline and its uniform buffer
+    fn ensure_drop_shadow_pipeline(&mut self) {
+        if self.effect_pipelines.drop_shadow.is_some() {
+            return;
+        }
+
+        let shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Drop Shadow Effect Shader"),
+                source: wgpu::ShaderSource::Wgsl(DROP_SHADOW_SHADER.into()),
+            });
+
+        let layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Drop Shadow Effect Pipeline Layout"),
+                bind_group_layouts: &[&self.bind_group_layouts.drop_shadow],
+                push_constant_ranges: &[],
+            });
+
+        let targets = &[Some(wgpu::ColorTargetState {
+            format: self.texture_format,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+
+        self.effect_pipelines.drop_shadow =
+            Some(self.device.create_render_pipeline(
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("Drop Shadow Effect Pipeline"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_drop_shadow"),
+                        targets,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                },
+            ));
+
+        if self.buffers.drop_shadow_uniforms.is_none() {
+            self.buffers.drop_shadow_uniforms = Some(self.device.create_buffer(
+                &wgpu::BufferDescriptor {
+                    label: Some("Drop Shadow Uniforms Buffer"),
+                    size: std::mem::size_of::<DropShadowUniforms>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            ));
+        }
+    }
+
+    /// Lazily create the glow effect pipeline and its uniform buffer
+    fn ensure_glow_pipeline(&mut self) {
+        if self.effect_pipelines.glow.is_some() {
+            return;
+        }
+
+        let shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Glow Effect Shader"),
+                source: wgpu::ShaderSource::Wgsl(GLOW_SHADER.into()),
+            });
+
+        let layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Glow Effect Pipeline Layout"),
+                bind_group_layouts: &[&self.bind_group_layouts.glow],
+                push_constant_ranges: &[],
+            });
+
+        let targets = &[Some(wgpu::ColorTargetState {
+            format: self.texture_format,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+
+        self.effect_pipelines.glow =
+            Some(self.device.create_render_pipeline(
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("Glow Effect Pipeline"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_glow"),
+                        targets,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                },
+            ));
+
+        if self.buffers.glow_uniforms.is_none() {
+            self.buffers.glow_uniforms = Some(self.device.create_buffer(
+                &wgpu::BufferDescriptor {
+                    label: Some("Glow Uniforms Buffer"),
+                    size: std::mem::size_of::<GlowUniforms>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            ));
+        }
+    }
+
+    /// Lazily create the mask image effect pipeline
+    fn ensure_mask_image_pipeline(&mut self) {
+        if self.effect_pipelines.mask_image.is_some() {
+            return;
+        }
+
+        let shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Mask Image Shader"),
+                source: wgpu::ShaderSource::Wgsl(MASK_IMAGE_SHADER.into()),
+            });
+
+        let layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Mask Image Effect Pipeline Layout"),
+                bind_group_layouts: &[&self.bind_group_layouts.mask_image],
+                push_constant_ranges: &[],
+            });
+
+        let targets = &[Some(wgpu::ColorTargetState {
+            format: self.texture_format,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+
+        self.effect_pipelines.mask_image =
+            Some(self.device.create_render_pipeline(
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("Mask Image Effect Pipeline"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_mask"),
+                        targets,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                },
+            ));
+    }
+
+    /// Lazily create both glass pipelines (liquid glass + simple frosted glass)
+    fn ensure_glass_pipelines(&mut self) {
+        if self.effect_pipelines.glass.is_some() {
+            return;
+        }
+
+        let glass_shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Glass Shader"),
+                source: wgpu::ShaderSource::Wgsl(GLASS_SHADER.into()),
+            });
+
+        let simple_glass_shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Simple Glass Shader"),
+                source: wgpu::ShaderSource::Wgsl(SIMPLE_GLASS_SHADER.into()),
+            });
+
+        let layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Glass Pipeline Layout"),
+                bind_group_layouts: &[&self.bind_group_layouts.glass],
+                push_constant_ranges: &[],
+            });
+
+        let blend_state = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::SrcAlpha,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+
+        let color_targets = &[Some(wgpu::ColorTargetState {
+            format: self.texture_format,
+            blend: Some(blend_state),
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+
+        self.effect_pipelines.glass =
+            Some(self.device.create_render_pipeline(
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("Glass Pipeline"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &glass_shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &glass_shader,
+                        entry_point: Some("fs_main"),
+                        targets: color_targets,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                },
+            ));
+
+        self.effect_pipelines.simple_glass =
+            Some(self.device.create_render_pipeline(
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("Simple Glass Pipeline"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &simple_glass_shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &simple_glass_shader,
+                        entry_point: Some("fs_main"),
+                        targets: color_targets,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                },
+            ));
+    }
+
     /// Clear a texture view to a solid color
     pub fn clear_target(&mut self, target: &wgpu::TextureView, color: wgpu::Color) {
         let mut encoder = self
@@ -6451,6 +6558,8 @@ impl GpuRenderer {
         passes: u32,
         blur_alpha: bool,
     ) -> LayerTexture {
+        self.ensure_blur_pipeline();
+
         if passes == 0 {
             // No blur needed, return a copy
             let output = self
@@ -6488,9 +6597,10 @@ impl GpuRenderer {
         let blur_alpha_u32: u32 = if blur_alpha { 1 } else { 0 };
 
         // Write per-pass uniforms to pre-allocated buffer pool (no allocation)
+        let blur_pool = self.buffers.blur_uniforms_pool.as_ref().unwrap();
         for i in 0..passes {
             self.queue.write_buffer(
-                &self.buffers.blur_uniforms_pool[i as usize],
+                &blur_pool[i as usize],
                 0,
                 bytemuck::bytes_of(&BlurUniforms {
                     texel_size: [1.0 / size.0 as f32, 1.0 / size.1 as f32],
@@ -6518,13 +6628,14 @@ impl GpuRenderer {
                 } else {
                     &temp_b.view
                 };
+                let blur_pool = self.buffers.blur_uniforms_pool.as_ref().unwrap();
                 self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("Blur Effect Bind Group"),
                     layout: &self.bind_group_layouts.blur,
                     entries: &[
                         wgpu::BindGroupEntry {
                             binding: 0,
-                            resource: self.buffers.blur_uniforms_pool[i as usize]
+                            resource: blur_pool[i as usize]
                                 .as_entire_binding(),
                         },
                         wgpu::BindGroupEntry {
@@ -6569,7 +6680,7 @@ impl GpuRenderer {
                 occlusion_query_set: None,
             });
 
-            render_pass.set_pipeline(&self.pipelines.blur);
+            render_pass.set_pipeline(self.effect_pipelines.blur.as_ref().unwrap());
             render_pass.set_bind_group(0, &bind_groups[i as usize], &[]);
             render_pass.draw(0..6, 0..1);
         }
@@ -6617,11 +6728,14 @@ impl GpuRenderer {
         output: &wgpu::TextureView,
         matrix: &[f32; 20],
     ) {
+        self.ensure_color_matrix_pipeline();
+
         let uniforms = ColorMatrixUniforms::from_matrix(matrix);
 
         // Use cached buffer instead of creating per-pass
+        let cm_buf = self.buffers.color_matrix_uniforms.as_ref().unwrap();
         self.queue.write_buffer(
-            &self.buffers.color_matrix_uniforms,
+            cm_buf,
             0,
             bytemuck::bytes_of(&uniforms),
         );
@@ -6632,7 +6746,7 @@ impl GpuRenderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.buffers.color_matrix_uniforms.as_entire_binding(),
+                    resource: cm_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -6667,7 +6781,7 @@ impl GpuRenderer {
                 occlusion_query_set: None,
             });
 
-            render_pass.set_pipeline(&self.pipelines.color_matrix);
+            render_pass.set_pipeline(self.effect_pipelines.color_matrix.as_ref().unwrap());
             render_pass.set_bind_group(0, &bind_group, &[]);
             render_pass.draw(0..6, 0..1);
         }
@@ -6692,6 +6806,8 @@ impl GpuRenderer {
         spread: f32,
         color: [f32; 4],
     ) {
+        self.ensure_drop_shadow_pipeline();
+
         let uniforms = DropShadowUniforms {
             offset: [offset.0, offset.1],
             blur_radius,
@@ -6702,8 +6818,9 @@ impl GpuRenderer {
         };
 
         // Use cached buffer instead of creating per-pass
+        let ds_buf = self.buffers.drop_shadow_uniforms.as_ref().unwrap();
         self.queue.write_buffer(
-            &self.buffers.drop_shadow_uniforms,
+            ds_buf,
             0,
             bytemuck::bytes_of(&uniforms),
         );
@@ -6714,7 +6831,7 @@ impl GpuRenderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.buffers.drop_shadow_uniforms.as_entire_binding(),
+                    resource: ds_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -6753,7 +6870,7 @@ impl GpuRenderer {
                 occlusion_query_set: None,
             });
 
-            render_pass.set_pipeline(&self.pipelines.drop_shadow);
+            render_pass.set_pipeline(self.effect_pipelines.drop_shadow.as_ref().unwrap());
             render_pass.set_bind_group(0, &bind_group, &[]);
             render_pass.draw(0..6, 0..1);
         }
@@ -6776,6 +6893,8 @@ impl GpuRenderer {
         range: f32,
         opacity: f32,
     ) {
+        self.ensure_glow_pipeline();
+
         let uniforms = GlowUniforms {
             color,
             blur,
@@ -6787,8 +6906,9 @@ impl GpuRenderer {
         };
 
         // Use cached buffer instead of creating per-pass
+        let glow_buf = self.buffers.glow_uniforms.as_ref().unwrap();
         self.queue.write_buffer(
-            &self.buffers.glow_uniforms,
+            glow_buf,
             0,
             bytemuck::bytes_of(&uniforms),
         );
@@ -6799,7 +6919,7 @@ impl GpuRenderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.buffers.glow_uniforms.as_entire_binding(),
+                    resource: glow_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -6834,7 +6954,7 @@ impl GpuRenderer {
                 occlusion_query_set: None,
             });
 
-            render_pass.set_pipeline(&self.pipelines.glow);
+            render_pass.set_pipeline(self.effect_pipelines.glow.as_ref().unwrap());
             render_pass.set_bind_group(0, &bind_group, &[]);
             render_pass.draw(0..6, 0..1);
         }
@@ -7013,12 +7133,13 @@ impl GpuRenderer {
 
     /// Apply mask image effect: multiplies element alpha by mask value
     fn apply_mask_image_effect(
-        &self,
+        &mut self,
         input: &wgpu::TextureView,
         output: &wgpu::TextureView,
         image_url: &str,
         mask_mode: u32,
     ) {
+        self.ensure_mask_image_pipeline();
         let mask_img = match self.mask_image_cache.get(image_url) {
             Some(img) => img,
             None => return,
@@ -7086,7 +7207,7 @@ impl GpuRenderer {
                 occlusion_query_set: None,
             });
 
-            render_pass.set_pipeline(&self.pipelines.mask_image);
+            render_pass.set_pipeline(self.effect_pipelines.mask_image.as_ref().unwrap());
             render_pass.set_bind_group(0, &bind_group, &[]);
             render_pass.draw(0..6, 0..1);
         }
@@ -8629,10 +8750,10 @@ mod tests {
             assert_eq!(cache.named_count(), 3);
             assert_eq!(cache.pool_size(), 0);
 
-            // Clear named - should release to pool
+            // Clear named - should release to pool (capped at max_per_bucket=2)
             cache.clear_named();
             assert_eq!(cache.named_count(), 0);
-            assert_eq!(cache.pool_size(), 3);
+            assert_eq!(cache.pool_size(), 2);
         });
         result
     }
@@ -8658,8 +8779,8 @@ mod tests {
                 cache.release(tex);
             }
 
-            // Pool should be capped at max_per_bucket (4) for the Small bucket
-            assert_eq!(cache.pool_size(), 4);
+            // Pool should be capped at max_per_bucket (2) for the Small bucket
+            assert_eq!(cache.pool_size(), 2);
         });
         result
     }

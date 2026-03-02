@@ -102,6 +102,9 @@ pub struct GlyphAtlas {
 }
 
 impl GlyphAtlas {
+    /// Maximum atlas dimension (4096×4096 = 16 MB for R8)
+    const MAX_SIZE: u32 = 4096;
+
     /// Create a new glyph atlas
     pub fn new(width: u32, height: u32) -> Self {
         Self {
@@ -247,6 +250,37 @@ impl GlyphAtlas {
         Ok(info)
     }
 
+    /// Double the atlas dimensions and repack existing pixel data.
+    ///
+    /// Old pixel data is copied into the top-left quadrant of the new buffer.
+    /// Existing `AtlasRegion` pixel coords remain valid because `uv_bounds()`
+    /// recomputes UVs dynamically from the (now larger) atlas dimensions.
+    /// Returns `true` if growth succeeded, `false` if already at max size.
+    pub fn grow(&mut self) -> bool {
+        let new_width = (self.width * 2).min(Self::MAX_SIZE);
+        let new_height = (self.height * 2).min(Self::MAX_SIZE);
+
+        if new_width == self.width && new_height == self.height {
+            return false; // Already at max size
+        }
+
+        // Copy old pixel data row-by-row into top-left of new buffer
+        let mut new_pixels = vec![0u8; (new_width * new_height) as usize];
+        for y in 0..self.height {
+            let src_start = (y * self.width) as usize;
+            let src_end = src_start + self.width as usize;
+            let dst_start = (y * new_width) as usize;
+            let dst_end = dst_start + self.width as usize;
+            new_pixels[dst_start..dst_end].copy_from_slice(&self.pixels[src_start..src_end]);
+        }
+
+        self.pixels = new_pixels;
+        self.width = new_width;
+        self.height = new_height;
+        self.dirty = true;
+        true
+    }
+
     /// Clear all cached glyphs
     pub fn clear(&mut self) {
         self.glyphs.clear();
@@ -269,9 +303,8 @@ impl GlyphAtlas {
 
 impl Default for GlyphAtlas {
     fn default() -> Self {
-        // Default to 1024x1024 atlas (1 MB)
-        // This supports multiple fonts at various sizes for typical UI usage
-        Self::new(1024, 1024)
+        // Start with 512x512 atlas (256 KB) — grows to 1024, 2048, 4096 as needed
+        Self::new(512, 512)
     }
 }
 
@@ -311,6 +344,9 @@ pub struct ColorGlyphAtlas {
 }
 
 impl ColorGlyphAtlas {
+    /// Maximum atlas dimension (4096×4096 = 64 MB for RGBA)
+    const MAX_SIZE: u32 = 4096;
+
     /// Create a new color glyph atlas
     pub fn new(width: u32, height: u32) -> Self {
         Self {
@@ -455,6 +491,34 @@ impl ColorGlyphAtlas {
         Ok(info)
     }
 
+    /// Double the atlas dimensions and repack existing pixel data (RGBA).
+    ///
+    /// Same approach as `GlyphAtlas::grow()` but with 4 bytes per pixel.
+    /// Returns `true` if growth succeeded, `false` if already at max size.
+    pub fn grow(&mut self) -> bool {
+        let new_width = (self.width * 2).min(Self::MAX_SIZE);
+        let new_height = (self.height * 2).min(Self::MAX_SIZE);
+
+        if new_width == self.width && new_height == self.height {
+            return false;
+        }
+
+        let mut new_pixels = vec![0u8; (new_width * new_height * 4) as usize];
+        for y in 0..self.height {
+            let src_start = (y * self.width * 4) as usize;
+            let row_bytes = (self.width * 4) as usize;
+            let dst_start = (y * new_width * 4) as usize;
+            new_pixels[dst_start..dst_start + row_bytes]
+                .copy_from_slice(&self.pixels[src_start..src_start + row_bytes]);
+        }
+
+        self.pixels = new_pixels;
+        self.width = new_width;
+        self.height = new_height;
+        self.dirty = true;
+        true
+    }
+
     /// Clear all cached glyphs
     pub fn clear(&mut self) {
         self.glyphs.clear();
@@ -477,9 +541,8 @@ impl ColorGlyphAtlas {
 
 impl Default for ColorGlyphAtlas {
     fn default() -> Self {
-        // Default to 512x512 atlas (1 MB for RGBA)
-        // Color emoji are typically larger so we use a smaller atlas
-        Self::new(512, 512)
+        // Start with 256x256 atlas (256 KB for RGBA) — grows as needed
+        Self::new(256, 256)
     }
 }
 

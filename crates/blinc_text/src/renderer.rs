@@ -19,10 +19,10 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 /// Maximum number of glyphs to keep in the grayscale glyph cache
-const GLYPH_CACHE_CAPACITY: usize = 2048;
+const GLYPH_CACHE_CAPACITY: usize = 512;
 
 /// Maximum number of color glyphs (emoji) to keep in cache
-const COLOR_GLYPH_CACHE_CAPACITY: usize = 512;
+const COLOR_GLYPH_CACHE_CAPACITY: usize = 128;
 
 /// A GPU glyph instance for rendering
 #[derive(Debug, Clone, Copy)]
@@ -841,8 +841,8 @@ impl TextRenderer {
             return Ok(info);
         }
 
-        // Insert into atlas
-        let info = self.atlas.insert_glyph(
+        // Insert into atlas, growing if full
+        let info = match self.atlas.insert_glyph(
             font_id,
             glyph_id,
             font_size,
@@ -852,7 +852,26 @@ impl TextRenderer {
             rasterized.bearing_y,
             rasterized.advance,
             &rasterized.bitmap,
-        )?;
+        ) {
+            Ok(info) => info,
+            Err(TextError::AtlasFull) => {
+                if !self.atlas.grow() {
+                    return Err(TextError::AtlasFull);
+                }
+                self.atlas.insert_glyph(
+                    font_id,
+                    glyph_id,
+                    font_size,
+                    rasterized.width,
+                    rasterized.height,
+                    rasterized.bearing_x,
+                    rasterized.bearing_y,
+                    rasterized.advance,
+                    &rasterized.bitmap,
+                )?
+            }
+            Err(e) => return Err(e),
+        };
 
         self.glyph_cache.put(cache_key, info);
         Ok(info)
@@ -897,8 +916,8 @@ impl TextRenderer {
             return Ok(info);
         }
 
-        // Insert into color atlas
-        let info = self.color_atlas.insert_glyph(
+        // Insert into color atlas, growing if full
+        let info = match self.color_atlas.insert_glyph(
             font_id,
             glyph_id,
             font_size,
@@ -908,7 +927,26 @@ impl TextRenderer {
             rasterized.bearing_y,
             rasterized.advance,
             &rasterized.bitmap,
-        )?;
+        ) {
+            Ok(info) => info,
+            Err(TextError::AtlasFull) => {
+                if !self.color_atlas.grow() {
+                    return Err(TextError::AtlasFull);
+                }
+                self.color_atlas.insert_glyph(
+                    font_id,
+                    glyph_id,
+                    font_size,
+                    rasterized.width,
+                    rasterized.height,
+                    rasterized.bearing_x,
+                    rasterized.bearing_y,
+                    rasterized.advance,
+                    &rasterized.bitmap,
+                )?
+            }
+            Err(e) => return Err(e),
+        };
 
         self.color_glyph_cache.put(cache_key, info);
         Ok(info)

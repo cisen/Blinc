@@ -1588,11 +1588,11 @@ impl RenderContext {
             match cmd {
                 SvgDrawCommand::FillPath { path, brush } => {
                     let scaled = scale_and_translate_path(&path, offset_x, offset_y, scale);
-                    // Priority: tint > fill > original brush
-                    let fill_brush = if let Some(t) = tint {
-                        Brush::Solid(t)
-                    } else if let Some(f) = fill {
+                    // Priority: fill > tint > original brush
+                    let fill_brush = if let Some(f) = fill {
                         Brush::Solid(f)
+                    } else if let Some(t) = tint {
+                        Brush::Solid(t)
                     } else {
                         brush.clone()
                     };
@@ -1609,11 +1609,11 @@ impl RenderContext {
                     let scaled_stroke = Stroke::new(sw)
                         .with_cap(orig_stroke.cap)
                         .with_join(orig_stroke.join);
-                    // Priority: tint > stroke > original brush
-                    let stroke_brush = if let Some(t) = tint {
-                        Brush::Solid(t)
-                    } else if let Some(s) = stroke {
+                    // Priority: stroke > tint > original brush
+                    let stroke_brush = if let Some(s) = stroke {
                         Brush::Solid(s)
+                    } else if let Some(t) = tint {
+                        Brush::Solid(t)
                     } else {
                         brush.clone()
                     };
@@ -1741,7 +1741,8 @@ impl RenderContext {
             // Check cache first — skip string manipulation entirely on cache hit
             if self.rasterized_svg_cache.get(&cache_key).is_none() {
                 // Cache miss: build SVG source with inline attribute overrides
-                let has_overrides = svg.fill.is_some()
+                let has_overrides = svg.tint.is_some()
+                    || svg.fill.is_some()
                     || svg.stroke.is_some()
                     || svg.stroke_width.is_some()
                     || svg.stroke_dasharray.is_some()
@@ -1749,26 +1750,26 @@ impl RenderContext {
                     || svg.svg_path_data.is_some()
                     || !svg.tag_overrides.is_empty();
 
-                let effective_source = if has_overrides {
-                    fn color_val(c: blinc_core::Color) -> String {
-                        if c.a < 1.0 {
-                            format!(
-                                "rgba({},{},{},{})",
-                                (c.r * 255.0) as u8,
-                                (c.g * 255.0) as u8,
-                                (c.b * 255.0) as u8,
-                                c.a
-                            )
-                        } else {
-                            format!(
-                                "#{:02x}{:02x}{:02x}",
-                                (c.r * 255.0) as u8,
-                                (c.g * 255.0) as u8,
-                                (c.b * 255.0) as u8
-                            )
-                        }
+                fn color_val(c: blinc_core::Color) -> String {
+                    if c.a < 1.0 {
+                        format!(
+                            "rgba({},{},{},{})",
+                            (c.r * 255.0) as u8,
+                            (c.g * 255.0) as u8,
+                            (c.b * 255.0) as u8,
+                            c.a
+                        )
+                    } else {
+                        format!(
+                            "#{:02x}{:02x}{:02x}",
+                            (c.r * 255.0) as u8,
+                            (c.g * 255.0) as u8,
+                            (c.b * 255.0) as u8
+                        )
                     }
+                }
 
+                let effective_source = if has_overrides {
                     // Build attribute string to inject into the root <svg> tag
                     let mut svg_attrs = String::new();
                     if let Some(fill) = svg.fill {
@@ -1997,17 +1998,24 @@ impl RenderContext {
                     std::borrow::Cow::Borrowed(&svg.source)
                 };
 
-                // Rasterize the SVG
-                let rasterized = if let Some(tint) = svg.tint {
-                    RasterizedSvg::from_str_with_tint(
-                        &effective_source,
-                        raster_width,
-                        raster_height,
-                        tint,
-                    )
+                // Resolve currentColor references in SVG source using tint value.
+                // This replaces e.g. stroke="currentColor" with the actual color,
+                // letting the SVG renderer handle fill/stroke natively instead of
+                // doing pixel-level tint replacement post-rasterization.
+                let final_source = if let Some(tint) = svg.tint {
+                    if effective_source.contains("currentColor") {
+                        std::borrow::Cow::Owned(
+                            effective_source.replace("currentColor", &color_val(tint)),
+                        )
+                    } else {
+                        effective_source
+                    }
                 } else {
-                    RasterizedSvg::from_str(&effective_source, raster_width, raster_height)
+                    effective_source
                 };
+
+                let rasterized =
+                    RasterizedSvg::from_str(&final_source, raster_width, raster_height);
 
                 let rasterized = match rasterized {
                     Ok(r) => r,
@@ -2786,13 +2794,15 @@ impl RenderContext {
                     let scaled_clip = effective_clip
                         .map(|[cx, cy, cw, ch]| [cx * scale, cy * scale, cw * scale, ch * scale]);
 
+                    // Tint resolves `currentColor` references in SVG source.
+                    // CSS fill/stroke are explicit overrides injected as SVG attributes.
+                    // Both can coexist: tint handles currentColor, CSS handles specifics.
                     svgs.push(SvgElement {
                         source: svg_data.source.clone(),
                         x: scaled_x,
                         y: scaled_y,
                         width: scaled_width,
                         height: scaled_height,
-                        // Builder .color()/.tint() takes priority over inherited CSS color
                         tint: svg_data
                             .tint
                             .or_else(|| {
@@ -2801,7 +2811,6 @@ impl RenderContext {
                                     .text_color
                                     .map(|c| blinc_core::Color::rgba(c[0], c[1], c[2], c[3]))
                             }),
-                        // CSS fill/stroke override builder fill/stroke
                         fill: render_node
                             .props
                             .fill

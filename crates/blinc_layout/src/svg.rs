@@ -43,6 +43,8 @@ pub struct Svg {
     transform: Option<Transform>,
     /// Element ID for CSS selector targeting
     element_id: Option<String>,
+    /// CSS class names for selector matching
+    classes: Vec<String>,
     /// Internal SVGs (widget checkmarks, icons) don't match type selectors
     is_internal: bool,
 }
@@ -69,6 +71,7 @@ impl Svg {
             shadow: None,
             transform: None,
             element_id: None,
+            classes: Vec::new(),
             is_internal: false,
         }
     }
@@ -157,6 +160,12 @@ impl Svg {
     /// Set the element ID for CSS selector targeting
     pub fn id(mut self, id: &str) -> Self {
         self.element_id = Some(id.to_string());
+        self
+    }
+
+    /// Add a CSS class name for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.classes.push(name.into());
         self
     }
 
@@ -320,6 +329,10 @@ impl ElementBuilder for Svg {
 
     fn element_id(&self) -> Option<&str> {
         self.element_id.as_deref()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        &self.classes
     }
 
     fn svg_render_info(&self) -> Option<SvgRenderInfo> {

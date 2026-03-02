@@ -1157,7 +1157,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Adjust corner radii for spread (expand corners proportionally)
         let shadow_radii = prim.corner_radius + vec4<f32>(spread);
 
-        let shadow_alpha = shadow_rounded_rect(sp, shadow_origin, shadow_size, shadow_radii, blur);
+        // Use shaped rect SDF (respects squircle corner-shape) instead of plain rounded rect
+        let shadow_sdf_dist = sd_shaped_rect(sp, shadow_origin, shadow_size, shadow_radii, prim.corner_shape);
+        var shadow_alpha: f32;
+        if blur < 0.001 {
+            shadow_alpha = select(0.0, 1.0, shadow_sdf_dist < 0.0);
+        } else {
+            let sigma_d = 0.5 * sqrt(2.0) * blur;
+            shadow_alpha = 0.5 * (1.0 + erf(-shadow_sdf_dist / sigma_d));
+        }
         let shadow_color = prim.shadow_color * shadow_alpha;
 
         // Premultiply and blend

@@ -9775,6 +9775,16 @@ impl RenderTree {
                 ctx.fill_rect(rect, radius, glass_brush);
             } else {
                 // Shadow already drawn before clip was pushed
+
+                // Determine if we can merge uniform border into the fill primitive.
+                // Merging avoids two separate GPU primitives with overlapping AA zones
+                // which creates a visible fringe (especially on squircle corners in light mode).
+                let border_in_foreground = is_glass || clips_content;
+                let has_uniform_border = !render_node.props.border_sides.has_any()
+                    && render_node.props.border_width > 0.0
+                    && render_node.props.border_color.is_some();
+                let merge_border = has_uniform_border && !border_in_foreground;
+
                 if let Some(ref bg) = render_node.props.background {
                     // When using opacity layer, draw at full opacity (layer handles it)
                     // Otherwise, apply motion opacity to brush for fallback
@@ -9783,11 +9793,41 @@ impl RenderTree {
                     } else {
                         bg.clone()
                     };
-                    ctx.fill_rect(rect, radius, brush);
+                    if merge_border {
+                        // Single primitive with fill + border — no AA overlap
+                        let bw = render_node.props.border_width;
+                        let mut bc = *render_node.props.border_color.as_ref().unwrap();
+                        if !has_opacity_layer && motion_opacity < 1.0 {
+                            bc.a *= motion_opacity;
+                        }
+                        ctx.fill_rect_with_per_side_border(
+                            rect,
+                            radius,
+                            brush,
+                            [bw, bw, bw, bw],
+                            bc,
+                        );
+                    } else {
+                        ctx.fill_rect(rect, radius, brush);
+                    }
                 } else if is_3d_group {
                     // 3D group elements need a primitive even without a background —
                     // the shader renders the compound SDF from child shape descriptors.
                     ctx.fill_rect(rect, radius, Brush::Solid(Color::TRANSPARENT));
+                } else if merge_border {
+                    // No background but has uniform border — merge with transparent fill
+                    let bw = render_node.props.border_width;
+                    let mut bc = *render_node.props.border_color.as_ref().unwrap();
+                    if !has_opacity_layer && motion_opacity < 1.0 {
+                        bc.a *= motion_opacity;
+                    }
+                    ctx.fill_rect_with_per_side_border(
+                        rect,
+                        radius,
+                        Brush::Solid(Color::TRANSPARENT),
+                        [bw, bw, bw, bw],
+                        bc,
+                    );
                 }
             }
 
@@ -9893,8 +9933,9 @@ impl RenderTree {
                 if has_radius {
                     ctx.pop_clip();
                 }
-            } else if render_node.props.border_width > 0.0 {
-                // Uniform border — use stroke_rect for proper SDF-based rounded corners
+            } else if render_node.props.border_width > 0.0 && border_in_foreground {
+                // Uniform border in foreground layer — separate stroke_rect needed
+                // (border was not merged with fill because it must render on top of children)
                 if let Some(ref border_color) = render_node.props.border_color {
                     let stroke = Stroke::new(render_node.props.border_width);
                     // When using opacity layer, draw at full opacity (layer handles it)

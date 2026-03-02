@@ -5176,9 +5176,65 @@ fn apply_property(style: &mut ElementStyle, name: &str, value: &str) {
                 style.padding = Some(rect);
             }
         }
+        "padding-top" => {
+            if let Some(px) = parse_css_px(value) {
+                let mut p = style.padding.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                p.top = px;
+                style.padding = Some(p);
+            }
+        }
+        "padding-right" => {
+            if let Some(px) = parse_css_px(value) {
+                let mut p = style.padding.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                p.right = px;
+                style.padding = Some(p);
+            }
+        }
+        "padding-bottom" => {
+            if let Some(px) = parse_css_px(value) {
+                let mut p = style.padding.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                p.bottom = px;
+                style.padding = Some(p);
+            }
+        }
+        "padding-left" => {
+            if let Some(px) = parse_css_px(value) {
+                let mut p = style.padding.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                p.left = px;
+                style.padding = Some(p);
+            }
+        }
         "margin" => {
             if let Some(rect) = parse_css_spacing(value) {
                 style.margin = Some(rect);
+            }
+        }
+        "margin-top" => {
+            if let Some(px) = parse_css_px(value) {
+                let mut m = style.margin.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                m.top = px;
+                style.margin = Some(m);
+            }
+        }
+        "margin-right" => {
+            if let Some(px) = parse_css_px(value) {
+                let mut m = style.margin.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                m.right = px;
+                style.margin = Some(m);
+            }
+        }
+        "margin-bottom" => {
+            if let Some(px) = parse_css_px(value) {
+                let mut m = style.margin.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                m.bottom = px;
+                style.margin = Some(m);
+            }
+        }
+        "margin-left" => {
+            if let Some(px) = parse_css_px(value) {
+                let mut m = style.margin.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                m.left = px;
+                style.margin = Some(m);
             }
         }
         "gap" => {
@@ -6304,9 +6360,81 @@ fn apply_property_with_errors(
                 errors.push(ParseError::invalid_value(name, value, line, column));
             }
         }
+        "padding-top" => {
+            if let Some(px) = parse_css_px(value) {
+                let mut p = style.padding.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                p.top = px;
+                style.padding = Some(p);
+            } else {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        }
+        "padding-right" => {
+            if let Some(px) = parse_css_px(value) {
+                let mut p = style.padding.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                p.right = px;
+                style.padding = Some(p);
+            } else {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        }
+        "padding-bottom" => {
+            if let Some(px) = parse_css_px(value) {
+                let mut p = style.padding.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                p.bottom = px;
+                style.padding = Some(p);
+            } else {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        }
+        "padding-left" => {
+            if let Some(px) = parse_css_px(value) {
+                let mut p = style.padding.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                p.left = px;
+                style.padding = Some(p);
+            } else {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        }
         "margin" => {
             if let Some(rect) = parse_css_spacing(value) {
                 style.margin = Some(rect);
+            } else {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        }
+        "margin-top" => {
+            if let Some(px) = parse_css_px(value) {
+                let mut m = style.margin.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                m.top = px;
+                style.margin = Some(m);
+            } else {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        }
+        "margin-right" => {
+            if let Some(px) = parse_css_px(value) {
+                let mut m = style.margin.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                m.right = px;
+                style.margin = Some(m);
+            } else {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        }
+        "margin-bottom" => {
+            if let Some(px) = parse_css_px(value) {
+                let mut m = style.margin.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                m.bottom = px;
+                style.margin = Some(m);
+            } else {
+                errors.push(ParseError::invalid_value(name, value, line, column));
+            }
+        }
+        "margin-left" => {
+            if let Some(px) = parse_css_px(value) {
+                let mut m = style.margin.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                m.left = px;
+                style.margin = Some(m);
             } else {
                 errors.push(ParseError::invalid_value(name, value, line, column));
             }

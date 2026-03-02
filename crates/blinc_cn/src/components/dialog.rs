@@ -87,6 +87,10 @@ pub struct DialogBuilder {
     enter_animation: Option<MultiKeyframeAnimation>,
     /// Custom exit animation (defaults to dialog_out)
     exit_animation: Option<MultiKeyframeAnimation>,
+    /// User-added CSS classes
+    classes: Vec<String>,
+    /// User-set element ID
+    user_id: Option<String>,
     /// Unique key for motion animation
     key: InstanceKey,
 }
@@ -109,6 +113,8 @@ impl DialogBuilder {
             show_cancel: true,
             enter_animation: None,
             exit_animation: None,
+            classes: Vec::new(),
+            user_id: None,
             key: InstanceKey::new("dialog"),
         }
     }
@@ -191,6 +197,18 @@ impl DialogBuilder {
         self
     }
 
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.classes.push(name.into());
+        self
+    }
+
+    /// Set the element ID for CSS selector matching
+    pub fn id(mut self, id: &str) -> Self {
+        self.user_id = Some(id.to_string());
+        self
+    }
+
     /// Set a custom enter animation
     ///
     /// Overrides the default `AnimationPreset::grow_in(200)` animation.
@@ -250,6 +268,8 @@ impl DialogBuilder {
         let on_cancel = self.on_cancel;
         let confirm_destructive = self.confirm_destructive;
         let show_cancel = self.show_cancel;
+        let classes = self.classes;
+        let user_id = self.user_id;
         // Use grow_in/grow_out by default - gentler scale (99% → 100%) to reduce text distortion
         let enter_animation = self
             .enter_animation
@@ -269,7 +289,7 @@ impl DialogBuilder {
             .dismiss_on_escape(true)
             .motion_key(&motion_key_with_child)
             .content(move || {
-                build_dialog_content(
+                let mut content_div = build_dialog_content(
                     &title,
                     &description,
                     &content,
@@ -290,7 +310,14 @@ impl DialogBuilder {
                     &enter_animation,
                     &exit_animation,
                     &motion_key_str,
-                )
+                );
+                for c in &classes {
+                    content_div = content_div.class(c);
+                }
+                if let Some(ref id) = user_id {
+                    content_div = content_div.id(id);
+                }
+                content_div
             })
             .show()
     }

@@ -147,6 +147,14 @@ impl ElementBuilder for TreeView {
     ) -> Option<blinc_layout::visual_animation::VisualAnimationConfig> {
         self.inner.visual_animation_config()
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
+    }
+
+    fn element_id(&self) -> Option<&str> {
+        self.inner.element_id()
+    }
 }
 
 /// Callback for selection events
@@ -160,6 +168,10 @@ pub struct TreeViewBuilder {
     on_select: Option<SelectCallback>,
     indent_size: f32,
     show_guides: bool,
+    /// User-added CSS classes
+    classes: Vec<String>,
+    /// User-set element ID
+    user_id: Option<String>,
     built: OnceCell<TreeView>,
 }
 
@@ -173,6 +185,8 @@ impl TreeViewBuilder {
             on_select: None,
             indent_size: 4.0,
             show_guides: false,
+            classes: Vec::new(),
+            user_id: None,
             built: OnceCell::new(),
         }
     }
@@ -221,6 +235,18 @@ impl TreeViewBuilder {
     /// Show tree guides/lines
     pub fn with_guides(mut self) -> Self {
         self.show_guides = true;
+        self
+    }
+
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.classes.push(name.into());
+        self
+    }
+
+    /// Set the element ID for CSS selector matching
+    pub fn id(mut self, id: &str) -> Self {
+        self.user_id = Some(id.to_string());
         self
     }
 
@@ -567,6 +593,15 @@ impl TreeViewBuilder {
                     container.merge(tree_container);
                 });
 
+        // Apply user classes and id
+        let mut inner = inner;
+        for c in &self.classes {
+            inner = inner.class(c.as_str());
+        }
+        if let Some(ref id) = self.user_id {
+            inner = inner.id(id);
+        }
+
         TreeView { inner }
     }
 }
@@ -602,6 +637,14 @@ impl ElementBuilder for TreeViewBuilder {
         &self,
     ) -> Option<blinc_layout::visual_animation::VisualAnimationConfig> {
         self.get_or_build().visual_animation_config()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().element_classes()
+    }
+
+    fn element_id(&self) -> Option<&str> {
+        self.get_or_build().element_id()
     }
 }
 

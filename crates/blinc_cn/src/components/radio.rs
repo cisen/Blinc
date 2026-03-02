@@ -155,7 +155,7 @@ impl RadioGroup {
         }
 
         // If there's a label, wrap everything
-        let inner = if let Some(ref label_text) = config.label {
+        let mut inner = if let Some(ref label_text) = config.label {
             let spacing = theme.spacing_value(SpacingToken::Space2);
             let mut lbl = label(label_text).size(LabelSize::Medium);
             if config.disabled {
@@ -171,6 +171,11 @@ impl RadioGroup {
         } else {
             options_container
         };
+
+        // Apply user classes
+        for c in &config.classes {
+            inner = inner.class(c);
+        }
 
         Self { inner }
     }
@@ -438,6 +443,8 @@ struct RadioGroupConfig {
     hover_border_color: Option<Color>,
     on_change: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     css_group_id: Option<String>,
+    /// User-added CSS classes
+    classes: Vec<String>,
 }
 
 impl RadioGroupConfig {
@@ -455,6 +462,7 @@ impl RadioGroupConfig {
             hover_border_color: None,
             on_change: None,
             css_group_id: None,
+            classes: Vec::new(),
         }
     }
 }
@@ -479,6 +487,12 @@ impl RadioGroupBuilder {
     fn get_or_build(&self) -> &RadioGroup {
         self.built
             .get_or_init(|| RadioGroup::with_config(self.config.clone()))
+    }
+
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.config.classes.push(name.into());
+        self
     }
 
     /// Set a CSS element ID for the radio group

@@ -253,6 +253,10 @@ pub struct MenubarBuilder {
     trigger_style: MenuTriggerStyle,
     /// Unique instance key
     key: InstanceKey,
+    /// User-added CSS classes
+    classes: Vec<String>,
+    /// User-set element ID
+    user_id: Option<String>,
     /// Built component cache
     built: OnceCell<Menubar>,
 }
@@ -274,6 +278,8 @@ impl MenubarBuilder {
             trigger_mode: MenuTriggerMode::default(),
             trigger_style: MenuTriggerStyle::default(),
             key: InstanceKey::new("menubar"),
+            classes: Vec::new(),
+            user_id: None,
             built: OnceCell::new(),
         }
     }
@@ -344,6 +350,18 @@ impl MenubarBuilder {
     {
         let menu = builder(MenubarMenu::new_custom(trigger));
         self.menus.push(menu);
+        self
+    }
+
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.classes.push(name.into());
+        self
+    }
+
+    /// Set the element ID for CSS selector matching
+    pub fn id(mut self, id: &str) -> Self {
+        self.user_id = Some(id.to_string());
         self
     }
 
@@ -577,6 +595,14 @@ impl MenubarBuilder {
             }
 
             menubar = menubar.child(trigger);
+        }
+
+        // Apply user classes and id
+        for c in &self.classes {
+            menubar = menubar.class(c);
+        }
+        if let Some(ref id) = self.user_id {
+            menubar = menubar.id(id);
         }
 
         Menubar { inner: menubar }
@@ -1542,6 +1568,14 @@ impl ElementBuilder for MenubarBuilder {
 
     fn event_handlers(&self) -> Option<&blinc_layout::event_handler::EventHandlers> {
         ElementBuilder::event_handlers(&self.get_or_build().inner)
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().inner.element_classes()
+    }
+
+    fn element_id(&self) -> Option<&str> {
+        self.get_or_build().inner.element_id()
     }
 }
 

@@ -95,6 +95,10 @@ pub struct PopoverBuilder {
     offset: f32,
     /// Unique instance key
     key: InstanceKey,
+    /// User-added CSS classes
+    classes: Vec<String>,
+    /// User-set element ID
+    user_id: Option<String>,
     /// Built component cache
     built: OnceCell<Popover>,
 }
@@ -125,6 +129,8 @@ impl PopoverBuilder {
             align: PopoverAlign::Start,
             offset: 4.0,
             key: InstanceKey::new("popover"),
+            classes: Vec::new(),
+            user_id: None,
             built: OnceCell::new(),
         }
     }
@@ -141,6 +147,8 @@ impl PopoverBuilder {
             align: PopoverAlign::Start,
             offset: 4.0,
             key,
+            classes: Vec::new(),
+            user_id: None,
             built: OnceCell::new(),
         }
     }
@@ -169,6 +177,18 @@ impl PopoverBuilder {
     /// Set the offset from the trigger (in pixels)
     pub fn offset(mut self, offset: f32) -> Self {
         self.offset = offset;
+        self
+    }
+
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.classes.push(name.into());
+        self
+    }
+
+    /// Set the element ID for CSS selector matching
+    pub fn id(mut self, id: &str) -> Self {
+        self.user_id = Some(id.to_string());
         self
     }
 
@@ -259,7 +279,14 @@ impl PopoverBuilder {
                 }
             });
 
-        Popover { inner: trigger }
+        let mut inner = trigger;
+        for c in &self.classes {
+            inner = inner.class(c);
+        }
+        if let Some(ref id) = self.user_id {
+            inner = inner.id(id);
+        }
+        Popover { inner }
     }
 }
 
@@ -450,6 +477,14 @@ impl ElementBuilder for PopoverBuilder {
 
     fn event_handlers(&self) -> Option<&blinc_layout::event_handler::EventHandlers> {
         self.get_or_build().inner.event_handlers()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().inner.element_classes()
+    }
+
+    fn element_id(&self) -> Option<&str> {
+        self.get_or_build().inner.element_id()
     }
 }
 

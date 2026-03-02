@@ -329,9 +329,15 @@ impl Pagination {
                 container
             });
 
-        Self {
-            inner: div().child(stateful_container),
+        let mut inner = div().child(stateful_container);
+        for c in &builder.classes {
+            inner = inner.class(c);
         }
+        if let Some(ref id) = builder.user_id {
+            inner = inner.id(id);
+        }
+
+        Self { inner }
     }
 }
 
@@ -541,6 +547,10 @@ impl ElementBuilder for Pagination {
     fn element_classes(&self) -> &[String] {
         self.inner.element_classes()
     }
+
+    fn element_id(&self) -> Option<&str> {
+        self.inner.element_id()
+    }
 }
 
 /// Builder for pagination component
@@ -552,6 +562,10 @@ pub struct PaginationBuilder {
     show_first_last: bool,
     size: PaginationSize,
     on_page_change: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+    /// User-added CSS classes
+    classes: Vec<String>,
+    /// User-set element ID
+    user_id: Option<String>,
     built: std::cell::OnceCell<Pagination>,
 }
 
@@ -567,6 +581,8 @@ impl PaginationBuilder {
             show_first_last: false,
             size: PaginationSize::default(),
             on_page_change: None,
+            classes: Vec::new(),
+            user_id: None,
             built: std::cell::OnceCell::new(),
         }
     }
@@ -603,6 +619,18 @@ impl PaginationBuilder {
     /// Set large size
     pub fn large(mut self) -> Self {
         self.size = PaginationSize::Large;
+        self
+    }
+
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.classes.push(name.into());
+        self
+    }
+
+    /// Set the element ID for CSS selector matching
+    pub fn id(mut self, id: &str) -> Self {
+        self.user_id = Some(id.to_string());
         self
     }
 
@@ -643,6 +671,10 @@ impl ElementBuilder for PaginationBuilder {
 
     fn element_classes(&self) -> &[String] {
         self.get_or_build().element_classes()
+    }
+
+    fn element_id(&self) -> Option<&str> {
+        self.get_or_build().element_id()
     }
 }
 

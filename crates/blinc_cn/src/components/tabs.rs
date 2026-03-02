@@ -398,6 +398,10 @@ impl std::fmt::Debug for Tabs {
 pub struct TabsBuilder {
     key: InstanceKey,
     config: TabsConfig,
+    /// User-added CSS classes
+    classes: Vec<String>,
+    /// User-set element ID
+    user_id: Option<String>,
     built: OnceCell<Tabs>,
 }
 
@@ -423,6 +427,8 @@ impl TabsBuilder {
                 on_change: None,
                 transition: TabsTransition::default(),
             },
+            classes: Vec::new(),
+            user_id: None,
             built: OnceCell::new(),
         }
     }
@@ -439,6 +445,8 @@ impl TabsBuilder {
                 on_change: None,
                 transition: TabsTransition::default(),
             },
+            classes: Vec::new(),
+            user_id: None,
             built: OnceCell::new(),
         }
     }
@@ -533,6 +541,18 @@ impl TabsBuilder {
     /// ```
     pub fn transition(mut self, transition: TabsTransition) -> Self {
         self.config.transition = transition;
+        self
+    }
+
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.classes.push(name.into());
+        self
+    }
+
+    /// Set the element ID for CSS selector matching
+    pub fn id(mut self, id: &str) -> Self {
+        self.user_id = Some(id.to_string());
         self
     }
 
@@ -732,14 +752,22 @@ impl TabsBuilder {
             });
 
         // Combine both containers
-        Tabs {
-            inner: div()
-                .w_full()
-                .flex_grow()
-                .flex_col()
-                .child(tab_button_area)
-                .child(tab_content_area),
+        let mut container = div()
+            .w_full()
+            .flex_grow()
+            .flex_col()
+            .child(tab_button_area)
+            .child(tab_content_area);
+
+        // Apply user classes and id
+        for c in &self.classes {
+            container = container.class(c);
         }
+        if let Some(ref id) = self.user_id {
+            container = container.id(id);
+        }
+
+        Tabs { inner: container }
     }
 }
 
@@ -923,6 +951,14 @@ impl ElementBuilder for TabsBuilder {
 
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.get_or_build().inner.layout_style()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().inner.element_classes()
+    }
+
+    fn element_id(&self) -> Option<&str> {
+        self.get_or_build().inner.element_id()
     }
 }
 

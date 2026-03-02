@@ -112,6 +112,20 @@ pub struct LineChart {
     inner: Div,
 }
 
+impl LineChart {
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.inner = self.inner.class(name);
+        self
+    }
+
+    /// Set the element ID for CSS selector matching
+    pub fn id(mut self, id: &str) -> Self {
+        self.inner = self.inner.id(id);
+        self
+    }
+}
+
 impl ElementBuilder for LineChart {
     fn build(&self, tree: &mut LayoutTree) -> LayoutNodeId {
         self.inner.build(tree)
@@ -379,6 +393,20 @@ pub struct BarChart {
     inner: Div,
 }
 
+impl BarChart {
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.inner = self.inner.class(name);
+        self
+    }
+
+    /// Set the element ID for CSS selector matching
+    pub fn id(mut self, id: &str) -> Self {
+        self.inner = self.inner.id(id);
+        self
+    }
+}
+
 impl ElementBuilder for BarChart {
     fn build(&self, tree: &mut LayoutTree) -> LayoutNodeId {
         self.inner.build(tree)
@@ -610,6 +638,20 @@ pub struct SparkLine {
     inner: Div,
 }
 
+impl SparkLine {
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.inner = self.inner.class(name);
+        self
+    }
+
+    /// Set the element ID for CSS selector matching
+    pub fn id(mut self, id: &str) -> Self {
+        self.inner = self.inner.id(id);
+        self
+    }
+}
+
 impl ElementBuilder for SparkLine {
     fn build(&self, tree: &mut LayoutTree) -> LayoutNodeId {
         self.inner.build(tree)
@@ -798,6 +840,20 @@ impl ThresholdBand {
 /// Line chart with threshold bands for regression detection
 pub struct ThresholdLineChart {
     inner: Div,
+}
+
+impl ThresholdLineChart {
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.inner = self.inner.class(name);
+        self
+    }
+
+    /// Set the element ID for CSS selector matching
+    pub fn id(mut self, id: &str) -> Self {
+        self.inner = self.inner.id(id);
+        self
+    }
 }
 
 impl ElementBuilder for ThresholdLineChart {
@@ -1152,6 +1208,20 @@ pub struct Histogram {
     inner: Div,
 }
 
+impl Histogram {
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.inner = self.inner.class(name);
+        self
+    }
+
+    /// Set the element ID for CSS selector matching
+    pub fn id(mut self, id: &str) -> Self {
+        self.inner = self.inner.id(id);
+        self
+    }
+}
+
 impl ElementBuilder for Histogram {
     fn build(&self, tree: &mut LayoutTree) -> LayoutNodeId {
         self.inner.build(tree)
@@ -1397,6 +1467,20 @@ impl HistogramBuilder {
 /// Bar chart for before/after comparison
 pub struct ComparisonBarChart {
     inner: Div,
+}
+
+impl ComparisonBarChart {
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.inner = self.inner.class(name);
+        self
+    }
+
+    /// Set the element ID for CSS selector matching
+    pub fn id(mut self, id: &str) -> Self {
+        self.inner = self.inner.id(id);
+        self
+    }
 }
 
 impl ElementBuilder for ComparisonBarChart {

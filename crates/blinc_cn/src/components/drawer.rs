@@ -90,6 +90,10 @@ pub struct DrawerBuilder {
     on_close: Option<Arc<dyn Fn() + Send + Sync>>,
     /// Animation duration in ms
     animation_duration: u32,
+    /// User-added CSS classes
+    classes: Vec<String>,
+    /// User-set element ID
+    user_id: Option<String>,
     /// Unique key for motion animation
     key: InstanceKey,
 }
@@ -109,6 +113,8 @@ impl DrawerBuilder {
             on_close: None,
             animation_duration: 250,
             key: InstanceKey::new("drawer"),
+            classes: Vec::new(),
+            user_id: None,
         }
     }
 
@@ -185,6 +191,18 @@ impl DrawerBuilder {
     /// Set animation duration in milliseconds
     pub fn animation_duration(mut self, duration_ms: u32) -> Self {
         self.animation_duration = duration_ms;
+        self
+    }
+
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.classes.push(name.into());
+        self
+    }
+
+    /// Set the element ID for CSS selector matching
+    pub fn id(mut self, id: impl Into<String>) -> Self {
+        self.user_id = Some(id.into());
         self
     }
 

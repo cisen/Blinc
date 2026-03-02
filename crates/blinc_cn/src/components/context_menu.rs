@@ -210,6 +210,10 @@ pub struct ContextMenuBuilder {
     items: Vec<ContextMenuItem>,
     /// Minimum width
     min_width: f32,
+    /// User-added CSS classes
+    classes: Vec<String>,
+    /// User-set element ID
+    user_id: Option<String>,
 }
 
 impl ContextMenuBuilder {
@@ -220,6 +224,8 @@ impl ContextMenuBuilder {
             y: 0.0,
             items: Vec::new(),
             min_width: 180.0,
+            classes: Vec::new(),
+            user_id: None,
         }
     }
 
@@ -305,6 +311,18 @@ impl ContextMenuBuilder {
         self
     }
 
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.classes.push(name.into());
+        self
+    }
+
+    /// Set the element ID for CSS selector matching
+    pub fn id(mut self, id: &str) -> Self {
+        self.user_id = Some(id.to_string());
+        self
+    }
+
     /// Set minimum width
     pub fn min_width(mut self, width: f32) -> Self {
         self.min_width = width;
@@ -330,6 +348,8 @@ impl ContextMenuBuilder {
         let width = self.min_width;
         let x = self.x;
         let y = self.y;
+        let classes = self.classes;
+        let user_id = self.user_id;
 
         // Store overlay handle for closing from menu items
         let handle_key = format!("_context_menu_handle_{}_{}", x as i32, y as i32);
@@ -354,7 +374,7 @@ impl ContextMenuBuilder {
             .dismiss_on_escape(true)
             .motion_key(&motion_key_with_child)
             .content(move || {
-                build_menu_content(
+                let mut content = build_menu_content(
                     &items,
                     width,
                     &handle_state_for_content,
@@ -368,7 +388,14 @@ impl ContextMenuBuilder {
                     radius,
                     font_size,
                     padding,
-                )
+                );
+                for c in &classes {
+                    content = content.class(c);
+                }
+                if let Some(ref id) = user_id {
+                    content = content.id(id);
+                }
+                content
             })
             .show();
 

@@ -392,9 +392,18 @@ impl Sidebar {
                 }
             });
 
+        // Apply user classes and id
+        let mut inner = stateful_container;
+        for c in &builder.classes {
+            inner = inner.class(c.as_str());
+        }
+        if let Some(ref id) = builder.user_id {
+            inner = inner.id(id);
+        }
+
         Self {
             // Use flex_shrink_0 to prevent sidebar from being compressed in flex containers
-            inner: stateful_container,
+            inner,
         }
     }
 }
@@ -443,6 +452,14 @@ impl ElementBuilder for Sidebar {
     ) -> Option<blinc_layout::visual_animation::VisualAnimationConfig> {
         self.inner.visual_animation_config()
     }
+
+    fn element_classes(&self) -> &[String] {
+        self.inner.element_classes()
+    }
+
+    fn element_id(&self) -> Option<&str> {
+        self.inner.element_id()
+    }
 }
 
 /// Content builder function type
@@ -458,6 +475,10 @@ pub struct SidebarBuilder {
     show_toggle: bool,
     /// Optional main content area that sits next to the sidebar
     content_builder: Option<ContentBuilderFn>,
+    /// User-added CSS classes
+    classes: Vec<String>,
+    /// User-set element ID
+    user_id: Option<String>,
     built: OnceCell<Sidebar>,
 }
 
@@ -476,6 +497,8 @@ impl SidebarBuilder {
             }],
             show_toggle: true,
             content_builder: None,
+            classes: Vec::new(),
+            user_id: None,
             built: OnceCell::new(),
         }
     }
@@ -550,6 +573,18 @@ impl SidebarBuilder {
         self
     }
 
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.classes.push(name.into());
+        self
+    }
+
+    /// Set the element ID for CSS selector matching
+    pub fn id(mut self, id: &str) -> Self {
+        self.user_id = Some(id.to_string());
+        self
+    }
+
     /// Set the main content area that sits next to the sidebar
     ///
     /// When provided, the sidebar wraps both the sidebar menu and the main content
@@ -606,6 +641,14 @@ impl ElementBuilder for SidebarBuilder {
         &self,
     ) -> Option<blinc_layout::visual_animation::VisualAnimationConfig> {
         self.get_or_build().visual_animation_config()
+    }
+
+    fn element_classes(&self) -> &[String] {
+        self.get_or_build().element_classes()
+    }
+
+    fn element_id(&self) -> Option<&str> {
+        self.get_or_build().element_id()
     }
 }
 

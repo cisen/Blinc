@@ -85,6 +85,10 @@ pub struct Spinner {
     color: Option<Color>,
     track_color: Option<Color>,
     duration_ms: u32,
+    /// User-added CSS classes
+    classes: Vec<String>,
+    /// User-set element ID
+    user_id: Option<String>,
 }
 
 impl Spinner {
@@ -98,6 +102,8 @@ impl Spinner {
             color: None,
             track_color: None,
             duration_ms: 1000, // 1 second per rotation
+            classes: Vec::new(),
+            user_id: None,
         }
     }
 
@@ -124,6 +130,18 @@ impl Spinner {
     /// Lower values = faster spin, higher values = slower spin.
     pub fn duration_ms(mut self, duration: u32) -> Self {
         self.duration_ms = duration;
+        self
+    }
+
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.classes.push(name.into());
+        self
+    }
+
+    /// Set the element ID for CSS selector matching
+    pub fn id(mut self, id: &str) -> Self {
+        self.user_id = Some(id.to_string());
         self
     }
 
@@ -265,6 +283,14 @@ impl ElementBuilder for Spinner {
 
     fn layout_style(&self) -> Option<&Style> {
         None
+    }
+
+    fn element_classes(&self) -> &[String] {
+        &self.classes
+    }
+
+    fn element_id(&self) -> Option<&str> {
+        self.user_id.as_deref()
     }
 }
 

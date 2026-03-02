@@ -301,9 +301,15 @@ impl NavigationMenu {
                 nav
             });
 
-        Self {
-            inner: div().child(stateful_container),
+        let mut inner = div().child(stateful_container);
+        for c in &builder.classes {
+            inner = inner.class(c);
         }
+        if let Some(ref id) = builder.user_id {
+            inner = inner.id(id);
+        }
+
+        Self { inner }
     }
 }
 
@@ -431,6 +437,10 @@ impl ElementBuilder for NavigationMenu {
     fn element_classes(&self) -> &[String] {
         self.inner.element_classes()
     }
+
+    fn element_id(&self) -> Option<&str> {
+        self.inner.element_id()
+    }
 }
 
 /// Builder for navigation menu
@@ -438,6 +448,10 @@ pub struct NavigationMenuBuilder {
     key: InstanceKey,
     items: Vec<NavMenuItem>,
     min_content_width: f32,
+    /// User-added CSS classes
+    classes: Vec<String>,
+    /// User-set element ID
+    user_id: Option<String>,
     built: OnceCell<NavigationMenu>,
 }
 
@@ -449,8 +463,22 @@ impl NavigationMenuBuilder {
             key: InstanceKey::new("nav_menu"),
             items: Vec::new(),
             min_content_width: 50.0, // Scaled by 4x = 200px
+            classes: Vec::new(),
+            user_id: None,
             built: OnceCell::new(),
         }
+    }
+
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.classes.push(name.into());
+        self
+    }
+
+    /// Set the element ID for CSS selector matching
+    pub fn id(mut self, id: &str) -> Self {
+        self.user_id = Some(id.to_string());
+        self
     }
 
     /// Get or build the component
@@ -524,6 +552,10 @@ impl ElementBuilder for NavigationMenuBuilder {
     fn element_classes(&self) -> &[String] {
         self.get_or_build().element_classes()
     }
+
+    fn element_id(&self) -> Option<&str> {
+        self.get_or_build().element_id()
+    }
 }
 
 /// A navigation link component for use inside navigation menu content
@@ -592,9 +624,15 @@ impl NavigationLink {
                 }
             });
 
-        Self {
-            inner: div().child(link),
+        let mut inner = div().child(link);
+        for c in &builder.classes {
+            inner = inner.class(c);
         }
+        if let Some(ref id) = builder.user_id {
+            inner = inner.id(id);
+        }
+
+        Self { inner }
     }
 }
 
@@ -640,6 +678,10 @@ impl ElementBuilder for NavigationLink {
     fn element_classes(&self) -> &[String] {
         self.inner.element_classes()
     }
+
+    fn element_id(&self) -> Option<&str> {
+        self.inner.element_id()
+    }
 }
 
 /// Builder for navigation link
@@ -648,6 +690,10 @@ pub struct NavigationLinkBuilder {
     label: String,
     description: Option<String>,
     on_click: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// User-added CSS classes
+    classes: Vec<String>,
+    /// User-set element ID
+    user_id: Option<String>,
     built: OnceCell<NavigationLink>,
 }
 
@@ -660,8 +706,22 @@ impl NavigationLinkBuilder {
             label: label.into(),
             description: None,
             on_click: None,
+            classes: Vec::new(),
+            user_id: None,
             built: OnceCell::new(),
         }
+    }
+
+    /// Add a CSS class for selector matching
+    pub fn class(mut self, name: impl Into<String>) -> Self {
+        self.classes.push(name.into());
+        self
+    }
+
+    /// Set the element ID for CSS selector matching
+    pub fn id(mut self, id: &str) -> Self {
+        self.user_id = Some(id.to_string());
+        self
     }
 
     /// Get or build the component
@@ -713,6 +773,10 @@ impl ElementBuilder for NavigationLinkBuilder {
 
     fn element_classes(&self) -> &[String] {
         self.get_or_build().element_classes()
+    }
+
+    fn element_id(&self) -> Option<&str> {
+        self.get_or_build().element_id()
     }
 }
 

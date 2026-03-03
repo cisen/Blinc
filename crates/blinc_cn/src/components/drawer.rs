@@ -434,7 +434,7 @@ fn build_drawer_content(
         }
 
         drawer = drawer.child(div().w_full().h(1.0).bg(border)); // Separator
-        // padding from CSS: .cn-drawer-footer { padding: 16px; }
+                                                                 // padding from CSS: .cn-drawer-footer { padding: 16px; }
         drawer = drawer.child(div().class("cn-drawer-footer").w_full().child(footer_fn()));
     }
 

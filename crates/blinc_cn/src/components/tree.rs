@@ -423,22 +423,22 @@ impl TreeViewBuilder {
                         }
 
                         row = row.on_click(move |_| {
-                                // Update selection
-                                selected_for_click.set(Some(node_key.clone()));
+                            // Update selection
+                            selected_for_click.set(Some(node_key.clone()));
 
-                                // Call callback
-                                if let Some(cb) = &on_select_for_click {
-                                    cb(&node_key);
-                                }
+                            // Call callback
+                            if let Some(cb) = &on_select_for_click {
+                                cb(&node_key);
+                            }
 
-                                // Also toggle expand if has children
-                                if let Some((state, anim)) = &expand_state_for_row {
-                                    let new_expanded = !state.get();
-                                    state.set(new_expanded);
-                                    let target = if new_expanded { 1.0 } else { 0.0 };
-                                    anim.lock().unwrap().set_target(target);
-                                }
-                            });
+                            // Also toggle expand if has children
+                            if let Some((state, anim)) = &expand_state_for_row {
+                                let new_expanded = !state.get();
+                                state.set(new_expanded);
+                                let target = if new_expanded { 1.0 } else { 0.0 };
+                                anim.lock().unwrap().set_target(target);
+                            }
+                        });
 
                         // Expand/collapse chevron (if has children)
                         if has_children {

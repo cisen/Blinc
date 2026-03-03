@@ -786,13 +786,24 @@ impl RenderContext {
              glyph_lru={}/{}, color_glyph_lru={}/{}, \
              image={}/{}, svg_doc={}/{}, rasterized_svg={}/{}",
             self.frame_count,
-            aw, ah, atlas_glyphs, atlas_util * 100.0,
-            caw, cah, color_glyphs, color_util * 100.0,
-            glyph_cache, glyph_cap,
-            color_cache, color_cap,
-            img_cache, IMAGE_CACHE_CAPACITY,
-            svg_cache, SVG_CACHE_CAPACITY,
-            rast_svg, RASTERIZED_SVG_CACHE_CAPACITY,
+            aw,
+            ah,
+            atlas_glyphs,
+            atlas_util * 100.0,
+            caw,
+            cah,
+            color_glyphs,
+            color_util * 100.0,
+            glyph_cache,
+            glyph_cap,
+            color_cache,
+            color_cap,
+            img_cache,
+            IMAGE_CACHE_CAPACITY,
+            svg_cache,
+            SVG_CACHE_CAPACITY,
+            rast_svg,
+            RASTERIZED_SVG_CACHE_CAPACITY,
         );
     }
 
@@ -2060,9 +2071,7 @@ impl RenderContext {
                 // For tintable SVGs: rasterize as white — color applied via shader tint.
                 // For non-tintable: replace with actual tint color for CPU rasterization.
                 let final_source = if is_tintable {
-                    std::borrow::Cow::Owned(
-                        effective_source.replace("currentColor", "#ffffff"),
-                    )
+                    std::borrow::Cow::Owned(effective_source.replace("currentColor", "#ffffff"))
                 } else if let Some(tint) = svg.tint {
                     if effective_source.contains("currentColor") {
                         std::borrow::Cow::Owned(
@@ -2872,14 +2881,12 @@ impl RenderContext {
                         y: scaled_y,
                         width: scaled_width,
                         height: scaled_height,
-                        tint: svg_data
-                            .tint
-                            .or_else(|| {
-                                render_node
-                                    .props
-                                    .text_color
-                                    .map(|c| blinc_core::Color::rgba(c[0], c[1], c[2], c[3]))
-                            }),
+                        tint: svg_data.tint.or_else(|| {
+                            render_node
+                                .props
+                                .text_color
+                                .map(|c| blinc_core::Color::rgba(c[0], c[1], c[2], c[3]))
+                        }),
                         fill: render_node
                             .props
                             .fill

@@ -62,10 +62,10 @@ pub use text_input::{
     // Cursor blink timing utilities
     elapsed_ms,
     has_focused_text_input,
+    request_css_reparse,
     // Rebuild/relayout request functions
     request_full_rebuild,
     request_rebuild,
-    request_css_reparse,
     // Continuous redraw callback for animation scheduler integration
     set_continuous_redraw_callback,
     take_needs_continuous_redraw,

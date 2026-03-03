@@ -164,7 +164,11 @@ impl Input {
 
         // Build a container with label, input, and description/error
         let spacing = theme.spacing_value(SpacingToken::Space2);
-        let mut container = div().class("cn-input-group").flex_col().gap_px(spacing).h_fit();
+        let mut container = div()
+            .class("cn-input-group")
+            .flex_col()
+            .gap_px(spacing)
+            .h_fit();
 
         // Apply width to container
         if config.full_width {

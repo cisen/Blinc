@@ -85,9 +85,7 @@ impl ButtonVariant {
                 theme.color(ColorToken::TextPrimary).with_alpha(0.1)
             }
             (ButtonVariant::Link, ButtonState::Pressed) => Color::TRANSPARENT,
-            (ButtonVariant::Primary, ButtonState::Hovered) => {
-                theme.color(ColorToken::PrimaryHover)
-            }
+            (ButtonVariant::Primary, ButtonState::Hovered) => theme.color(ColorToken::PrimaryHover),
             (ButtonVariant::Secondary, ButtonState::Hovered) => {
                 theme.color(ColorToken::SecondaryHover)
             }
@@ -336,7 +334,9 @@ impl Button {
         let custom_icon_size = config.icon_size;
 
         let btn_size = config.btn_size;
-        let default_fg = config.text_color.unwrap_or_else(|| variant.foreground(theme));
+        let default_fg = config
+            .text_color
+            .unwrap_or_else(|| variant.foreground(theme));
 
         // Determine icon-only mode at construction time (needed for sizing)
         let is_icon_only = config.icon.is_some() && config.label.is_empty();
@@ -380,9 +380,7 @@ impl Button {
                 if let Some(ref icon_str) = icon {
                     let icon_size = custom_icon_size.unwrap_or(font_size + 2.0);
                     let svg_str = blinc_icons::to_svg(icon_str, icon_size);
-                    let icon_svg = svg(&svg_str)
-                        .size(icon_size, icon_size)
-                        .color(fg);
+                    let icon_svg = svg(&svg_str).size(icon_size, icon_size).color(fg);
                     container.merge(div().child(icon_svg));
                 }
             } else {
@@ -409,9 +407,7 @@ impl Button {
                 if let Some(ref icon_str) = icon {
                     let icon_size = custom_icon_size.unwrap_or(font_size + 2.0);
                     let svg_str = blinc_icons::to_svg(icon_str, icon_size);
-                    let icon_svg = svg(&svg_str)
-                        .size(icon_size, icon_size)
-                        .color(fg);
+                    let icon_svg = svg(&svg_str).size(icon_size, icon_size).color(fg);
 
                     match icon_position {
                         IconPosition::Start => {

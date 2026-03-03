@@ -125,7 +125,11 @@ impl BuiltAspectRatio {
         };
 
         // Build outer container with fixed dimensions
-        let mut container = div().class("cn-aspect-ratio").w(final_width).h(final_height).overflow_clip();
+        let mut container = div()
+            .class("cn-aspect-ratio")
+            .w(final_width)
+            .h(final_height)
+            .overflow_clip();
 
         // Apply background if set
         if let Some(bg) = config.background {

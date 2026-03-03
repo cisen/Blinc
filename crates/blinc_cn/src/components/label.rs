@@ -67,7 +67,11 @@ impl Label {
 
         let font_size = config.size.font_size(&typography);
 
-        let disabled_class = if config.disabled { "cn-label--disabled" } else { "" };
+        let disabled_class = if config.disabled {
+            "cn-label--disabled"
+        } else {
+            ""
+        };
 
         let inner = if config.required {
             // Build a row with text + asterisk
@@ -87,16 +91,12 @@ impl Label {
                 )
                 .child(text("*").size(font_size).color(required_color).medium())
         } else {
-            div()
-                .class("cn-label")
-                .class(disabled_class)
-                .h_fit()
-                .child(
-                    text(&config.text)
-                        .size(font_size)
-                        .color(text_color)
-                        .medium(),
-                )
+            div().class("cn-label").class(disabled_class).h_fit().child(
+                text(&config.text)
+                    .size(font_size)
+                    .color(text_color)
+                    .medium(),
+            )
         };
 
         Self { inner }

@@ -49,7 +49,9 @@ impl Separator {
         let color = theme.color(ColorToken::Border);
 
         let inner = match orientation {
-            SeparatorOrientation::Horizontal => div().class("cn-separator").h(1.0).w_full().bg(color),
+            SeparatorOrientation::Horizontal => {
+                div().class("cn-separator").h(1.0).w_full().bg(color)
+            }
             SeparatorOrientation::Vertical => div().class("cn-separator").w(1.0).h_full().bg(color),
         };
 

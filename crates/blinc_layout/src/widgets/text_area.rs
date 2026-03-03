@@ -1467,8 +1467,8 @@ impl TextArea {
                     let mut data_guard = data_for_callback.lock().unwrap();
 
                     // Apply CSS stylesheet overrides (class-based and/or ID-based)
-                    let has_css_target = data_guard.css_element_id.is_some()
-                        || !data_guard.css_classes.is_empty();
+                    let has_css_target =
+                        data_guard.css_element_id.is_some() || !data_guard.css_classes.is_empty();
                     let css_outline = if has_css_target {
                         if let Some(stylesheet) = active_stylesheet() {
                             apply_css_overrides_textarea(

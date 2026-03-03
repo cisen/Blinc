@@ -274,7 +274,9 @@ impl ScrollAreaBuilder {
             // Take ownership of config, replacing with default
             let config = self.config.take();
             let built = BuiltScrollArea::from_config(config);
-            ScrollArea { inner: div().class("cn-scroll-area").child(built.inner) }
+            ScrollArea {
+                inner: div().class("cn-scroll-area").child(built.inner),
+            }
         })
     }
 
@@ -378,7 +380,9 @@ impl ScrollAreaBuilder {
     pub fn build_final(self) -> ScrollArea {
         let config = self.config.into_inner();
         let built = BuiltScrollArea::from_config(config);
-        ScrollArea { inner: div().class("cn-scroll-area").child(built.inner) }
+        ScrollArea {
+            inner: div().class("cn-scroll-area").child(built.inner),
+        }
     }
 }
 

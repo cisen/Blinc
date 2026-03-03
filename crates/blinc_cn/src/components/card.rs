@@ -41,11 +41,7 @@ impl Card {
     /// Create a new empty card
     pub fn new() -> Self {
         // All visual props from CSS: .cn-card { background, border, border-radius, padding, gap }
-        let inner = div()
-            .class("cn-card")
-            .shadow_sm()
-            .flex_col()
-            .items_start();
+        let inner = div().class("cn-card").shadow_sm().flex_col().items_start();
 
         Self { inner }
     }
@@ -213,7 +209,12 @@ impl CardHeader {
     pub fn new() -> Self {
         let theme = ThemeState::get();
         let gap = theme.spacing_value(SpacingToken::Space1_5); // 6px
-        let inner = div().class("cn-card-header").flex_col().items_start().w_full().gap_px(gap);
+        let inner = div()
+            .class("cn-card-header")
+            .flex_col()
+            .items_start()
+            .w_full()
+            .gap_px(gap);
 
         Self { inner }
     }
@@ -393,7 +394,12 @@ impl CardFooter {
     pub fn new() -> Self {
         let theme = ThemeState::get();
         let gap = theme.spacing_value(SpacingToken::Space2); // 8px
-        let inner = div().class("cn-card-footer").flex_row().w_full().gap_px(gap).justify_end();
+        let inner = div()
+            .class("cn-card-footer")
+            .flex_row()
+            .w_full()
+            .gap_px(gap)
+            .justify_end();
 
         Self { inner }
     }

@@ -5274,8 +5274,7 @@ impl RenderTree {
                 }
 
                 // Slow path: complex selectors need full matching
-                let all_node_ids: Vec<LayoutNodeId> =
-                    self.render_nodes.keys().copied().collect();
+                let all_node_ids: Vec<LayoutNodeId> = self.render_nodes.keys().copied().collect();
                 for &node_id in &all_node_ids {
                     if self
                         .complex_selector_matches(selector, node_id, &empty_set, &empty_set, None)
@@ -5574,8 +5573,7 @@ impl RenderTree {
                 }
 
                 // Slow path: complex selectors (combinators, structural pseudos)
-                let all_node_ids: Vec<LayoutNodeId> =
-                    self.render_nodes.keys().copied().collect();
+                let all_node_ids: Vec<LayoutNodeId> = self.render_nodes.keys().copied().collect();
                 for &node_id in &all_node_ids {
                     if self
                         .complex_selector_matches(selector, node_id, &empty_set, &empty_set, None)
@@ -5653,10 +5651,8 @@ impl RenderTree {
             for &svg_node in &svg_nodes {
                 let empty_set: std::collections::HashSet<LayoutNodeId> =
                     std::collections::HashSet::new();
-                let mut tag_styles: std::collections::HashMap<
-                    String,
-                    crate::element::SvgTagStyle,
-                > = std::collections::HashMap::new();
+                let mut tag_styles: std::collections::HashMap<String, crate::element::SvgTagStyle> =
+                    std::collections::HashMap::new();
                 for &(tag_name, ancestor_segments, style) in &svg_tag_rules {
                     let has_state = ancestor_segments.iter().any(|(c, _)| c.has_state());
                     if has_state {
@@ -5676,8 +5672,8 @@ impl RenderTree {
                             let mut all_matched = true;
                             for i in (0..last_idx).rev() {
                                 let (compound, combinator) = &ancestor_segments[i];
-                                let combinator = combinator
-                                    .unwrap_or(crate::css_parser::Combinator::Descendant);
+                                let combinator =
+                                    combinator.unwrap_or(crate::css_parser::Combinator::Descendant);
                                 match combinator {
                                     crate::css_parser::Combinator::Child => {
                                         match self.element_registry.get_parent(current_node) {
@@ -8220,8 +8216,7 @@ impl RenderTree {
                 }
 
                 // Slow path: complex selectors (combinators, structural pseudos) — O(all_nodes)
-                let all_node_ids: Vec<LayoutNodeId> =
-                    self.render_nodes.keys().copied().collect();
+                let all_node_ids: Vec<LayoutNodeId> = self.render_nodes.keys().copied().collect();
                 for &node_id in &all_node_ids {
                     if self
                         .complex_selector_matches(selector, node_id, &empty_set, &empty_set, None)
@@ -8410,7 +8405,9 @@ impl RenderTree {
                     n.props.stroke_width,
                 )
             });
-            if let Some((td, td_color, td_thick, ws, to, tc, ta, fill, stroke, stroke_w)) = parent_text_props {
+            if let Some((td, td_color, td_thick, ws, to, tc, ta, fill, stroke, stroke_w)) =
+                parent_text_props
+            {
                 if let Some(node) = self.render_nodes.get_mut(&node_id) {
                     if node.props.text_decoration.is_none() {
                         node.props.text_decoration = td;
@@ -8542,10 +8539,7 @@ impl RenderTree {
         for &node_id in &subtree_nodes {
             if crate::stateful::has_stateful_base_updater(node_id) {
                 if let Some(render_node) = self.render_nodes.get(&node_id) {
-                    crate::stateful::update_stateful_base_props(
-                        node_id,
-                        render_node.props.clone(),
-                    );
+                    crate::stateful::update_stateful_base_props(node_id, render_node.props.clone());
                 }
             }
         }
@@ -9353,6 +9347,12 @@ impl RenderTree {
         let radius = render_node.props.border_radius;
         let is_glass = matches!(render_node.props.material, Some(Material::Glass(_)));
 
+        // Corner shape setup — must be before draw_shadow so shadows match fill shape
+        let has_corner_shape_l = !render_node.props.corner_shape.is_round();
+        if has_corner_shape_l {
+            ctx.set_corner_shape(render_node.props.corner_shape.to_array());
+        }
+
         // Check if this node has a glass material - if so, render as glass with shadow
         if let Some(Material::Glass(glass)) = &render_node.props.material {
             // For glass elements, pass shadow through GlassStyle to use GPU glass shadow system
@@ -9375,180 +9375,127 @@ impl RenderTree {
                 ctx.draw_shadow(rect, radius, *shadow);
             }
 
-            // Check if we can use optimized per-side border rendering
-            // (combines fill and border into single primitive when all borders same color)
-            let use_combined_rendering = if render_node.props.border_sides.has_any() {
-                let sides = &render_node.props.border_sides;
-                let colors: Vec<Color> = [&sides.top, &sides.right, &sides.bottom, &sides.left]
-                    .iter()
-                    .filter_map(|s| s.as_ref().filter(|b| b.is_visible()).map(|b| b.color))
-                    .collect();
-                colors.windows(2).all(|w| w[0] == w[1]) && !colors.is_empty()
-            } else {
-                false
-            };
+            // Merge fill + border into a single SDF primitive when possible.
+            // This avoids AA fringe from overlapping fill + border at corners.
+            let sides = &render_node.props.border_sides;
+            let has_per_side = sides.has_any();
+            let has_uniform = !has_per_side
+                && render_node.props.border_width > 0.0
+                && render_node.props.border_color.is_some();
 
-            // Draw regular background (skip if using combined rendering)
-            if !use_combined_rendering {
+            if has_per_side {
+                let uw = render_node.props.border_width;
+                let uc = render_node.props.border_color.unwrap_or(Color::TRANSPARENT);
+                let top = sides
+                    .top
+                    .as_ref()
+                    .map(|b| (b.width, b.color))
+                    .unwrap_or((uw, uc));
+                let right = sides
+                    .right
+                    .as_ref()
+                    .map(|b| (b.width, b.color))
+                    .unwrap_or((uw, uc));
+                let bottom = sides
+                    .bottom
+                    .as_ref()
+                    .map(|b| (b.width, b.color))
+                    .unwrap_or((uw, uc));
+                let left = sides
+                    .left
+                    .as_ref()
+                    .map(|b| (b.width, b.color))
+                    .unwrap_or((uw, uc));
+                let all_same = top.1 == right.1 && right.1 == bottom.1 && bottom.1 == left.1;
+
+                if all_same {
+                    // Same color — single merged primitive
+                    let brush = render_node
+                        .props
+                        .background
+                        .clone()
+                        .unwrap_or(Brush::Solid(Color::TRANSPARENT));
+                    ctx.fill_rect_with_per_side_border(
+                        rect,
+                        radius,
+                        brush,
+                        [top.0, right.0, bottom.0, left.0],
+                        top.1,
+                    );
+                } else {
+                    // Different colors — draw fill then 4x fill_rect
+                    if let Some(ref bg) = render_node.props.background {
+                        ctx.fill_rect(rect, radius, bg.clone());
+                    }
+                    let has_radius = radius.top_left > 0.0
+                        || radius.top_right > 0.0
+                        || radius.bottom_left > 0.0
+                        || radius.bottom_right > 0.0;
+                    if has_radius {
+                        ctx.push_clip(ClipShape::rounded_rect(rect, radius));
+                    }
+                    if let Some(ref b) = sides.left {
+                        if b.is_visible() {
+                            ctx.fill_rect(
+                                Rect::new(0.0, 0.0, b.width, rect.height()),
+                                CornerRadius::default(),
+                                Brush::Solid(b.color),
+                            );
+                        }
+                    }
+                    if let Some(ref b) = sides.right {
+                        if b.is_visible() {
+                            ctx.fill_rect(
+                                Rect::new(rect.width() - b.width, 0.0, b.width, rect.height()),
+                                CornerRadius::default(),
+                                Brush::Solid(b.color),
+                            );
+                        }
+                    }
+                    if let Some(ref b) = sides.top {
+                        if b.is_visible() {
+                            ctx.fill_rect(
+                                Rect::new(0.0, 0.0, rect.width(), b.width),
+                                CornerRadius::default(),
+                                Brush::Solid(b.color),
+                            );
+                        }
+                    }
+                    if let Some(ref b) = sides.bottom {
+                        if b.is_visible() {
+                            ctx.fill_rect(
+                                Rect::new(0.0, rect.height() - b.width, rect.width(), b.width),
+                                CornerRadius::default(),
+                                Brush::Solid(b.color),
+                            );
+                        }
+                    }
+                    if has_radius {
+                        ctx.pop_clip();
+                    }
+                }
+            } else if has_uniform {
+                // Uniform border — merge with fill
+                let bw = render_node.props.border_width;
+                let bc = *render_node.props.border_color.as_ref().unwrap();
+                let brush = render_node
+                    .props
+                    .background
+                    .clone()
+                    .unwrap_or(Brush::Solid(Color::TRANSPARENT));
+                ctx.fill_rect_with_per_side_border(rect, radius, brush, [bw, bw, bw, bw], bc);
+            } else {
+                // No border — just fill
                 if let Some(ref bg) = render_node.props.background {
                     ctx.fill_rect(rect, radius, bg.clone());
                 }
             }
         }
 
-        // Borders render in the foreground layer when the element clips content
-        // (e.g., images inside a bordered container). This ensures borders draw ON TOP
-        // of child images, matching CSS painting order (content → border → outline).
-        // For glass elements, borders also need foreground to avoid being hidden.
-        let border_in_foreground = is_glass || render_node.props.clips_content;
+        // Only glass needs foreground borders (special compositing).
+        let border_in_foreground = is_glass;
         if border_in_foreground {
             ctx.set_foreground_layer(true);
-        }
-
-        // Draw borders
-        // Individual border sides take precedence over uniform border
-        // Also check uniform border_width for .border(width, color) API
-        let has_border =
-            render_node.props.border_sides.has_any() || render_node.props.border_width > 0.0;
-        if has_border {
-            let sides = &render_node.props.border_sides;
-
-            // Fall back to uniform border width and color when per-side is not set
-            let uniform_width = render_node.props.border_width;
-            let uniform_color = render_node.props.border_color.unwrap_or(Color::TRANSPARENT);
-
-            // Collect border widths - fall back to uniform border
-            let top_width = sides.top.as_ref().map(|b| b.width).unwrap_or(uniform_width);
-            let right_width = sides
-                .right
-                .as_ref()
-                .map(|b| b.width)
-                .unwrap_or(uniform_width);
-            let bottom_width = sides
-                .bottom
-                .as_ref()
-                .map(|b| b.width)
-                .unwrap_or(uniform_width);
-            let left_width = sides
-                .left
-                .as_ref()
-                .map(|b| b.width)
-                .unwrap_or(uniform_width);
-
-            // Collect colors - fall back to uniform border color
-            let top_color = sides.top.as_ref().map(|b| b.color).unwrap_or(uniform_color);
-            let right_color = sides
-                .right
-                .as_ref()
-                .map(|b| b.color)
-                .unwrap_or(uniform_color);
-            let bottom_color = sides
-                .bottom
-                .as_ref()
-                .map(|b| b.color)
-                .unwrap_or(uniform_color);
-            let left_color = sides
-                .left
-                .as_ref()
-                .map(|b| b.color)
-                .unwrap_or(uniform_color);
-
-            // Check if all borders have the same color
-            let colors = [top_color, right_color, bottom_color, left_color];
-            let all_same_color = colors.windows(2).all(|w| w[0] == w[1]);
-
-            if all_same_color {
-                // Use optimized per-side border rendering with shader support
-                let border_color = top_color;
-                let border_widths = [top_width, right_width, bottom_width, left_width];
-
-                // Draw fill with borders in single primitive
-                let brush = render_node
-                    .props
-                    .background
-                    .clone()
-                    .unwrap_or(Brush::Solid(Color::TRANSPARENT));
-                ctx.fill_rect_with_per_side_border(
-                    rect,
-                    radius,
-                    brush,
-                    border_widths,
-                    border_color,
-                );
-            } else {
-                // Different colors per side - fall back to rectangle approach
-                let has_radius = radius.top_left > 0.0
-                    || radius.top_right > 0.0
-                    || radius.bottom_left > 0.0
-                    || radius.bottom_right > 0.0;
-                if has_radius {
-                    ctx.push_clip(ClipShape::rounded_rect(rect, radius));
-                }
-
-                if let Some(ref border) = sides.left {
-                    if border.is_visible() {
-                        let border_rect = Rect::new(0.0, 0.0, border.width, rect.height());
-                        ctx.fill_rect(
-                            border_rect,
-                            CornerRadius::default(),
-                            Brush::Solid(border.color),
-                        );
-                    }
-                }
-
-                if let Some(ref border) = sides.right {
-                    if border.is_visible() {
-                        let border_rect = Rect::new(
-                            rect.width() - border.width,
-                            0.0,
-                            border.width,
-                            rect.height(),
-                        );
-                        ctx.fill_rect(
-                            border_rect,
-                            CornerRadius::default(),
-                            Brush::Solid(border.color),
-                        );
-                    }
-                }
-
-                if let Some(ref border) = sides.top {
-                    if border.is_visible() {
-                        let border_rect = Rect::new(0.0, 0.0, rect.width(), border.width);
-                        ctx.fill_rect(
-                            border_rect,
-                            CornerRadius::default(),
-                            Brush::Solid(border.color),
-                        );
-                    }
-                }
-
-                if let Some(ref border) = sides.bottom {
-                    if border.is_visible() {
-                        let border_rect = Rect::new(
-                            0.0,
-                            rect.height() - border.width,
-                            rect.width(),
-                            border.width,
-                        );
-                        ctx.fill_rect(
-                            border_rect,
-                            CornerRadius::default(),
-                            Brush::Solid(border.color),
-                        );
-                    }
-                }
-
-                if has_radius {
-                    ctx.pop_clip();
-                }
-            }
-        } else if render_node.props.border_width > 0.0 {
-            // Fall back to uniform border
-            if let Some(ref border_color) = render_node.props.border_color {
-                let stroke = Stroke::new(render_node.props.border_width);
-                ctx.stroke_rect(rect, radius, &stroke, Brush::Solid(*border_color));
-            }
         }
 
         // Draw outline outside the border (CSS outlines don't affect layout)
@@ -9649,6 +9596,11 @@ impl RenderTree {
             // Apply scroll offset as a transform
             // Positive offset_y = scrolled down = content moves up = negative translation
             ctx.push_transform(Transform::translate(scroll_offset.0, scroll_offset.1));
+        }
+
+        // Clear corner shape before rendering children — not inherited
+        if has_corner_shape_l {
+            ctx.clear_corner_shape();
         }
 
         // Render children (relative to this node's transform + scroll offset)
@@ -10159,6 +10111,13 @@ impl RenderTree {
             });
         }
 
+        // Corner shape setup (superellipse per-corner) — MUST be set before draw_shadow
+        // so shadows use the same corner_shape as the fill+border SDF.
+        let has_corner_shape = !render_node.props.corner_shape.is_round();
+        if has_corner_shape {
+            ctx.set_corner_shape(render_node.props.corner_shape.to_array());
+        }
+
         // Draw shadow BEFORE pushing clip (shadows extend beyond element bounds)
         // This must be done before the clip is applied so shadows aren't clipped
         let rect = Rect::new(0.0, 0.0, bounds.width, bounds.height);
@@ -10317,11 +10276,7 @@ impl RenderTree {
             }
         }
 
-        // Corner shape setup (superellipse per-corner)
-        let has_corner_shape = !render_node.props.corner_shape.is_round();
-        if has_corner_shape {
-            ctx.set_corner_shape(render_node.props.corner_shape.to_array());
-        }
+        // (corner_shape already set above, before draw_shadow)
 
         // 3D Group composition: collect child shapes into compound SDF
         // MUST happen before fill_rect so the primitive gets the group shape descriptors.
@@ -10398,6 +10353,49 @@ impl RenderTree {
             // Motion opacity is now handled via push_layer when has_opacity_layer=true
             // The opacity layer applies opacity to all content via GPU composition
 
+            // Pre-resolve per-side border widths and color.
+            // When all border colors are the same, we merge into a single SDF primitive
+            // (fill_rect_with_per_side_border) to avoid AA fringe from overlapping
+            // fill + border primitives at rounded/squircle corners.
+            let has_per_side_border = render_node.props.border_sides.has_any();
+            let per_side_data: Option<([f32; 4], Color, bool)> = if has_per_side_border {
+                let sides = &render_node.props.border_sides;
+                let uw = render_node.props.border_width;
+                let uc = render_node.props.border_color.unwrap_or(Color::TRANSPARENT);
+                let top = sides
+                    .top
+                    .as_ref()
+                    .map(|b| (b.width, b.color))
+                    .unwrap_or((uw, uc));
+                let right = sides
+                    .right
+                    .as_ref()
+                    .map(|b| (b.width, b.color))
+                    .unwrap_or((uw, uc));
+                let bottom = sides
+                    .bottom
+                    .as_ref()
+                    .map(|b| (b.width, b.color))
+                    .unwrap_or((uw, uc));
+                let left = sides
+                    .left
+                    .as_ref()
+                    .map(|b| (b.width, b.color))
+                    .unwrap_or((uw, uc));
+                let widths = [top.0, right.0, bottom.0, left.0];
+                let all_same_color = top.1 == right.1 && right.1 == bottom.1 && bottom.1 == left.1;
+                let dominant = top.1; // all same when mergeable, otherwise pick first
+                Some((widths, dominant, all_same_color))
+            } else {
+                None
+            };
+            // Merge per-side borders into the fill SDF when all border colors match.
+            // Glass elements need separate foreground borders for compositing.
+            // For clips_content elements, children are already clipped to inside the border
+            // (inset clip at padding box), so merging is safe — no child can render over it.
+            let all_same_per_side = per_side_data.as_ref().map(|d| d.2).unwrap_or(false);
+            let merge_per_side = has_per_side_border && all_same_per_side && !is_glass;
+
             if let Some(Material::Glass(glass)) = &render_node.props.material {
                 let glass_brush = Brush::Glass(GlassStyle {
                     blur: glass.blur,
@@ -10415,14 +10413,14 @@ impl RenderTree {
             } else {
                 // Shadow already drawn before clip was pushed
 
-                // Determine if we can merge uniform border into the fill primitive.
-                // Merging avoids two separate GPU primitives with overlapping AA zones
-                // which creates a visible fringe (especially on squircle corners in light mode).
-                let border_in_foreground = is_glass || clips_content;
-                let has_uniform_border = !render_node.props.border_sides.has_any()
+                // Merge border into the fill primitive to avoid AA fringe at corners.
+                // Only glass needs separate foreground borders (special compositing).
+                // For clips_content: children are clipped to inside the border (inset clip),
+                // so merging the border with the fill is safe.
+                let has_uniform_border = !has_per_side_border
                     && render_node.props.border_width > 0.0
                     && render_node.props.border_color.is_some();
-                let merge_border = has_uniform_border && !border_in_foreground;
+                let merge_border = (has_uniform_border && !is_glass) || merge_per_side;
 
                 if let Some(ref bg) = render_node.props.background {
                     // When using opacity layer, draw at full opacity (layer handles it)
@@ -10432,7 +10430,14 @@ impl RenderTree {
                     } else {
                         bg.clone()
                     };
-                    if merge_border {
+                    if merge_per_side {
+                        // Per-side border merged with fill for squircle/bevel/scoop support
+                        let (widths, mut bc, _) = per_side_data.unwrap();
+                        if !has_opacity_layer && motion_opacity < 1.0 {
+                            bc.a *= motion_opacity;
+                        }
+                        ctx.fill_rect_with_per_side_border(rect, radius, brush, widths, bc);
+                    } else if merge_border {
                         // Single primitive with fill + border — no AA overlap
                         let bw = render_node.props.border_width;
                         let mut bc = *render_node.props.border_color.as_ref().unwrap();
@@ -10453,6 +10458,19 @@ impl RenderTree {
                     // 3D group elements need a primitive even without a background —
                     // the shader renders the compound SDF from child shape descriptors.
                     ctx.fill_rect(rect, radius, Brush::Solid(Color::TRANSPARENT));
+                } else if merge_per_side {
+                    // No background but per-side border with squircle — transparent fill
+                    let (widths, mut bc, _) = per_side_data.unwrap();
+                    if !has_opacity_layer && motion_opacity < 1.0 {
+                        bc.a *= motion_opacity;
+                    }
+                    ctx.fill_rect_with_per_side_border(
+                        rect,
+                        radius,
+                        Brush::Solid(Color::TRANSPARENT),
+                        widths,
+                        bc,
+                    );
                 } else if merge_border {
                     // No background but has uniform border — merge with transparent fill
                     let bw = render_node.props.border_width;
@@ -10470,122 +10488,137 @@ impl RenderTree {
                 }
             }
 
-            // Borders render in the foreground layer when the element clips content
-            // (e.g., images inside a bordered container). This ensures borders draw ON TOP
-            // of child images, matching CSS painting order (content → border → outline).
-            // For glass elements, borders also need foreground to avoid being hidden.
-            let border_in_foreground = is_glass || clips_content;
+            // Only glass needs foreground borders (special compositing).
+            // For clips_content: children are clipped to inside the border by the inset
+            // clip pushed later (padding box), so the merged border is never covered.
+            let border_in_foreground = is_glass;
             if border_in_foreground {
                 ctx.set_foreground_layer(true);
             }
 
-            // Draw borders
-            // Per-side borders take precedence; uniform border via stroke_rect for SDF rendering
-            if render_node.props.border_sides.has_any() {
-                let sides = &render_node.props.border_sides;
-                let uniform_width = render_node.props.border_width;
-                let uniform_color = render_node.props.border_color.unwrap_or(Color::TRANSPARENT);
-
-                // Helper to apply motion opacity (only when not using opacity layer)
-                let apply_motion = |color: Color| -> Color {
+            // Draw borders that weren't merged with the fill.
+            // This only runs for per-side borders with different colors (can't merge)
+            // or glass foreground borders.
+            if has_per_side_border && !merge_per_side {
+                if all_same_per_side {
+                    // Same color but not merged (glass) — single SDF border primitive
+                    let (widths, mut bc, _) = per_side_data.unwrap();
                     if !has_opacity_layer && motion_opacity < 1.0 {
-                        Color::rgba(color.r, color.g, color.b, color.a * motion_opacity)
-                    } else {
-                        color
+                        bc.a *= motion_opacity;
                     }
-                };
+                    ctx.fill_rect_with_per_side_border(
+                        rect,
+                        radius,
+                        Brush::Solid(Color::TRANSPARENT),
+                        widths,
+                        bc,
+                    );
+                } else {
+                    // Different colors per side — 4x fill_rect with clip
+                    let sides = &render_node.props.border_sides;
+                    let uniform_width = render_node.props.border_width;
+                    let uniform_color =
+                        render_node.props.border_color.unwrap_or(Color::TRANSPARENT);
 
-                // Clip to rounded rect if there's a border radius
-                let has_radius = radius.top_left > 0.0
-                    || radius.top_right > 0.0
-                    || radius.bottom_left > 0.0
-                    || radius.bottom_right > 0.0;
-                if has_radius {
-                    ctx.push_clip(ClipShape::rounded_rect(rect, radius));
-                }
+                    let apply_motion = |color: Color| -> Color {
+                        if !has_opacity_layer && motion_opacity < 1.0 {
+                            Color::rgba(color.r, color.g, color.b, color.a * motion_opacity)
+                        } else {
+                            color
+                        }
+                    };
 
-                // Resolve per-side borders, falling back to uniform border
-                let left_border = sides
-                    .left
-                    .as_ref()
-                    .map(|b| (b.width, b.color))
-                    .unwrap_or((uniform_width, uniform_color));
-                let right_border = sides
-                    .right
-                    .as_ref()
-                    .map(|b| (b.width, b.color))
-                    .unwrap_or((uniform_width, uniform_color));
-                let top_border = sides
-                    .top
-                    .as_ref()
-                    .map(|b| (b.width, b.color))
-                    .unwrap_or((uniform_width, uniform_color));
-                let bottom_border = sides
-                    .bottom
-                    .as_ref()
-                    .map(|b| (b.width, b.color))
-                    .unwrap_or((uniform_width, uniform_color));
+                    let has_radius = radius.top_left > 0.0
+                        || radius.top_right > 0.0
+                        || radius.bottom_left > 0.0
+                        || radius.bottom_right > 0.0;
+                    if has_radius {
+                        ctx.push_clip(ClipShape::rounded_rect(rect, radius));
+                    }
 
-                if left_border.0 > 0.0 {
-                    let border_rect = Rect::new(0.0, 0.0, left_border.0, rect.height());
-                    ctx.fill_rect(
-                        border_rect,
-                        CornerRadius::default(),
-                        Brush::Solid(apply_motion(left_border.1)),
-                    );
-                }
-                if right_border.0 > 0.0 {
-                    let border_rect = Rect::new(
-                        rect.width() - right_border.0,
-                        0.0,
-                        right_border.0,
-                        rect.height(),
-                    );
-                    ctx.fill_rect(
-                        border_rect,
-                        CornerRadius::default(),
-                        Brush::Solid(apply_motion(right_border.1)),
-                    );
-                }
-                if top_border.0 > 0.0 {
-                    let border_rect = Rect::new(0.0, 0.0, rect.width(), top_border.0);
-                    ctx.fill_rect(
-                        border_rect,
-                        CornerRadius::default(),
-                        Brush::Solid(apply_motion(top_border.1)),
-                    );
-                }
-                if bottom_border.0 > 0.0 {
-                    let border_rect = Rect::new(
-                        0.0,
-                        rect.height() - bottom_border.0,
-                        rect.width(),
-                        bottom_border.0,
-                    );
-                    ctx.fill_rect(
-                        border_rect,
-                        CornerRadius::default(),
-                        Brush::Solid(apply_motion(bottom_border.1)),
-                    );
-                }
+                    let left_border = sides
+                        .left
+                        .as_ref()
+                        .map(|b| (b.width, b.color))
+                        .unwrap_or((uniform_width, uniform_color));
+                    let right_border = sides
+                        .right
+                        .as_ref()
+                        .map(|b| (b.width, b.color))
+                        .unwrap_or((uniform_width, uniform_color));
+                    let top_border = sides
+                        .top
+                        .as_ref()
+                        .map(|b| (b.width, b.color))
+                        .unwrap_or((uniform_width, uniform_color));
+                    let bottom_border = sides
+                        .bottom
+                        .as_ref()
+                        .map(|b| (b.width, b.color))
+                        .unwrap_or((uniform_width, uniform_color));
 
-                if has_radius {
-                    ctx.pop_clip();
+                    if left_border.0 > 0.0 {
+                        let border_rect = Rect::new(0.0, 0.0, left_border.0, rect.height());
+                        ctx.fill_rect(
+                            border_rect,
+                            CornerRadius::default(),
+                            Brush::Solid(apply_motion(left_border.1)),
+                        );
+                    }
+                    if right_border.0 > 0.0 {
+                        let border_rect = Rect::new(
+                            rect.width() - right_border.0,
+                            0.0,
+                            right_border.0,
+                            rect.height(),
+                        );
+                        ctx.fill_rect(
+                            border_rect,
+                            CornerRadius::default(),
+                            Brush::Solid(apply_motion(right_border.1)),
+                        );
+                    }
+                    if top_border.0 > 0.0 {
+                        let border_rect = Rect::new(0.0, 0.0, rect.width(), top_border.0);
+                        ctx.fill_rect(
+                            border_rect,
+                            CornerRadius::default(),
+                            Brush::Solid(apply_motion(top_border.1)),
+                        );
+                    }
+                    if bottom_border.0 > 0.0 {
+                        let border_rect = Rect::new(
+                            0.0,
+                            rect.height() - bottom_border.0,
+                            rect.width(),
+                            bottom_border.0,
+                        );
+                        ctx.fill_rect(
+                            border_rect,
+                            CornerRadius::default(),
+                            Brush::Solid(apply_motion(bottom_border.1)),
+                        );
+                    }
+
+                    if has_radius {
+                        ctx.pop_clip();
+                    }
                 }
             } else if render_node.props.border_width > 0.0 && border_in_foreground {
-                // Uniform border in foreground layer — separate stroke_rect needed
-                // (border was not merged with fill because it must render on top of children)
+                // Glass uniform border — rendered in foreground on top of glass compositing
                 if let Some(ref border_color) = render_node.props.border_color {
-                    let stroke = Stroke::new(render_node.props.border_width);
-                    // When using opacity layer, draw at full opacity (layer handles it)
-                    let brush = if !has_opacity_layer && motion_opacity < 1.0 {
-                        let mut color = *border_color;
-                        color.a *= motion_opacity;
-                        Brush::Solid(color)
-                    } else {
-                        Brush::Solid(*border_color)
-                    };
-                    ctx.stroke_rect(rect, radius, &stroke, brush);
+                    let bw = render_node.props.border_width;
+                    let mut bc = *border_color;
+                    if !has_opacity_layer && motion_opacity < 1.0 {
+                        bc.a *= motion_opacity;
+                    }
+                    ctx.fill_rect_with_per_side_border(
+                        rect,
+                        radius,
+                        Brush::Solid(Color::TRANSPARENT),
+                        [bw, bw, bw, bw],
+                        bc,
+                    );
                 }
             }
 
@@ -10651,10 +10684,19 @@ impl RenderTree {
             ctx.clear_corner_shape();
         }
 
+        // Determine if this element has a border (needed for clip decisions below).
+        let has_border =
+            render_node.props.border_width > 0.0 || render_node.props.border_sides.has_any();
+
         // Push overflow clip for children. This is deferred from before the render block
         // so that the border/outline SDF doesn't get double-AA'd by an overlapping clip.
         // Background and borders are SDF-constrained; only children need the overflow clip.
-        if clips_content {
+        //
+        // When there IS a border, skip the outer rounded clip entirely: the inset clip
+        // (padding box) already prevents children from overflowing, and a rounded clip
+        // at the same boundary as the border SDF creates visible AA doubling at corners.
+        let push_outer_clip = clips_content && !has_border;
+        if push_outer_clip {
             // Set overflow fade before pushing clip — fade distances consumed by push_clip
             if !render_node.props.overflow_fade.is_none() {
                 ctx.set_overflow_fade(render_node.props.overflow_fade.to_array());
@@ -10676,10 +10718,12 @@ impl RenderTree {
         // IMPORTANT: This clip must be pushed BEFORE the scroll transform so it
         // stays fixed in the element's viewport space.  If pushed after the
         // scroll transform the clip would drift with the scrolled content.
-        let has_border =
-            render_node.props.border_width > 0.0 || render_node.props.border_sides.has_any();
         let push_children_clip = clips_content && has_border;
         if push_children_clip {
+            // Set overflow fade before pushing clip (when outer clip was skipped)
+            if !push_outer_clip && !render_node.props.overflow_fade.is_none() {
+                ctx.set_overflow_fade(render_node.props.overflow_fade.to_array());
+            }
             // Calculate border insets from either uniform border or per-side borders
             let sides = &render_node.props.border_sides;
             let uniform_border = render_node.props.border_width;
@@ -10850,8 +10894,8 @@ impl RenderTree {
             ctx.pop_clip();
         }
 
-        // Pop clip
-        if clips_content {
+        // Pop outer overflow clip (only pushed for non-bordered elements)
+        if push_outer_clip {
             ctx.pop_clip();
         }
 
@@ -11155,6 +11199,12 @@ impl RenderTree {
             render_node.props.layer
         };
 
+        // Corner shape setup — must be before draw_shadow so shadows match fill shape
+        let has_corner_shape_n = !render_node.props.corner_shape.is_round();
+        if has_corner_shape_n {
+            ctx.set_corner_shape(render_node.props.corner_shape.to_array());
+        }
+
         // Only render if this node matches the target layer
         if effective_layer == target_layer {
             let rect = Rect::new(0.0, 0.0, bounds.width, bounds.height);
@@ -11181,28 +11231,171 @@ impl RenderTree {
                 if let Some(ref shadow) = render_node.props.shadow {
                     ctx.draw_shadow(rect, radius, *shadow);
                 }
-                // Draw regular background
+
+                // Pre-resolve border info for merging with fill
+                let has_per_side_n = render_node.props.border_sides.has_any();
+                let has_uniform_n = !has_per_side_n
+                    && render_node.props.border_width > 0.0
+                    && render_node.props.border_color.is_some();
+
+                // Merge fill + border into single SDF primitive to avoid AA fringe at corners
                 if let Some(ref bg) = render_node.props.background {
-                    ctx.fill_rect(rect, radius, bg.clone());
+                    if has_per_side_n {
+                        let sides = &render_node.props.border_sides;
+                        let uw = render_node.props.border_width;
+                        let uc = render_node.props.border_color.unwrap_or(Color::TRANSPARENT);
+                        let top = sides
+                            .top
+                            .as_ref()
+                            .map(|b| (b.width, b.color))
+                            .unwrap_or((uw, uc));
+                        let right = sides
+                            .right
+                            .as_ref()
+                            .map(|b| (b.width, b.color))
+                            .unwrap_or((uw, uc));
+                        let bottom = sides
+                            .bottom
+                            .as_ref()
+                            .map(|b| (b.width, b.color))
+                            .unwrap_or((uw, uc));
+                        let left = sides
+                            .left
+                            .as_ref()
+                            .map(|b| (b.width, b.color))
+                            .unwrap_or((uw, uc));
+                        let all_same =
+                            top.1 == right.1 && right.1 == bottom.1 && bottom.1 == left.1;
+                        if all_same {
+                            let widths = [top.0, right.0, bottom.0, left.0];
+                            ctx.fill_rect_with_per_side_border(
+                                rect,
+                                radius,
+                                bg.clone(),
+                                widths,
+                                top.1,
+                            );
+                        } else {
+                            // Different colors — draw fill separately, borders as foreground later
+                            ctx.fill_rect(rect, radius, bg.clone());
+                        }
+                    } else if has_uniform_n {
+                        let bw = render_node.props.border_width;
+                        let bc = *render_node.props.border_color.as_ref().unwrap();
+                        ctx.fill_rect_with_per_side_border(
+                            rect,
+                            radius,
+                            bg.clone(),
+                            [bw, bw, bw, bw],
+                            bc,
+                        );
+                    } else {
+                        ctx.fill_rect(rect, radius, bg.clone());
+                    }
+                } else if has_per_side_n {
+                    // No background but has border — transparent fill with border
+                    let sides = &render_node.props.border_sides;
+                    let uw = render_node.props.border_width;
+                    let uc = render_node.props.border_color.unwrap_or(Color::TRANSPARENT);
+                    let top = sides
+                        .top
+                        .as_ref()
+                        .map(|b| (b.width, b.color))
+                        .unwrap_or((uw, uc));
+                    let right = sides
+                        .right
+                        .as_ref()
+                        .map(|b| (b.width, b.color))
+                        .unwrap_or((uw, uc));
+                    let bottom = sides
+                        .bottom
+                        .as_ref()
+                        .map(|b| (b.width, b.color))
+                        .unwrap_or((uw, uc));
+                    let left = sides
+                        .left
+                        .as_ref()
+                        .map(|b| (b.width, b.color))
+                        .unwrap_or((uw, uc));
+                    let all_same = top.1 == right.1 && right.1 == bottom.1 && bottom.1 == left.1;
+                    if all_same {
+                        let widths = [top.0, right.0, bottom.0, left.0];
+                        ctx.fill_rect_with_per_side_border(
+                            rect,
+                            radius,
+                            Brush::Solid(Color::TRANSPARENT),
+                            widths,
+                            top.1,
+                        );
+                    }
+                    // Different colors with no bg: handled below in foreground section
+                } else if has_uniform_n {
+                    let bw = render_node.props.border_width;
+                    let bc = *render_node.props.border_color.as_ref().unwrap();
+                    ctx.fill_rect_with_per_side_border(
+                        rect,
+                        radius,
+                        Brush::Solid(Color::TRANSPARENT),
+                        [bw, bw, bw, bw],
+                        bc,
+                    );
                 }
             }
 
-            // Borders render in foreground when element clips content or is glass
-            let border_in_foreground = is_glass || render_node.props.clips_content;
+            // Only glass needs foreground borders (special compositing).
+            // clips_content elements have children clipped to padding box (inset clip),
+            // so the merged border is never covered.
+            let border_in_foreground = is_glass;
             if border_in_foreground {
                 ctx.set_foreground_layer(true);
             }
 
-            // Draw borders
-            // Also check uniform border_width for .border(width, color) API
-            let has_border =
-                render_node.props.border_sides.has_any() || render_node.props.border_width > 0.0;
-            if has_border {
-                let sides = &render_node.props.border_sides;
-                let uniform_width = render_node.props.border_width;
-                let uniform_color = render_node.props.border_color.unwrap_or(Color::TRANSPARENT);
+            // Draw borders that weren't merged with the fill above.
+            // For non-glass: only different-color per-side borders need separate rendering.
+            // For glass: all borders render as foreground.
+            let has_per_side = render_node.props.border_sides.has_any();
+            let has_uniform = !has_per_side
+                && render_node.props.border_width > 0.0
+                && render_node.props.border_color.is_some();
+            let has_border = has_per_side || has_uniform;
 
-                // Clip to rounded rect if there's a border radius
+            // Non-glass different-color per-side: need separate rendering
+            let needs_separate_per_side = has_per_side && !border_in_foreground && {
+                let sides = &render_node.props.border_sides;
+                let uw = render_node.props.border_width;
+                let uc = render_node.props.border_color.unwrap_or(Color::TRANSPARENT);
+                let top = sides.top.as_ref().map(|b| b.color).unwrap_or(uc);
+                let right = sides.right.as_ref().map(|b| b.color).unwrap_or(uc);
+                let bottom = sides.bottom.as_ref().map(|b| b.color).unwrap_or(uc);
+                let left = sides.left.as_ref().map(|b| b.color).unwrap_or(uc);
+                !(top == right && right == bottom && bottom == left)
+            };
+
+            if needs_separate_per_side {
+                // Different-color per-side borders — 4x fill_rect with clip
+                let sides = &render_node.props.border_sides;
+                let uw = render_node.props.border_width;
+                let uc = render_node.props.border_color.unwrap_or(Color::TRANSPARENT);
+                let top = sides
+                    .top
+                    .as_ref()
+                    .map(|b| (b.width, b.color))
+                    .unwrap_or((uw, uc));
+                let right = sides
+                    .right
+                    .as_ref()
+                    .map(|b| (b.width, b.color))
+                    .unwrap_or((uw, uc));
+                let bottom = sides
+                    .bottom
+                    .as_ref()
+                    .map(|b| (b.width, b.color))
+                    .unwrap_or((uw, uc));
+                let left = sides
+                    .left
+                    .as_ref()
+                    .map(|b| (b.width, b.color))
+                    .unwrap_or((uw, uc));
                 let has_radius = radius.top_left > 0.0
                     || radius.top_right > 0.0
                     || radius.bottom_left > 0.0
@@ -11210,73 +11403,123 @@ impl RenderTree {
                 if has_radius {
                     ctx.push_clip(ClipShape::rounded_rect(rect, radius));
                 }
-
-                let left_border = sides
-                    .left
-                    .as_ref()
-                    .map(|b| (b.width, b.color))
-                    .unwrap_or((uniform_width, uniform_color));
-                let right_border = sides
-                    .right
-                    .as_ref()
-                    .map(|b| (b.width, b.color))
-                    .unwrap_or((uniform_width, uniform_color));
-                let top_border = sides
-                    .top
-                    .as_ref()
-                    .map(|b| (b.width, b.color))
-                    .unwrap_or((uniform_width, uniform_color));
-                let bottom_border = sides
-                    .bottom
-                    .as_ref()
-                    .map(|b| (b.width, b.color))
-                    .unwrap_or((uniform_width, uniform_color));
-
-                if left_border.0 > 0.0 {
-                    let border_rect = Rect::new(0.0, 0.0, left_border.0, rect.height());
+                if left.0 > 0.0 {
                     ctx.fill_rect(
-                        border_rect,
+                        Rect::new(0.0, 0.0, left.0, rect.height()),
                         CornerRadius::default(),
-                        Brush::Solid(left_border.1),
+                        Brush::Solid(left.1),
                     );
                 }
-                if right_border.0 > 0.0 {
-                    let border_rect = Rect::new(
-                        rect.width() - right_border.0,
-                        0.0,
-                        right_border.0,
-                        rect.height(),
-                    );
+                if right.0 > 0.0 {
                     ctx.fill_rect(
-                        border_rect,
+                        Rect::new(rect.width() - right.0, 0.0, right.0, rect.height()),
                         CornerRadius::default(),
-                        Brush::Solid(right_border.1),
+                        Brush::Solid(right.1),
                     );
                 }
-                if top_border.0 > 0.0 {
-                    let border_rect = Rect::new(0.0, 0.0, rect.width(), top_border.0);
+                if top.0 > 0.0 {
                     ctx.fill_rect(
-                        border_rect,
+                        Rect::new(0.0, 0.0, rect.width(), top.0),
                         CornerRadius::default(),
-                        Brush::Solid(top_border.1),
+                        Brush::Solid(top.1),
                     );
                 }
-                if bottom_border.0 > 0.0 {
-                    let border_rect = Rect::new(
-                        0.0,
-                        rect.height() - bottom_border.0,
-                        rect.width(),
-                        bottom_border.0,
-                    );
+                if bottom.0 > 0.0 {
                     ctx.fill_rect(
-                        border_rect,
+                        Rect::new(0.0, rect.height() - bottom.0, rect.width(), bottom.0),
                         CornerRadius::default(),
-                        Brush::Solid(bottom_border.1),
+                        Brush::Solid(bottom.1),
                     );
                 }
-
                 if has_radius {
                     ctx.pop_clip();
+                }
+            } else if has_border && border_in_foreground {
+                // Glass foreground border — drawn separately on top of glass compositing
+                if has_per_side {
+                    let sides = &render_node.props.border_sides;
+                    let uw = render_node.props.border_width;
+                    let uc = render_node.props.border_color.unwrap_or(Color::TRANSPARENT);
+                    let top = sides
+                        .top
+                        .as_ref()
+                        .map(|b| (b.width, b.color))
+                        .unwrap_or((uw, uc));
+                    let right = sides
+                        .right
+                        .as_ref()
+                        .map(|b| (b.width, b.color))
+                        .unwrap_or((uw, uc));
+                    let bottom = sides
+                        .bottom
+                        .as_ref()
+                        .map(|b| (b.width, b.color))
+                        .unwrap_or((uw, uc));
+                    let left = sides
+                        .left
+                        .as_ref()
+                        .map(|b| (b.width, b.color))
+                        .unwrap_or((uw, uc));
+                    let all_same = top.1 == right.1 && right.1 == bottom.1 && bottom.1 == left.1;
+                    if all_same {
+                        let widths = [top.0, right.0, bottom.0, left.0];
+                        ctx.fill_rect_with_per_side_border(
+                            rect,
+                            radius,
+                            Brush::Solid(Color::TRANSPARENT),
+                            widths,
+                            top.1,
+                        );
+                    } else {
+                        let has_radius = radius.top_left > 0.0
+                            || radius.top_right > 0.0
+                            || radius.bottom_left > 0.0
+                            || radius.bottom_right > 0.0;
+                        if has_radius {
+                            ctx.push_clip(ClipShape::rounded_rect(rect, radius));
+                        }
+                        if left.0 > 0.0 {
+                            ctx.fill_rect(
+                                Rect::new(0.0, 0.0, left.0, rect.height()),
+                                CornerRadius::default(),
+                                Brush::Solid(left.1),
+                            );
+                        }
+                        if right.0 > 0.0 {
+                            ctx.fill_rect(
+                                Rect::new(rect.width() - right.0, 0.0, right.0, rect.height()),
+                                CornerRadius::default(),
+                                Brush::Solid(right.1),
+                            );
+                        }
+                        if top.0 > 0.0 {
+                            ctx.fill_rect(
+                                Rect::new(0.0, 0.0, rect.width(), top.0),
+                                CornerRadius::default(),
+                                Brush::Solid(top.1),
+                            );
+                        }
+                        if bottom.0 > 0.0 {
+                            ctx.fill_rect(
+                                Rect::new(0.0, rect.height() - bottom.0, rect.width(), bottom.0),
+                                CornerRadius::default(),
+                                Brush::Solid(bottom.1),
+                            );
+                        }
+                        if has_radius {
+                            ctx.pop_clip();
+                        }
+                    }
+                } else if has_uniform {
+                    let bw = render_node.props.border_width;
+                    let bc = *render_node.props.border_color.as_ref().unwrap();
+                    ctx.fill_rect_with_per_side_border(
+                        rect,
+                        radius,
+                        Brush::Solid(Color::TRANSPARENT),
+                        [bw, bw, bw, bw],
+                        bc,
+                    );
                 }
             }
 
@@ -11340,6 +11583,11 @@ impl RenderTree {
             // Apply scroll offset as a transform
             // Positive offset_y = scrolled down = content moves up = negative translation
             ctx.push_transform(Transform::translate(scroll_offset.0, scroll_offset.1));
+        }
+
+        // Clear corner shape before rendering children — not inherited
+        if has_corner_shape_n {
+            ctx.clear_corner_shape();
         }
 
         // Traverse children (they inherit our transform and layer inheritance)
@@ -11688,90 +11936,141 @@ impl RenderTree {
                         if let Some(ref shadow) = render_node.props.shadow {
                             ctx.draw_shadow(rect, radius, *shadow);
                         }
-                        // Draw regular background
-                        if let Some(ref bg) = render_node.props.background {
-                            ctx.fill_rect(rect, radius, bg.clone());
+
+                        // Merge fill + border into a single SDF primitive when possible.
+                        let sides = &render_node.props.border_sides;
+                        let has_per_side = sides.has_any();
+                        let has_uniform = !has_per_side
+                            && render_node.props.border_width > 0.0
+                            && render_node.props.border_color.is_some();
+
+                        if has_per_side {
+                            let uw = render_node.props.border_width;
+                            let uc = render_node.props.border_color.unwrap_or(Color::TRANSPARENT);
+                            let top = sides
+                                .top
+                                .as_ref()
+                                .map(|b| (b.width, b.color))
+                                .unwrap_or((uw, uc));
+                            let right = sides
+                                .right
+                                .as_ref()
+                                .map(|b| (b.width, b.color))
+                                .unwrap_or((uw, uc));
+                            let bottom = sides
+                                .bottom
+                                .as_ref()
+                                .map(|b| (b.width, b.color))
+                                .unwrap_or((uw, uc));
+                            let left = sides
+                                .left
+                                .as_ref()
+                                .map(|b| (b.width, b.color))
+                                .unwrap_or((uw, uc));
+                            let all_same =
+                                top.1 == right.1 && right.1 == bottom.1 && bottom.1 == left.1;
+
+                            if all_same {
+                                let brush = render_node
+                                    .props
+                                    .background
+                                    .clone()
+                                    .unwrap_or(Brush::Solid(Color::TRANSPARENT));
+                                ctx.fill_rect_with_per_side_border(
+                                    rect,
+                                    radius,
+                                    brush,
+                                    [top.0, right.0, bottom.0, left.0],
+                                    top.1,
+                                );
+                            } else {
+                                // Different colors — draw fill then 4x fill_rect
+                                if let Some(ref bg) = render_node.props.background {
+                                    ctx.fill_rect(rect, radius, bg.clone());
+                                }
+                                let has_radius = radius.top_left > 0.0
+                                    || radius.top_right > 0.0
+                                    || radius.bottom_left > 0.0
+                                    || radius.bottom_right > 0.0;
+                                if has_radius {
+                                    ctx.push_clip(ClipShape::rounded_rect(rect, radius));
+                                }
+                                if let Some(ref b) = sides.left {
+                                    if b.is_visible() {
+                                        ctx.fill_rect(
+                                            Rect::new(0.0, 0.0, b.width, rect.height()),
+                                            CornerRadius::default(),
+                                            Brush::Solid(b.color),
+                                        );
+                                    }
+                                }
+                                if let Some(ref b) = sides.right {
+                                    if b.is_visible() {
+                                        ctx.fill_rect(
+                                            Rect::new(
+                                                rect.width() - b.width,
+                                                0.0,
+                                                b.width,
+                                                rect.height(),
+                                            ),
+                                            CornerRadius::default(),
+                                            Brush::Solid(b.color),
+                                        );
+                                    }
+                                }
+                                if let Some(ref b) = sides.top {
+                                    if b.is_visible() {
+                                        ctx.fill_rect(
+                                            Rect::new(0.0, 0.0, rect.width(), b.width),
+                                            CornerRadius::default(),
+                                            Brush::Solid(b.color),
+                                        );
+                                    }
+                                }
+                                if let Some(ref b) = sides.bottom {
+                                    if b.is_visible() {
+                                        ctx.fill_rect(
+                                            Rect::new(
+                                                0.0,
+                                                rect.height() - b.width,
+                                                rect.width(),
+                                                b.width,
+                                            ),
+                                            CornerRadius::default(),
+                                            Brush::Solid(b.color),
+                                        );
+                                    }
+                                }
+                                if has_radius {
+                                    ctx.pop_clip();
+                                }
+                            }
+                        } else if has_uniform {
+                            let bw = render_node.props.border_width;
+                            let bc = *render_node.props.border_color.as_ref().unwrap();
+                            let brush = render_node
+                                .props
+                                .background
+                                .clone()
+                                .unwrap_or(Brush::Solid(Color::TRANSPARENT));
+                            ctx.fill_rect_with_per_side_border(
+                                rect,
+                                radius,
+                                brush,
+                                [bw, bw, bw, bw],
+                                bc,
+                            );
+                        } else {
+                            if let Some(ref bg) = render_node.props.background {
+                                ctx.fill_rect(rect, radius, bg.clone());
+                            }
                         }
                     }
 
-                    // Borders render in foreground when element clips content or is glass
-                    let border_in_foreground = is_glass || render_node.props.clips_content;
+                    // Only glass needs foreground borders.
+                    let border_in_foreground = is_glass;
                     if border_in_foreground {
                         ctx.set_foreground_layer(true);
-                    }
-
-                    // Draw borders
-                    if render_node.props.border_sides.has_any() {
-                        let sides = &render_node.props.border_sides;
-
-                        // Clip to rounded rect if there's a border radius
-                        let has_radius = radius.top_left > 0.0
-                            || radius.top_right > 0.0
-                            || radius.bottom_left > 0.0
-                            || radius.bottom_right > 0.0;
-                        if has_radius {
-                            ctx.push_clip(ClipShape::rounded_rect(rect, radius));
-                        }
-
-                        if let Some(ref border) = sides.left {
-                            if border.is_visible() {
-                                let border_rect = Rect::new(0.0, 0.0, border.width, rect.height());
-                                ctx.fill_rect(
-                                    border_rect,
-                                    CornerRadius::default(),
-                                    Brush::Solid(border.color),
-                                );
-                            }
-                        }
-                        if let Some(ref border) = sides.right {
-                            if border.is_visible() {
-                                let border_rect = Rect::new(
-                                    rect.width() - border.width,
-                                    0.0,
-                                    border.width,
-                                    rect.height(),
-                                );
-                                ctx.fill_rect(
-                                    border_rect,
-                                    CornerRadius::default(),
-                                    Brush::Solid(border.color),
-                                );
-                            }
-                        }
-                        if let Some(ref border) = sides.top {
-                            if border.is_visible() {
-                                let border_rect = Rect::new(0.0, 0.0, rect.width(), border.width);
-                                ctx.fill_rect(
-                                    border_rect,
-                                    CornerRadius::default(),
-                                    Brush::Solid(border.color),
-                                );
-                            }
-                        }
-                        if let Some(ref border) = sides.bottom {
-                            if border.is_visible() {
-                                let border_rect = Rect::new(
-                                    0.0,
-                                    rect.height() - border.width,
-                                    rect.width(),
-                                    border.width,
-                                );
-                                ctx.fill_rect(
-                                    border_rect,
-                                    CornerRadius::default(),
-                                    Brush::Solid(border.color),
-                                );
-                            }
-                        }
-
-                        if has_radius {
-                            ctx.pop_clip();
-                        }
-                    } else if render_node.props.border_width > 0.0 {
-                        if let Some(ref border_color) = render_node.props.border_color {
-                            let stroke = Stroke::new(render_node.props.border_width);
-                            ctx.stroke_rect(rect, radius, &stroke, Brush::Solid(*border_color));
-                        }
                     }
 
                     // Draw outline

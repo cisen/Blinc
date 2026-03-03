@@ -143,7 +143,12 @@ impl Switch {
 
         // Build background layers outside of on_state so motion bindings are properly registered
         // Off layer is always visible as the base
-        let off_layer = div().class("cn-switch-track").absolute().inset(0.0).rounded(radius).bg(off_bg);
+        let off_layer = div()
+            .class("cn-switch-track")
+            .absolute()
+            .inset(0.0)
+            .rounded(radius)
+            .bg(off_bg);
 
         // On layer with animated opacity
         // The motion container must be absolutely positioned and sized to cover the track
@@ -156,9 +161,10 @@ impl Switch {
             .rounded(radius)
             .bg(on_bg);
 
-        let on_layer = div().absolute().inset(0.0).child(
-            motion().opacity(color_anim).child(on_track_div),
-        );
+        let on_layer = div()
+            .absolute()
+            .inset(0.0)
+            .child(motion().opacity(color_anim).child(on_track_div));
 
         // Thumb with animated position
         let thumb_element = div()

@@ -396,11 +396,13 @@ fn css_overrides_section() -> impl ElementBuilder {
         .id("css-overrides")
         .child(section_title("CSS Overrides"))
         .child(
-            text("Components below demonstrate CSS overrides applied after default styles. \
+            text(
+                "Components below demonstrate CSS overrides applied after default styles. \
                   Primary buttons have square corners, destructive hover turns primary, \
-                  and cards have a primary-colored border.")
-                .size(13.0)
-                .color(text_secondary),
+                  and cards have a primary-colored border.",
+            )
+            .size(13.0)
+            .color(text_secondary),
         )
         .child(
             div()
@@ -408,10 +410,7 @@ fn css_overrides_section() -> impl ElementBuilder {
                 .flex_wrap()
                 .gap(12.0)
                 .child(cn::button("Square Primary (CSS override)"))
-                .child(
-                    cn::button("Hover me (destructive)")
-                        .variant(ButtonVariant::Destructive),
-                )
+                .child(cn::button("Hover me (destructive)").variant(ButtonVariant::Destructive))
                 .child(cn::button("Outline (default)").variant(ButtonVariant::Outline))
                 .child(cn::button("Ghost (default)").variant(ButtonVariant::Ghost)),
         )
@@ -420,11 +419,13 @@ fn css_overrides_section() -> impl ElementBuilder {
                 .id("css-demo-card")
                 .w(350.0)
                 .child(cn::card_header().title("Card with CSS border override"))
-                .child(cn::card_content().child(
-                    text("This card has a 2px primary-colored border via CSS override")
-                        .size(14.0)
-                        .color(text_secondary),
-                )),
+                .child(
+                    cn::card_content().child(
+                        text("This card has a 2px primary-colored border via CSS override")
+                            .size(14.0)
+                            .color(text_secondary),
+                    ),
+                ),
         )
 }
 
@@ -461,7 +462,11 @@ fn buttons_section(_ctx: &WindowedContext) -> impl ElementBuilder {
                 .child(cn::button("Disabled").disabled(true)),
         )
         // Icon-only buttons at various sizes
-        .child(text("Icon-only buttons (centering test)").size(12.0).color(text_secondary))
+        .child(
+            text("Icon-only buttons (centering test)")
+                .size(12.0)
+                .color(text_secondary),
+        )
         .child(
             div()
                 .flex_row()
@@ -476,8 +481,17 @@ fn buttons_section(_ctx: &WindowedContext) -> impl ElementBuilder {
                 // Icon-only at 12px
                 .child(cn::button("").icon(icons::ARROW_RIGHT).icon_size(12.0))
                 // Icon-only with different variant
-                .child(cn::button("").icon(icons::PLUS).variant(ButtonVariant::Outline))
-                .child(cn::button("").icon(icons::PLUS).variant(ButtonVariant::Outline).icon_size(20.0))
+                .child(
+                    cn::button("")
+                        .icon(icons::PLUS)
+                        .variant(ButtonVariant::Outline),
+                )
+                .child(
+                    cn::button("")
+                        .icon(icons::PLUS)
+                        .variant(ButtonVariant::Outline)
+                        .icon_size(20.0),
+                )
                 // Button with icon + label
                 .child(cn::button("With Icon").icon(icons::STAR)),
         )

@@ -131,7 +131,11 @@ impl Pagination {
             .deps([page_state.signal_id()])
             .on_state(move |_ctx| {
                 let current_page = page_state_for_container.get();
-                let mut container = div().class("cn-pagination").flex_row().items_center().gap(gap);
+                let mut container = div()
+                    .class("cn-pagination")
+                    .flex_row()
+                    .items_center()
+                    .gap(gap);
 
                 // Calculate visible page range
                 let (start_page, end_page) =

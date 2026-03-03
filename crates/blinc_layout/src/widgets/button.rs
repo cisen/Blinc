@@ -458,7 +458,11 @@ impl Button {
 
     /// Add a CSS class for selector matching
     pub fn class(mut self, class: &str) -> Self {
-        self.config.lock().unwrap().css_classes.push(class.to_string());
+        self.config
+            .lock()
+            .unwrap()
+            .css_classes
+            .push(class.to_string());
         self.inner = self.inner.class(class);
         self
     }
@@ -557,7 +561,12 @@ impl ElementBuilder for Button {
                     let mut cfg = config_for_state.lock().unwrap();
 
                     // Apply CSS overrides if stylesheet is active
-                    apply_css_overrides_button(&mut cfg, css_element_id.as_deref(), state, container);
+                    apply_css_overrides_button(
+                        &mut cfg,
+                        css_element_id.as_deref(),
+                        state,
+                        container,
+                    );
 
                     let bg = match state {
                         ButtonState::Idle => cfg.bg_color,

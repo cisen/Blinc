@@ -68,7 +68,11 @@ impl Alert {
     fn with_variant(message: impl Into<String>, variant: AlertVariant) -> Self {
         let message = message.into();
         let inner = Self::build_div(&message, variant);
-        Self { inner, message, variant }
+        Self {
+            inner,
+            message,
+            variant,
+        }
     }
 
     fn build_div(message: &str, variant: AlertVariant) -> Div {
@@ -183,10 +187,7 @@ impl AlertBox {
         };
 
         // All visual props from CSS: .cn-alert-box + .cn-alert--{variant}
-        div()
-            .class("cn-alert-box")
-            .class(variant_class)
-            .flex_col()
+        div().class("cn-alert-box").class(variant_class).flex_col()
     }
 
     /// Set the alert variant
@@ -198,9 +199,7 @@ impl AlertBox {
 
     /// Set the alert title
     pub fn title(mut self, title: impl Into<String>) -> Self {
-        self.inner = self
-            .inner
-            .child(text(title).size(14.0).semibold());
+        self.inner = self.inner.child(text(title).size(14.0).semibold());
         self
     }
 

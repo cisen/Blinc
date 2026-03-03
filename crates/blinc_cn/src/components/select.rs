@@ -241,19 +241,24 @@ impl Select {
                     if let Some(ref content_fn) = opt.content {
                         content_fn()
                     } else {
-                        div().h_fit().overflow_clip().child(text(&opt.label).size(font_size).no_cursor().color(text_clr))
+                        div()
+                            .h_fit()
+                            .overflow_clip()
+                            .child(text(&opt.label).size(font_size).no_cursor().color(text_clr))
                     }
                 } else {
                     let placeholder_text = placeholder_for_display
                         .clone()
                         .unwrap_or_else(|| "Select...".to_string());
-                    div().h_fit().overflow_clip().child(text(&placeholder_text).size(font_size).no_cursor().color(text_clr))
+                    div().h_fit().overflow_clip().child(
+                        text(&placeholder_text)
+                            .size(font_size)
+                            .no_cursor()
+                            .color(text_clr),
+                    )
                 };
 
-                let content_wrapper = div()
-                    .overflow_clip()
-                    .flex_1()
-                    .child(display_content);
+                let content_wrapper = div().overflow_clip().flex_1().child(display_content);
 
                 // Wrapper uses relative positioning so the dropdown can be absolutely positioned
                 let mut wrapper = div()
@@ -636,18 +641,16 @@ fn build_dropdown_content(
             .flex_row()
             .items_center()
             .bg(base_bg)
-            .child(
-                if let Some(ref content_fn) = opt_content {
-                    content_fn()
-                } else {
-                    div().child(
-                        text(&opt_label)
-                            .size(font_size)
-                            .no_cursor()
-                            .color(option_text_color),
-                    )
-                },
-            )
+            .child(if let Some(ref content_fn) = opt_content {
+                content_fn()
+            } else {
+                div().child(
+                    text(&opt_label)
+                        .size(font_size)
+                        .no_cursor()
+                        .color(option_text_color),
+                )
+            })
             .on_click(move |_ctx| {
                 if !is_opt_disabled {
                     value_state_for_opt.set(opt_value_for_click.clone());

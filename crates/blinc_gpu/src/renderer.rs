@@ -170,9 +170,9 @@ impl Default for RendererConfig {
         Self {
             // Conservative defaults for low memory footprint
             // Buffers are re-created if scenes exceed these limits, so no hard cap
-            max_primitives: 1_000,     // ~192 KB — handles complex UI screens
-            max_glass_primitives: 32,  // ~8 KB
-            max_glyphs: 4_000,         // ~256 KB — handles full-screen text content
+            max_primitives: 1_000,    // ~192 KB — handles complex UI screens
+            max_glass_primitives: 32, // ~8 KB
+            max_glyphs: 4_000,        // ~256 KB — handles full-screen text content
             sample_count: 1,
             texture_format: None,
             unified_text_rendering: true, // Enabled for consistent transforms during animations
@@ -5777,33 +5777,32 @@ impl GpuRenderer {
             write_mask: wgpu::ColorWrites::ALL,
         })];
 
-        self.effect_pipelines.blur =
-            Some(self.device.create_render_pipeline(
-                &wgpu::RenderPipelineDescriptor {
-                    label: Some("Blur Effect Pipeline"),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some("fs_kawase_blur"),
-                        targets,
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        ..Default::default()
-                    },
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
-                    cache: None,
+        self.effect_pipelines.blur = Some(self.device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("Blur Effect Pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
-            ));
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_kawase_blur"),
+                    targets,
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            },
+        ));
 
         // Also create the 8 uniform buffers for multi-pass blur
         if self.buffers.blur_uniforms_pool.is_none() {
@@ -5849,43 +5848,41 @@ impl GpuRenderer {
             write_mask: wgpu::ColorWrites::ALL,
         })];
 
-        self.effect_pipelines.color_matrix =
-            Some(self.device.create_render_pipeline(
-                &wgpu::RenderPipelineDescriptor {
-                    label: Some("Color Matrix Effect Pipeline"),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some("fs_color_matrix"),
-                        targets,
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        ..Default::default()
-                    },
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
-                    cache: None,
+        self.effect_pipelines.color_matrix = Some(self.device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("Color Matrix Effect Pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
-            ));
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_color_matrix"),
+                    targets,
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            },
+        ));
 
         if self.buffers.color_matrix_uniforms.is_none() {
-            self.buffers.color_matrix_uniforms = Some(self.device.create_buffer(
-                &wgpu::BufferDescriptor {
+            self.buffers.color_matrix_uniforms =
+                Some(self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("Color Matrix Uniforms Buffer"),
                     size: std::mem::size_of::<ColorMatrixUniforms>() as u64,
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
-                },
-            ));
+                }));
         }
     }
 
@@ -5916,43 +5913,41 @@ impl GpuRenderer {
             write_mask: wgpu::ColorWrites::ALL,
         })];
 
-        self.effect_pipelines.drop_shadow =
-            Some(self.device.create_render_pipeline(
-                &wgpu::RenderPipelineDescriptor {
-                    label: Some("Drop Shadow Effect Pipeline"),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some("fs_drop_shadow"),
-                        targets,
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        ..Default::default()
-                    },
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
-                    cache: None,
+        self.effect_pipelines.drop_shadow = Some(self.device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("Drop Shadow Effect Pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
-            ));
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_drop_shadow"),
+                    targets,
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            },
+        ));
 
         if self.buffers.drop_shadow_uniforms.is_none() {
-            self.buffers.drop_shadow_uniforms = Some(self.device.create_buffer(
-                &wgpu::BufferDescriptor {
+            self.buffers.drop_shadow_uniforms =
+                Some(self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("Drop Shadow Uniforms Buffer"),
                     size: std::mem::size_of::<DropShadowUniforms>() as u64,
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
-                },
-            ));
+                }));
         }
     }
 
@@ -5983,43 +5978,40 @@ impl GpuRenderer {
             write_mask: wgpu::ColorWrites::ALL,
         })];
 
-        self.effect_pipelines.glow =
-            Some(self.device.create_render_pipeline(
-                &wgpu::RenderPipelineDescriptor {
-                    label: Some("Glow Effect Pipeline"),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some("fs_glow"),
-                        targets,
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        ..Default::default()
-                    },
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
-                    cache: None,
+        self.effect_pipelines.glow = Some(self.device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("Glow Effect Pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
-            ));
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_glow"),
+                    targets,
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            },
+        ));
 
         if self.buffers.glow_uniforms.is_none() {
-            self.buffers.glow_uniforms = Some(self.device.create_buffer(
-                &wgpu::BufferDescriptor {
-                    label: Some("Glow Uniforms Buffer"),
-                    size: std::mem::size_of::<GlowUniforms>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                },
-            ));
+            self.buffers.glow_uniforms = Some(self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Glow Uniforms Buffer"),
+                size: std::mem::size_of::<GlowUniforms>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
         }
     }
 
@@ -6050,33 +6042,32 @@ impl GpuRenderer {
             write_mask: wgpu::ColorWrites::ALL,
         })];
 
-        self.effect_pipelines.mask_image =
-            Some(self.device.create_render_pipeline(
-                &wgpu::RenderPipelineDescriptor {
-                    label: Some("Mask Image Effect Pipeline"),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some("fs_mask"),
-                        targets,
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        ..Default::default()
-                    },
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
-                    cache: None,
+        self.effect_pipelines.mask_image = Some(self.device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("Mask Image Effect Pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
-            ));
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_mask"),
+                    targets,
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            },
+        ));
     }
 
     /// Lazily create both glass pipelines (liquid glass + simple frosted glass)
@@ -6126,61 +6117,59 @@ impl GpuRenderer {
             write_mask: wgpu::ColorWrites::ALL,
         })];
 
-        self.effect_pipelines.glass =
-            Some(self.device.create_render_pipeline(
-                &wgpu::RenderPipelineDescriptor {
-                    label: Some("Glass Pipeline"),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &glass_shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &glass_shader,
-                        entry_point: Some("fs_main"),
-                        targets: color_targets,
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        ..Default::default()
-                    },
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
-                    cache: None,
+        self.effect_pipelines.glass = Some(self.device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("Glass Pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &glass_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
-            ));
+                fragment: Some(wgpu::FragmentState {
+                    module: &glass_shader,
+                    entry_point: Some("fs_main"),
+                    targets: color_targets,
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            },
+        ));
 
-        self.effect_pipelines.simple_glass =
-            Some(self.device.create_render_pipeline(
-                &wgpu::RenderPipelineDescriptor {
-                    label: Some("Simple Glass Pipeline"),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &simple_glass_shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &simple_glass_shader,
-                        entry_point: Some("fs_main"),
-                        targets: color_targets,
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        ..Default::default()
-                    },
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
-                    cache: None,
+        self.effect_pipelines.simple_glass = Some(self.device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("Simple Glass Pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &simple_glass_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
-            ));
+                fragment: Some(wgpu::FragmentState {
+                    module: &simple_glass_shader,
+                    entry_point: Some("fs_main"),
+                    targets: color_targets,
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            },
+        ));
     }
 
     /// Clear a texture view to a solid color
@@ -6635,8 +6624,7 @@ impl GpuRenderer {
                     entries: &[
                         wgpu::BindGroupEntry {
                             binding: 0,
-                            resource: blur_pool[i as usize]
-                                .as_entire_binding(),
+                            resource: blur_pool[i as usize].as_entire_binding(),
                         },
                         wgpu::BindGroupEntry {
                             binding: 1,
@@ -6734,11 +6722,8 @@ impl GpuRenderer {
 
         // Use cached buffer instead of creating per-pass
         let cm_buf = self.buffers.color_matrix_uniforms.as_ref().unwrap();
-        self.queue.write_buffer(
-            cm_buf,
-            0,
-            bytemuck::bytes_of(&uniforms),
-        );
+        self.queue
+            .write_buffer(cm_buf, 0, bytemuck::bytes_of(&uniforms));
 
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Color Matrix Effect Bind Group"),
@@ -6819,11 +6804,8 @@ impl GpuRenderer {
 
         // Use cached buffer instead of creating per-pass
         let ds_buf = self.buffers.drop_shadow_uniforms.as_ref().unwrap();
-        self.queue.write_buffer(
-            ds_buf,
-            0,
-            bytemuck::bytes_of(&uniforms),
-        );
+        self.queue
+            .write_buffer(ds_buf, 0, bytemuck::bytes_of(&uniforms));
 
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Drop Shadow Effect Bind Group"),
@@ -6907,11 +6889,8 @@ impl GpuRenderer {
 
         // Use cached buffer instead of creating per-pass
         let glow_buf = self.buffers.glow_uniforms.as_ref().unwrap();
-        self.queue.write_buffer(
-            glow_buf,
-            0,
-            bytemuck::bytes_of(&uniforms),
-        );
+        self.queue
+            .write_buffer(glow_buf, 0, bytemuck::bytes_of(&uniforms));
 
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Glow Effect Bind Group"),

@@ -523,7 +523,10 @@ impl ResizableGroup {
                 }
 
                 // Wrap in hit area container
-                let mut hit_area = div().class("cn-resizable-handle").items_center().justify_center();
+                let mut hit_area = div()
+                    .class("cn-resizable-handle")
+                    .items_center()
+                    .justify_center();
 
                 match direction {
                     ResizeDirection::Horizontal => {

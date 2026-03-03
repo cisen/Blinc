@@ -3916,6 +3916,198 @@ fn corner_shape_section() -> impl ElementBuilder {
                                 ),
                         ),
                 )
+                // Bordered shapes — verifies border follows corner_shape
+                .child(
+                    div()
+                        .flex_col()
+                        .gap(8.0)
+                        .child(code_label(
+                            "Bordered shapes: .border(3.0, color).corner_shape(n)",
+                        ))
+                        .child(
+                            div()
+                                .flex_row()
+                                .flex_wrap()
+                                .gap(16.0)
+                                .child(
+                                    div()
+                                        .flex_col()
+                                        .gap(4.0)
+                                        .items_center()
+                                        .child(code_label("round border"))
+                                        .child(
+                                            div()
+                                                .w(80.0)
+                                                .h(80.0)
+                                                .rounded(32.0)
+                                                .corner_shape(1.0)
+                                                .border(3.0, Color::rgba(0.23, 0.51, 0.96, 1.0))
+                                                .bg(Color::rgba(0.93, 0.95, 1.0, 1.0)),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex_col()
+                                        .gap(4.0)
+                                        .items_center()
+                                        .child(code_label("squircle border"))
+                                        .child(
+                                            div()
+                                                .w(80.0)
+                                                .h(80.0)
+                                                .rounded(32.0)
+                                                .corner_squircle()
+                                                .border(3.0, Color::rgba(0.66, 0.33, 0.97, 1.0))
+                                                .bg(Color::rgba(0.96, 0.93, 1.0, 1.0)),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex_col()
+                                        .gap(4.0)
+                                        .items_center()
+                                        .child(code_label("bevel border"))
+                                        .child(
+                                            div()
+                                                .w(80.0)
+                                                .h(80.0)
+                                                .rounded(32.0)
+                                                .corner_bevel()
+                                                .border(3.0, Color::rgba(0.13, 0.77, 0.37, 1.0))
+                                                .bg(Color::rgba(0.93, 1.0, 0.95, 1.0)),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex_col()
+                                        .gap(4.0)
+                                        .items_center()
+                                        .child(code_label("scoop border"))
+                                        .child(
+                                            div()
+                                                .w(80.0)
+                                                .h(80.0)
+                                                .rounded(32.0)
+                                                .corner_scoop()
+                                                .border(3.0, Color::rgba(0.98, 0.45, 0.09, 1.0))
+                                                .bg(Color::rgba(1.0, 0.95, 0.93, 1.0)),
+                                        ),
+                                ),
+                        ),
+                )
+                // Bordered shapes with shadow — verifies shadow matches corner_shape
+                .child(
+                    div()
+                        .flex_col()
+                        .gap(8.0)
+                        .child(code_label(
+                            "Shadow + border + corner_shape (shadow must follow shape)",
+                        ))
+                        .child(
+                            div()
+                                .flex_row()
+                                .flex_wrap()
+                                .gap(24.0)
+                                .child(
+                                    div()
+                                        .flex_col()
+                                        .gap(4.0)
+                                        .items_center()
+                                        .child(code_label("round shadow"))
+                                        .child(
+                                            div()
+                                                .w(80.0)
+                                                .h(80.0)
+                                                .rounded(32.0)
+                                                .corner_shape(1.0)
+                                                .border(2.0, Color::rgba(0.2, 0.2, 0.2, 0.3))
+                                                .shadow_lg()
+                                                .bg(Color::WHITE),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex_col()
+                                        .gap(4.0)
+                                        .items_center()
+                                        .child(code_label("squircle shadow"))
+                                        .child(
+                                            div()
+                                                .w(80.0)
+                                                .h(80.0)
+                                                .rounded(32.0)
+                                                .corner_squircle()
+                                                .border(2.0, Color::rgba(0.2, 0.2, 0.2, 0.3))
+                                                .shadow_lg()
+                                                .bg(Color::WHITE),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex_col()
+                                        .gap(4.0)
+                                        .items_center()
+                                        .child(code_label("scoop shadow"))
+                                        .child(
+                                            div()
+                                                .w(80.0)
+                                                .h(80.0)
+                                                .rounded(32.0)
+                                                .corner_scoop()
+                                                .border(2.0, Color::rgba(0.2, 0.2, 0.2, 0.3))
+                                                .shadow_lg()
+                                                .bg(Color::WHITE),
+                                        ),
+                                ),
+                        ),
+                )
+                // Bordered shapes with overflow_clip — verifies clip doesn't double border
+                .child(
+                    div()
+                        .flex_col()
+                        .gap(8.0)
+                        .child(code_label("Border + overflow_clip (no doubled corners)"))
+                        .child(
+                            div()
+                                .flex_row()
+                                .flex_wrap()
+                                .gap(16.0)
+                                .child(
+                                    div()
+                                        .flex_col()
+                                        .gap(4.0)
+                                        .items_center()
+                                        .child(code_label("round clip"))
+                                        .child(
+                                            div()
+                                                .w(80.0)
+                                                .h(80.0)
+                                                .rounded(32.0)
+                                                .corner_shape(1.0)
+                                                .border(3.0, Color::rgba(0.23, 0.51, 0.96, 1.0))
+                                                .bg(Color::rgba(0.93, 0.95, 1.0, 1.0))
+                                                .overflow_clip(),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex_col()
+                                        .gap(4.0)
+                                        .items_center()
+                                        .child(code_label("squircle clip"))
+                                        .child(
+                                            div()
+                                                .w(80.0)
+                                                .h(80.0)
+                                                .rounded(32.0)
+                                                .corner_squircle()
+                                                .border(3.0, Color::rgba(0.66, 0.33, 0.97, 1.0))
+                                                .bg(Color::rgba(0.96, 0.93, 1.0, 1.0))
+                                                .overflow_clip(),
+                                        ),
+                                ),
+                        ),
+                )
                 // CSS transition demo
                 .child(
                     div()

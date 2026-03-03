@@ -83,7 +83,6 @@ impl CheckboxSize {
             CheckboxSize::Large => 16.0,
         }
     }
-
 }
 
 /// Checkbox component

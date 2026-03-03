@@ -1521,9 +1521,7 @@ impl EventRouter {
                     // Keep foreground elements (e.g., absolutely positioned dropdowns
                     // rendered in foreground pass)
                     if let Some(render_node) = tree.get_render_node(hit.node) {
-                        if render_node.props.layer
-                            == crate::element::RenderLayer::Foreground
-                        {
+                        if render_node.props.layer == crate::element::RenderLayer::Foreground {
                             return true;
                         }
                     }
@@ -1531,9 +1529,7 @@ impl EventRouter {
                     // (children of foreground containers like dropdown items)
                     for &ancestor in &hit.ancestors {
                         if let Some(render_node) = tree.get_render_node(ancestor) {
-                            if render_node.props.layer
-                                == crate::element::RenderLayer::Foreground
-                            {
+                            if render_node.props.layer == crate::element::RenderLayer::Foreground {
                                 return true;
                             }
                         }

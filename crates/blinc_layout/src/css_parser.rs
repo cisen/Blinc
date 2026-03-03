@@ -1584,11 +1584,7 @@ impl Stylesheet {
     /// Get a class style with state (e.g., `.class:hover`)
     ///
     /// Looks up `class:state` in the class_styles HashMap.
-    pub fn get_class_with_state(
-        &self,
-        class: &str,
-        state: ElementState,
-    ) -> Option<&ElementStyle> {
+    pub fn get_class_with_state(&self, class: &str, state: ElementState) -> Option<&ElementStyle> {
         let key = format!("{}:{}", class, state);
         self.class_styles.get(&key)
     }
@@ -5193,28 +5189,48 @@ fn apply_property(style: &mut ElementStyle, name: &str, value: &str) {
         }
         "padding-top" => {
             if let Some(px) = parse_css_px(value) {
-                let mut p = style.padding.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                let mut p = style.padding.unwrap_or(SpacingRect {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                });
                 p.top = px;
                 style.padding = Some(p);
             }
         }
         "padding-right" => {
             if let Some(px) = parse_css_px(value) {
-                let mut p = style.padding.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                let mut p = style.padding.unwrap_or(SpacingRect {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                });
                 p.right = px;
                 style.padding = Some(p);
             }
         }
         "padding-bottom" => {
             if let Some(px) = parse_css_px(value) {
-                let mut p = style.padding.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                let mut p = style.padding.unwrap_or(SpacingRect {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                });
                 p.bottom = px;
                 style.padding = Some(p);
             }
         }
         "padding-left" => {
             if let Some(px) = parse_css_px(value) {
-                let mut p = style.padding.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                let mut p = style.padding.unwrap_or(SpacingRect {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                });
                 p.left = px;
                 style.padding = Some(p);
             }
@@ -5226,28 +5242,48 @@ fn apply_property(style: &mut ElementStyle, name: &str, value: &str) {
         }
         "margin-top" => {
             if let Some(px) = parse_css_px(value) {
-                let mut m = style.margin.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                let mut m = style.margin.unwrap_or(SpacingRect {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                });
                 m.top = px;
                 style.margin = Some(m);
             }
         }
         "margin-right" => {
             if let Some(px) = parse_css_px(value) {
-                let mut m = style.margin.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                let mut m = style.margin.unwrap_or(SpacingRect {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                });
                 m.right = px;
                 style.margin = Some(m);
             }
         }
         "margin-bottom" => {
             if let Some(px) = parse_css_px(value) {
-                let mut m = style.margin.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                let mut m = style.margin.unwrap_or(SpacingRect {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                });
                 m.bottom = px;
                 style.margin = Some(m);
             }
         }
         "margin-left" => {
             if let Some(px) = parse_css_px(value) {
-                let mut m = style.margin.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                let mut m = style.margin.unwrap_or(SpacingRect {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                });
                 m.left = px;
                 style.margin = Some(m);
             }
@@ -6377,7 +6413,12 @@ fn apply_property_with_errors(
         }
         "padding-top" => {
             if let Some(px) = parse_css_px(value) {
-                let mut p = style.padding.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                let mut p = style.padding.unwrap_or(SpacingRect {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                });
                 p.top = px;
                 style.padding = Some(p);
             } else {
@@ -6386,7 +6427,12 @@ fn apply_property_with_errors(
         }
         "padding-right" => {
             if let Some(px) = parse_css_px(value) {
-                let mut p = style.padding.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                let mut p = style.padding.unwrap_or(SpacingRect {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                });
                 p.right = px;
                 style.padding = Some(p);
             } else {
@@ -6395,7 +6441,12 @@ fn apply_property_with_errors(
         }
         "padding-bottom" => {
             if let Some(px) = parse_css_px(value) {
-                let mut p = style.padding.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                let mut p = style.padding.unwrap_or(SpacingRect {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                });
                 p.bottom = px;
                 style.padding = Some(p);
             } else {
@@ -6404,7 +6455,12 @@ fn apply_property_with_errors(
         }
         "padding-left" => {
             if let Some(px) = parse_css_px(value) {
-                let mut p = style.padding.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                let mut p = style.padding.unwrap_or(SpacingRect {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                });
                 p.left = px;
                 style.padding = Some(p);
             } else {
@@ -6420,7 +6476,12 @@ fn apply_property_with_errors(
         }
         "margin-top" => {
             if let Some(px) = parse_css_px(value) {
-                let mut m = style.margin.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                let mut m = style.margin.unwrap_or(SpacingRect {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                });
                 m.top = px;
                 style.margin = Some(m);
             } else {
@@ -6429,7 +6490,12 @@ fn apply_property_with_errors(
         }
         "margin-right" => {
             if let Some(px) = parse_css_px(value) {
-                let mut m = style.margin.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                let mut m = style.margin.unwrap_or(SpacingRect {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                });
                 m.right = px;
                 style.margin = Some(m);
             } else {
@@ -6438,7 +6504,12 @@ fn apply_property_with_errors(
         }
         "margin-bottom" => {
             if let Some(px) = parse_css_px(value) {
-                let mut m = style.margin.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                let mut m = style.margin.unwrap_or(SpacingRect {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                });
                 m.bottom = px;
                 style.margin = Some(m);
             } else {
@@ -6447,7 +6518,12 @@ fn apply_property_with_errors(
         }
         "margin-left" => {
             if let Some(px) = parse_css_px(value) {
-                let mut m = style.margin.unwrap_or(SpacingRect { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                let mut m = style.margin.unwrap_or(SpacingRect {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                });
                 m.left = px;
                 style.margin = Some(m);
             } else {

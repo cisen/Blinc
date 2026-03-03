@@ -36,6 +36,27 @@ cd Blinc
 cargo build --release
 ```
 
+### Team Bootstrap
+
+```bash
+# Install optional local tooling used by CI
+rustup component add rustfmt clippy
+cargo install cargo-nextest cargo-audit cargo-deny
+```
+
+### Local P0 Check Parity
+
+```bash
+# Keep checks aligned with CI hardening commands
+cargo fmt --all -- --check
+cargo clippy --workspace --all-features -- -W clippy::all -A clippy::type_complexity -A dead_code
+cargo check --workspace --all-features
+cargo nextest run --workspace --all-features
+cargo test --doc --workspace --all-features
+cargo audit
+cargo deny check
+```
+
 ### Hello World
 
 ```rust

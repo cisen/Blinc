@@ -10,6 +10,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Reduce disk usage on GitHub-hosted runners (debug info + incremental artifacts can be large).
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: "-C debuginfo=0"
 
 jobs:
   check:
@@ -42,13 +45,44 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
       - name: Run cargo check
         run: cargo check --workspace --all-features
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run cargo audit
+        continue-on-error: true
+        run: cargo audit
+
+  security-deny:
+    name: Security Deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny
+
+      - name: Run cargo deny
+        continue-on-error: true
+        run: cargo deny check advisories bans sources
 
   test:
     name: Test
@@ -88,14 +122,18 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       - name: Run tests (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run --auto-servernum cargo test --workspace --all-features
+        run: xvfb-run --auto-servernum cargo nextest run --workspace --all-features
         env:
           # Use software rendering for headless GPU tests
           MESA_GL_VERSION_OVERRIDE: "4.5"
@@ -103,7 +141,19 @@ jobs:
 
       - name: Run tests (non-Linux)
         if: runner.os != 'Linux'
-        run: cargo test --workspace --all-features
+        run: cargo nextest run --workspace --all-features
+
+      - name: Run doctests (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum cargo test --doc --workspace --all-features
+        env:
+          # Use software rendering for headless GPU tests
+          MESA_GL_VERSION_OVERRIDE: "4.5"
+          LIBGL_ALWAYS_SOFTWARE: "1"
+
+      - name: Run doctests (non-Linux)
+        if: runner.os != 'Linux'
+        run: cargo test --doc --workspace --all-features
 
   fmt:
     name: Format
@@ -151,7 +201,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
           key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-clippy-
@@ -189,7 +238,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
           key: ${{ runner.os }}-cargo-docs-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-docs-
@@ -243,7 +291,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
           key: ${{ runner.os }}-${{ matrix.target }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-cargo-release-

@@ -34,6 +34,8 @@ Pods/
 DerivedData/
 *.ipa
 **/platforms/ios/libs/
+**/platforms/ios/build-device/
+**/platforms/ios/build-signed/
 
 # Android build artifacts
 **/platforms/android/app/src/main/jniLibs/

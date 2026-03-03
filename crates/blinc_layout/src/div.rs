@@ -3649,7 +3649,7 @@ pub struct StyledTextRenderInfo {
 /// SVG render data extracted from element
 #[derive(Clone)]
 pub struct SvgRenderInfo {
-    pub source: String,
+    pub source: Arc<str>,
     pub tint: Option<blinc_core::Color>,
     pub fill: Option<blinc_core::Color>,
     pub stroke: Option<blinc_core::Color>,

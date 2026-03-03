@@ -202,7 +202,7 @@ pub struct StyledTextData {
 /// SVG data for rendering
 #[derive(Clone)]
 pub struct SvgData {
-    pub source: String,
+    pub source: Arc<str>,
     pub tint: Option<Color>,
     pub fill: Option<Color>,
     pub stroke: Option<Color>,

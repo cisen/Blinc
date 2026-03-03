@@ -27,7 +27,7 @@ use crate::error::Result;
 const IMAGE_CACHE_CAPACITY: usize = 32;
 
 /// Maximum number of parsed SVG documents to cache
-const SVG_CACHE_CAPACITY: usize = 32;
+const SVG_CACHE_CAPACITY: usize = 128;
 
 /// Intersect two axis-aligned clip rects [x, y, w, h], returning their overlap.
 fn intersect_clip_rects(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
@@ -57,7 +57,7 @@ fn effective_single_clip(primary: Option<[f32; 4]>, scroll: Option<[f32; 4]>) ->
 
 /// Maximum number of rasterized SVG textures to cache
 /// Key is (svg_hash, width, height, tint_hash) - separate textures for different sizes/tints
-const RASTERIZED_SVG_CACHE_CAPACITY: usize = 32;
+const RASTERIZED_SVG_CACHE_CAPACITY: usize = 256;
 
 /// Internal render context that manages GPU resources and rendering
 pub struct RenderContext {
@@ -221,7 +221,7 @@ struct ImageElement {
 /// SVG element data for rendering
 #[derive(Clone)]
 struct SvgElement {
-    source: String,
+    source: Arc<str>,
     x: f32,
     y: f32,
     width: f32,
@@ -1887,7 +1887,7 @@ impl RenderContext {
                         }
                     }
 
-                    let mut modified = svg.source.clone();
+                    let mut modified = String::from(&*svg.source);
 
                     // Strip existing attributes from the <svg> tag
                     if let Some(svg_close) = modified.find('>') {
@@ -2064,7 +2064,7 @@ impl RenderContext {
 
                     std::borrow::Cow::Owned(modified)
                 } else {
-                    std::borrow::Cow::Borrowed(&svg.source)
+                    std::borrow::Cow::Borrowed(&*svg.source)
                 };
 
                 // Resolve currentColor references in SVG source.

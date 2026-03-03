@@ -10,6 +10,12 @@
 //!     .color(Color::WHITE);
 //! ```
 
+use std::cell::RefCell;
+use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+
 use blinc_core::{Color, Shadow, Transform};
 use taffy::prelude::*;
 
@@ -17,10 +23,48 @@ use crate::div::{ElementBuilder, ElementTypeId, SvgRenderInfo};
 use crate::element::{RenderLayer, RenderProps};
 use crate::tree::{LayoutNodeId, LayoutTree};
 
+// ---------------------------------------------------------------------------
+// SVG string interning
+// ---------------------------------------------------------------------------
+
+/// Maximum number of interned SVG source strings.
+/// When exceeded, entries only held by the cache (strong_count == 1) are evicted.
+const SVG_INTERN_CAP: usize = 512;
+
+thread_local! {
+    static SVG_INTERN: RefCell<HashMap<u64, Arc<str>>> =
+        RefCell::new(HashMap::with_capacity(64));
+}
+
+/// Intern an SVG source string: if the same content was seen before, return the
+/// cached `Arc<str>` and drop the input.  Otherwise store and return a new Arc.
+fn intern_svg_source(s: String) -> Arc<str> {
+    let mut hasher = DefaultHasher::new();
+    s.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    SVG_INTERN.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(cached) = cache.get(&hash) {
+            return Arc::clone(cached);
+        }
+        // Evict dead entries when full (strong_count == 1 ⇒ only cache holds it)
+        if cache.len() >= SVG_INTERN_CAP {
+            cache.retain(|_, v| Arc::strong_count(v) > 1);
+            if cache.len() >= SVG_INTERN_CAP {
+                cache.clear();
+            }
+        }
+        let arc: Arc<str> = Arc::from(s.as_str());
+        cache.insert(hash, Arc::clone(&arc));
+        arc
+    })
+}
+
 /// An SVG element builder
 pub struct Svg {
-    /// The SVG source string
-    source: String,
+    /// The SVG source string (Arc for O(1) cloning through the render pipeline)
+    source: Arc<str>,
     /// Width in pixels
     width: f32,
     /// Height in pixels
@@ -53,7 +97,7 @@ impl Svg {
     /// Create a new SVG element from source string
     pub fn new(source: impl Into<String>) -> Self {
         Self {
-            source: source.into(),
+            source: intern_svg_source(source.into()),
             width: 24.0,
             height: 24.0,
             tint: None,
@@ -359,7 +403,7 @@ pub fn svg(source: impl Into<String>) -> Svg {
 #[derive(Clone)]
 pub struct SvgRenderData {
     /// The SVG source string
-    pub source: String,
+    pub source: Arc<str>,
     /// Width in pixels
     pub width: f32,
     /// Height in pixels

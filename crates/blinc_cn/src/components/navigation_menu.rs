@@ -112,17 +112,10 @@ impl NavigationMenu {
                             let overlay_handle_for_click = overlay_handle_state.clone();
 
                             let link_item = stateful_with_key::<ButtonState>(&format!("{}_btn", item_key))
-                                .on_state(move |ctx| {
-                                    let state = ctx.state();
-                                    let theme = ThemeState::get();
-
-                                    let (bg, text_color) = match state {
-                                        ButtonState::Hovered | ButtonState::Pressed => (
-                                            theme.color(ColorToken::SecondaryHover).with_alpha(0.5),
-                                            text_primary,
-                                        ),
-                                        _ => (blinc_core::Color::TRANSPARENT, text_secondary),
-                                    };
+                                .on_state(move |_ctx| {
+                                    // Background and text color driven by CSS .cn-nav-link / .cn-nav-link:hover
+                                    let bg = blinc_core::Color::TRANSPARENT;
+                                    let text_color = text_secondary;
 
                                     div()
                                         .class("cn-nav-link")
@@ -131,7 +124,6 @@ impl NavigationMenu {
                                         .h_fit()
                                         .px(3.0)
                                         .py(2.0)
-                                        .rounded(radius)
                                         .bg(bg)
                                         .cursor(CursorStyle::Pointer)
                                         .child(
@@ -175,15 +167,12 @@ impl NavigationMenu {
 
                             let trigger_item = stateful_with_key::<ButtonState>(&format!("{}_btn", item_key))
                                 .deps([active_menu_for_container.signal_id()])
-                                .on_state(move |ctx| {
-                                    let state = ctx.state();
+                                .on_state(move |_ctx| {
                                     let theme = ThemeState::get();
 
-                                    // Background: highlight when hovered, pressed, or active (menu open)
-                                    let (bg, text_color) = if is_active
-                                        || state == ButtonState::Hovered
-                                        || state == ButtonState::Pressed
-                                    {
+                                    // Background: highlight only when active (menu open).
+                                    // Hover background/color driven by CSS .cn-nav-link:hover
+                                    let (bg, text_color) = if is_active {
                                         (
                                             theme.color(ColorToken::SecondaryHover).with_alpha(0.5),
                                             text_primary,
@@ -204,7 +193,6 @@ impl NavigationMenu {
                                             .gap(1.0)
                                             .px(3.0)
                                             .py(2.0)
-                                            .rounded(radius)
                                             .bg(bg)
                                             .cursor(CursorStyle::Pointer)
                                             .child(
@@ -281,9 +269,10 @@ impl NavigationMenu {
                                 })
                                 .on_hover_leave(move |_| {
                                     // Start close delay when leaving trigger
+                                    // (close_all_of(Tooltip) is in on_hover_enter only —
+                                    // calling it here would bypass the 300ms close delay)
                                     if let Some(handle_id) = overlay_handle_for_leave.get() {
                                         let mgr = get_overlay_manager();
-                                        mgr.close_all_of(blinc_layout::widgets::overlay::OverlayKind::Tooltip);
                                         let handle = OverlayHandle::from_raw(handle_id);
 
                                         // Only start close if overlay is visible and not already closing
@@ -568,7 +557,6 @@ impl NavigationLink {
         let theme = ThemeState::get();
         let text_primary = theme.color(ColorToken::TextPrimary);
         let text_secondary = theme.color(ColorToken::TextSecondary);
-        let radius = theme.radius(RadiusToken::Sm);
 
         let label = builder.label.clone();
         let description = builder.description.clone();
@@ -576,16 +564,10 @@ impl NavigationLink {
         let key = builder.key.get().to_string();
 
         let link = stateful_with_key::<ButtonState>(&key)
-            .on_state(move |ctx| {
-                let state = ctx.state();
-                let theme = ThemeState::get();
+            .on_state(move |_ctx| {
 
-                let bg = match state {
-                    ButtonState::Hovered | ButtonState::Pressed => {
-                        theme.color(ColorToken::SecondaryHover).with_alpha(0.5)
-                    }
-                    _ => blinc_core::Color::TRANSPARENT,
-                };
+                // Background is handled by CSS .cn-nav-link:hover
+                let bg = blinc_core::Color::TRANSPARENT;
 
                 let mut content = div()
                     .class("cn-nav-link")
@@ -594,7 +576,6 @@ impl NavigationLink {
                     .gap(1.0)
                     .px(3.0) // Horizontal padding on item
                     .py(2.0) // Vertical padding on item
-                    .rounded(radius)
                     .bg(bg)
                     .cursor(CursorStyle::Pointer)
                     .child(

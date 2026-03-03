@@ -106,7 +106,6 @@ impl Sidebar {
         let theme = ThemeState::get();
         let surface = theme.color(ColorToken::Surface);
         let border = theme.color(ColorToken::Border);
-        let text_primary = theme.color(ColorToken::TextPrimary);
         let text_secondary = theme.color(ColorToken::TextSecondary);
         let text_tertiary = theme.color(ColorToken::TextTertiary);
         let primary = theme.color(ColorToken::Primary);
@@ -154,16 +153,10 @@ impl Sidebar {
                         stateful_with_key::<ButtonState>(&toggle_key)
                             .deps([collapsed.signal_id()])
                             .on_state(move |ctx| {
-                                let state = ctx.state();
-                                let theme = ThemeState::get();
                                 let collapsed_inner = is_collapsed_for_state.get();
 
-                                let bg = match state {
-                                    ButtonState::Hovered | ButtonState::Pressed => {
-                                        theme.color(ColorToken::SecondaryHover).with_alpha(0.5)
-                                    }
-                                    _ => blinc_core::Color::TRANSPARENT,
-                                };
+                                // Background is handled by CSS
+                                let bg = blinc_core::Color::TRANSPARENT;
 
                                 let icon = if collapsed_inner {
                                     CHEVRON_RIGHT_SVG
@@ -275,84 +268,60 @@ impl Sidebar {
                         }
 
                         let item_on_click = item.on_click.clone();
-                        let collapsed_for_item = collapsed.clone();
+                        let is_collapsed = collapsed.get();
 
                         let active_menu_for_trigger = active_menu.clone();
                         let item_for_trigger = item.clone();
 
-                        let item_element = stateful_with_key::<ButtonState>(&item_key)
-                            .deps([collapsed.signal_id()])
-                            .on_state(move |ctx| {
-                                let state = ctx.state();
-                                let theme = ThemeState::get();
-                                let is_collapsed = collapsed_for_item.get();
+                        // Icon color: primary for active, text-secondary for default
+                        // Background and text color fully driven by CSS
+                        let icon_color = if item_is_active {
+                            primary
+                        } else {
+                            text_secondary
+                        };
 
-                                let (bg, icon_color, text_col) = if item_is_active {
-                                    (primary.with_alpha(0.15), primary, text_primary)
-                                } else {
-                                    match state {
-                                        ButtonState::Hovered | ButtonState::Pressed => (
-                                            theme.color(ColorToken::SecondaryHover).with_alpha(0.5),
-                                            primary,
-                                            text_primary,
-                                        ),
-                                        _ => (
-                                            blinc_core::Color::TRANSPARENT,
-                                            text_secondary,
-                                            text_secondary,
-                                        ),
-                                    }
-                                };
-
-                                // Conditionally render: icon-only when collapsed, icon+label when expanded
-                                // Animate position so items slide smoothly when section titles disappear
-                                let item_anim_key = format!("{}_anim", ctx.key());
-                                let mut item_d = div()
-                                    .class("cn-sidebar-item")
-                                    .w_fit()
-                                    .h_fit()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap(3.0)
-                                    .px(3.0)
-                                    .py(2.0)
-                                    .bg(bg)
-                                    .cursor(CursorStyle::Pointer)
-                                    .overflow_clip()
-                                    .animate_bounds(
-                                        VisualAnimationConfig::all()
-                                            .with_key(&item_anim_key)
-                                            .clip_to_animated()
-                                            .snappy(),
-                                    )
-                                    .when(!is_collapsed, |d| {
-                                        d.child(div().flex_shrink_0().child(
-                                            svg(&item_icon).size(18.0, 18.0).color(icon_color),
-                                        ))
-                                        .child(
-                                            div().child(
-                                                text(&item_label)
-                                                    .size(14.0)
-                                                    .color(text_col)
-                                                    .no_cursor()
-                                                    .no_wrap(),
-                                            ),
-                                        )
-                                    })
-                                    .when(is_collapsed, |d| {
-                                        d.child(div().flex_shrink_0().child(
-                                            svg(&item_icon).size(18.0, 18.0).color(icon_color),
-                                        ))
-                                    });
-                                if item_is_active {
-                                    item_d = item_d.class("cn-sidebar-item--active");
-                                }
-                                item_d
+                        let item_anim_key = format!("{}_anim", item_key);
+                        let mut item_element = div()
+                            .class("cn-sidebar-item")
+                            .w_fit()
+                            .h_fit()
+                            .flex_row()
+                            .items_center()
+                            .gap(3.0)
+                            .cursor(CursorStyle::Pointer)
+                            .overflow_clip()
+                            .animate_bounds(
+                                VisualAnimationConfig::all()
+                                    .with_key(&item_anim_key)
+                                    .clip_to_animated()
+                                    .snappy(),
+                            )
+                            .when(!is_collapsed, |d| {
+                                d.child(div().flex_shrink_0().child(
+                                    svg(&item_icon).size(18.0, 18.0).color(icon_color),
+                                ))
+                                .child(
+                                    div().child(
+                                        text(&item_label)
+                                            .size(14.0)
+                                            .no_cursor()
+                                            .no_wrap(),
+                                    ),
+                                )
+                            })
+                            .when(is_collapsed, |d| {
+                                d.child(div().flex_shrink_0().child(
+                                    svg(&item_icon).size(18.0, 18.0).color(icon_color),
+                                ))
                             })
                             .on_click(move |_| {
                                 active_menu_for_trigger.update(|_| Some(item_for_trigger.clone()));
                                 item_on_click();
                             });
+                        if item_is_active {
+                            item_element = item_element.class("cn-sidebar-item--active");
+                        }
 
                         items_container = items_container.child(item_element);
                     }

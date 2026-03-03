@@ -577,7 +577,6 @@ pub const CN_STYLES: &str = r#"
 }
 .cn-nav-link {
     padding: 8px 12px;
-    border-radius: 6px;
     cursor: pointer;
     color: var(--text-secondary);
     transition: background 150ms, color 150ms;
@@ -601,7 +600,6 @@ pub const CN_STYLES: &str = r#"
 }
 .cn-sidebar-item {
     padding: 8px 12px;
-    border-radius: 6px;
     cursor: pointer;
     color: var(--text-secondary);
     transition: background 150ms, color 150ms;
@@ -611,8 +609,8 @@ pub const CN_STYLES: &str = r#"
     color: var(--text-primary);
 }
 .cn-sidebar-item--active {
-    background: var(--primary);
-    color: var(--text-inverse);
+    background: var(--surface-elevated);
+    color: var(--text-primary);
 }
 
 /* ============================================================================

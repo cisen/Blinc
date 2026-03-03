@@ -2112,7 +2112,11 @@ impl RenderContext {
                     )
                     .is_none()
                 {
-                    tracing::warn!("SVG atlas full, could not allocate {}x{}", raster_width, raster_height);
+                    tracing::warn!(
+                        "SVG atlas full, could not allocate {}x{}",
+                        raster_width,
+                        raster_height
+                    );
                     continue;
                 }
             }

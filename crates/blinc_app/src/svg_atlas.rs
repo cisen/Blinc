@@ -214,9 +214,7 @@ impl SvgAtlas {
             let src_offset = y as usize * row_bytes;
             let dst_offset =
                 ((region.y + y) as usize * self.width as usize + region.x as usize) * 4;
-            if src_offset + row_bytes <= rgba.len()
-                && dst_offset + row_bytes <= self.pixels.len()
-            {
+            if src_offset + row_bytes <= rgba.len() && dst_offset + row_bytes <= self.pixels.len() {
                 self.pixels[dst_offset..dst_offset + row_bytes]
                     .copy_from_slice(&rgba[src_offset..src_offset + row_bytes]);
             }

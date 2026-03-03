@@ -1325,9 +1325,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    // Anti-aliasing: smooth transition at edge
-    // Use constant AA width to avoid discontinuities at triangle seams on Vulkan
-    let aa_width = 0.75;
+    // Anti-aliasing: smooth transition at edge using screen-space adaptive width.
+    // fwidth(d) gives |dpdx(d)| + |dpdy(d)| which adapts to the local SDF gradient:
+    //   - Axis-aligned edges: fwidth ≈ 1.0 → AA width ≈ 0.75px (same as before)
+    //   - 45° corner curves:  fwidth ≈ 1.414 → AA width ≈ 1.06px (wider for diagonal)
+    // The wider AA at diagonal angles compensates for rectangular pixel grid alignment,
+    // producing uniform visual edge quality on both straight edges and curves.
+    let d_fw = fwidth(d);
+    let aa_width = max(d_fw * 0.75, 0.5);
     let fill_alpha = 1.0 - smoothstep(-aa_width, aa_width, d);
 
     if fill_alpha < 0.001 {
@@ -1391,7 +1396,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
         let half_size = size * 0.5;
         let rel = sp - center;  // Position relative to center (signed, in unrotated space)
-        let antialias_threshold = 0.5;
+
+        // Use same AA width as outer edge for consistent anti-aliasing quality
+        let border_aa = aa_width;  // 0.75 — matches outer edge smoothstep
 
         // Select corner radius and corner shape based on quadrant
         var corner_radius: f32;
@@ -1414,8 +1421,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
         // Handle zero-width borders (treat as negative for AA purposes)
         let reduced_border = vec2<f32>(
-            select(border.x, -antialias_threshold, border.x == 0.0),
-            select(border.y, -antialias_threshold, border.y == 0.0)
+            select(border.x, -border_aa, border.x == 0.0),
+            select(border.y, -border_aa, border.y == 0.0)
         );
 
         // Calculate position relative to corner
@@ -1429,8 +1436,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let straight_border_inner = corner_to_point + reduced_border;
 
         // Check if we're clearly inside the inner area (not near border)
-        let is_within_inner_straight = straight_border_inner.x < -antialias_threshold &&
-                                       straight_border_inner.y < -antialias_threshold;
+        let is_within_inner_straight = straight_border_inner.x < -border_aa &&
+                                       straight_border_inner.y < -border_aa;
 
         // Fast path: clearly inside inner area, not near rounded corner
         if is_within_inner_straight && !is_near_rounded_corner {
@@ -1439,48 +1446,27 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             // Calculate inner SDF based on context
             var inner_sdf: f32;
 
-            let is_beyond_inner_straight = straight_border_inner.x > 0.0 || straight_border_inner.y > 0.0;
-
-            if corner_center_to_point.x <= 0.0 || corner_center_to_point.y <= 0.0 {
-                // Not in corner region - use straight edge distance
-                inner_sdf = -max(straight_border_inner.x, straight_border_inner.y);
-            } else if is_beyond_inner_straight {
-                // Beyond inner straight edge - definitely in border
-                inner_sdf = -1.0;
-            } else if abs(reduced_border.x - reduced_border.y) < 0.001 {
-                // Equal border widths - inner corner is same shape with reduced radius
-                if abs(corner_n - 1.0) < 0.01 {
-                    // Round (circular) - SDF offset works for circles
-                    let outer_sdf = length(max(vec2<f32>(0.0), corner_center_to_point)) +
-                                   min(0.0, max(corner_center_to_point.x, corner_center_to_point.y)) - corner_radius;
-                    inner_sdf = -(outer_sdf + reduced_border.x);
-                } else {
-                    // Superellipse (squircle, bevel, etc.) - compute inner superellipse independently
-                    // SDF offset doesn't produce a parallel superellipse curve; must re-evaluate with reduced radius
-                    let inner_r = max(corner_radius - reduced_border.x, 0.0);
-                    let p_exp = pow(2.0, min(abs(corner_n), 5.0));
-                    if inner_r < 0.001 {
-                        // Inner radius collapsed - entire corner region is border
-                        inner_sdf = -length(max(vec2<f32>(0.0), corner_center_to_point));
-                    } else {
-                        let inner_t = corner_center_to_point / inner_r;
-                        let inner_se = pow(max(inner_t.x, 0.0), p_exp) + pow(max(inner_t.y, 0.0), p_exp);
-                        inner_sdf = -((pow(inner_se, 1.0 / p_exp) - 1.0) * inner_r);
-                    }
-                }
+            if abs(reduced_border.x - reduced_border.y) < 0.001 {
+                // Uniform border — use exact SDF offset of the outer shape distance.
+                // For rounded rects (Minkowski sum of box + circle), inset by a constant
+                // produces another rounded rect. This is branchless, handles both straight
+                // edges and corners, and is guaranteed continuous with the outer SDF.
+                inner_sdf = -(d + reduced_border.x);
             } else {
-                // Asymmetric borders - inner corner is elliptical
-                if abs(corner_n - 1.0) < 0.01 {
-                    // Round - use elliptical inner corner (GPUI approach)
+                // Asymmetric borders — inner corners become elliptical
+                if corner_center_to_point.x <= 0.0 || corner_center_to_point.y <= 0.0 {
+                    // Not in corner region — straight edge distance
+                    inner_sdf = -max(straight_border_inner.x, straight_border_inner.y);
+                } else if abs(corner_n - 1.0) < 0.01 {
+                    // Round corner — elliptical inner corner (GPUI approach)
                     let ellipse_radii = max(vec2<f32>(0.0), vec2<f32>(corner_radius) - reduced_border);
                     inner_sdf = quarter_ellipse_sdf(corner_center_to_point, ellipse_radii);
                 } else {
-                    // Superellipse - compute inner superellipse with per-axis reduced radii
+                    // Superellipse with per-axis reduced radii
                     let inner_radii = max(vec2<f32>(0.0), vec2<f32>(corner_radius) - reduced_border);
                     let p_exp = pow(2.0, min(abs(corner_n), 5.0));
                     let min_inner_r = min(inner_radii.x, inner_radii.y);
                     if min_inner_r < 0.001 {
-                        // Inner radius collapsed on at least one axis
                         inner_sdf = -length(max(vec2<f32>(0.0), corner_center_to_point));
                     } else {
                         let inner_t = corner_center_to_point / inner_radii;
@@ -1491,9 +1477,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 }
             }
 
-            // Calculate border blend from inner SDF
-            // inner_sdf > 0 means inside inner (no border), < 0 means in border region
-            let border_blend = saturate(antialias_threshold - inner_sdf);
+            // Use screen-space adaptive AA for the inner border edge.
+            // fwidth(d) = |dpdx(d)| + |dpdy(d)| adapts to the local SDF gradient direction:
+            //   - Straight edges (axis-aligned): fwidth ≈ 1.0 → AA width ≈ 0.75px
+            //   - 45° diagonal (corner curves): fwidth ≈ 1.414 → AA width ≈ 1.06px
+            // The wider AA at diagonal angles compensates for pixel grid alignment,
+            // producing smoother inner border curves on opaque fills.
+            let inner_aa = max(d_fw * 0.75, 0.5);
+            let border_blend = smoothstep(-inner_aa, inner_aa, -inner_sdf);
 
             // Only apply border color where we're inside the shape
             fill_color = mix(fill_color, prim.border_color, border_blend * step(0.001, fill_alpha));

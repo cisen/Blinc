@@ -988,9 +988,17 @@ pub fn pre(content: impl Into<String>) -> Code {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Once;
+
+    static THEME_INIT: Once = Once::new();
+
+    fn ensure_theme_initialized() {
+        THEME_INIT.call_once(ThemeState::init_default);
+    }
 
     #[test]
     fn test_code_creation() {
+        ensure_theme_initialized();
         let c = code("fn main() {}");
         assert!(!c.config.editable);
         assert!(!c.config.line_numbers);
@@ -998,6 +1006,7 @@ mod tests {
 
     #[test]
     fn test_code_builder() {
+        ensure_theme_initialized();
         let c = code("let x = 42;")
             .line_numbers(true)
             .edit(true)

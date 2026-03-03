@@ -1,0 +1,20 @@
+[package]
+name = "blinc_tabler_icons"
+description = "Tabler icon library for Blinc UI framework"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/blinc_tabler_icons"
+rust-version.workspace = true
+keywords = ["ui", "gui", "icons", "tabler", "blinc"]
+categories = ["gui"]
+build = "build.rs"
+
+[build-dependencies]
+walkdir = "2"
+roxmltree = "0.20"
+
+[dependencies]
+# No runtime dependencies - pure static data
+# DCE handles binary size optimization automatically

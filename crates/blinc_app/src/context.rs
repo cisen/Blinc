@@ -86,6 +86,8 @@ pub struct RenderContext {
     cursor_pos: [f32; 2],
     // Whether the last render contained @flow shader elements (triggers continuous redraw)
     has_active_flows: bool,
+    // Frame counter for periodic cache stats logging
+    frame_count: u64,
 }
 
 struct CachedTexture {
@@ -312,6 +314,7 @@ impl RenderContext {
             scratch_images: Vec::with_capacity(32),   // Pre-allocate for image elements
             cursor_pos: [0.0; 2],
             has_active_flows: false,
+            frame_count: 0,
         }
     }
 
@@ -753,6 +756,44 @@ impl RenderContext {
         self.scratch_texts = texts;
         self.scratch_svgs = svgs;
         self.scratch_images = images;
+    }
+
+    /// Log cache statistics (called every 300 frames, ~5 seconds at 60fps).
+    /// Visible at RUST_LOG=blinc_app=debug level.
+    fn log_cache_stats(&mut self) {
+        self.frame_count += 1;
+        if self.frame_count % 300 != 1 {
+            return;
+        }
+        let (aw, ah) = self.text_ctx.atlas_dimensions();
+        let (caw, cah) = self.text_ctx.color_atlas_dimensions();
+        let atlas_glyphs = self.text_ctx.atlas().glyph_count();
+        let atlas_util = self.text_ctx.atlas().utilization();
+        let color_glyphs = self.text_ctx.color_atlas().glyph_count();
+        let color_util = self.text_ctx.color_atlas().utilization();
+        let glyph_cache = self.text_ctx.glyph_cache_len();
+        let glyph_cap = self.text_ctx.glyph_cache_capacity();
+        let color_cache = self.text_ctx.color_glyph_cache_len();
+        let color_cap = self.text_ctx.color_glyph_cache_capacity();
+        let img_cache = self.image_cache.len();
+        let svg_cache = self.svg_cache.len();
+        let rast_svg = self.rasterized_svg_cache.len();
+
+        tracing::info!(
+            "Cache stats [frame {}]: \
+             atlas={}x{} ({} glyphs, {:.1}% used), \
+             color_atlas={}x{} ({} glyphs, {:.1}% used), \
+             glyph_lru={}/{}, color_glyph_lru={}/{}, \
+             image={}/{}, svg_doc={}/{}, rasterized_svg={}/{}",
+            self.frame_count,
+            aw, ah, atlas_glyphs, atlas_util * 100.0,
+            caw, cah, color_glyphs, color_util * 100.0,
+            glyph_cache, glyph_cap,
+            color_cache, color_cap,
+            img_cache, IMAGE_CACHE_CAPACITY,
+            svg_cache, SVG_CACHE_CAPACITY,
+            rast_svg, RASTERIZED_SVG_CACHE_CAPACITY,
+        );
     }
 
     /// Ensure glass-related textures exist and are the right size.
@@ -4207,6 +4248,9 @@ impl RenderContext {
 
         // Return scratch buffers for reuse on next frame
         self.return_scratch_elements(texts, svgs, images);
+
+        // Periodic cache stats (every ~5s at 60fps)
+        self.log_cache_stats();
 
         Ok(())
     }

@@ -596,6 +596,46 @@ impl TextRenderingContext {
         self.renderer.font_registry()
     }
 
+    /// Get grayscale atlas dimensions
+    pub fn atlas_dimensions(&self) -> (u32, u32) {
+        self.renderer.atlas_dimensions()
+    }
+
+    /// Get color atlas dimensions
+    pub fn color_atlas_dimensions(&self) -> (u32, u32) {
+        self.renderer.color_atlas_dimensions()
+    }
+
+    /// Get the grayscale glyph atlas
+    pub fn atlas(&self) -> &blinc_text::GlyphAtlas {
+        self.renderer.atlas()
+    }
+
+    /// Get the color glyph atlas
+    pub fn color_atlas(&self) -> &blinc_text::ColorGlyphAtlas {
+        self.renderer.color_atlas()
+    }
+
+    /// Number of entries in the grayscale glyph LRU cache
+    pub fn glyph_cache_len(&self) -> usize {
+        self.renderer.glyph_cache_len()
+    }
+
+    /// Number of entries in the color glyph LRU cache
+    pub fn color_glyph_cache_len(&self) -> usize {
+        self.renderer.color_glyph_cache_len()
+    }
+
+    /// Capacity of the grayscale glyph LRU cache
+    pub fn glyph_cache_capacity(&self) -> usize {
+        self.renderer.glyph_cache_capacity()
+    }
+
+    /// Capacity of the color glyph LRU cache
+    pub fn color_glyph_cache_capacity(&self) -> usize {
+        self.renderer.color_glyph_cache_capacity()
+    }
+
     /// Update the GPU atlas texture from the TextRenderer's atlas
     fn update_atlas_texture(&mut self) {
         let (width, height) = self.renderer.atlas_dimensions();

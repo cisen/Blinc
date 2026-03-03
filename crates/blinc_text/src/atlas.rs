@@ -303,8 +303,9 @@ impl GlyphAtlas {
 
 impl Default for GlyphAtlas {
     fn default() -> Self {
-        // Start with 512x512 atlas (256 KB) — grows to 1024, 2048, 4096 as needed
-        Self::new(512, 512)
+        // 1024x1024 atlas (1 MB for R8) — large enough for most UIs without growing.
+        // grow() doubles dimensions (up to 4096) if more space is needed.
+        Self::new(1024, 1024)
     }
 }
 
@@ -541,8 +542,9 @@ impl ColorGlyphAtlas {
 
 impl Default for ColorGlyphAtlas {
     fn default() -> Self {
-        // Start with 256x256 atlas (256 KB for RGBA) — grows as needed
-        Self::new(256, 256)
+        // 512x512 atlas (1 MB for RGBA) — sufficient for typical emoji usage.
+        // grow() doubles dimensions (up to 4096) if more space is needed.
+        Self::new(512, 512)
     }
 }
 

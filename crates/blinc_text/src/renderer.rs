@@ -218,6 +218,26 @@ impl TextRenderer {
         self.color_atlas.mark_clean();
     }
 
+    /// Number of cached glyph rasterization entries (grayscale LRU)
+    pub fn glyph_cache_len(&self) -> usize {
+        self.glyph_cache.len()
+    }
+
+    /// Number of cached color glyph rasterization entries (emoji LRU)
+    pub fn color_glyph_cache_len(&self) -> usize {
+        self.color_glyph_cache.len()
+    }
+
+    /// Capacity of the grayscale glyph LRU cache
+    pub fn glyph_cache_capacity(&self) -> usize {
+        GLYPH_CACHE_CAPACITY
+    }
+
+    /// Capacity of the color glyph LRU cache
+    pub fn color_glyph_cache_capacity(&self) -> usize {
+        COLOR_GLYPH_CACHE_CAPACITY
+    }
+
     /// Get atlas pixel data for GPU upload (grayscale)
     pub fn atlas_pixels(&self) -> &[u8] {
         self.atlas.pixels()
@@ -354,8 +374,6 @@ impl TextRenderer {
 
         // Convert to GPU glyph instances
         let mut glyphs = Vec::with_capacity(positioned_glyphs.len());
-        let atlas_dims = self.atlas.dimensions();
-        let color_atlas_dims = self.color_atlas.dimensions();
 
         // Track glyph info along with whether it's a color glyph
         // (GlyphInfo, PositionedGlyph, is_color)
@@ -538,6 +556,10 @@ impl TextRenderer {
             }));
         }
 
+        // Re-read atlas dimensions after rasterization — the atlas may have grown
+        let atlas_dims = self.atlas.dimensions();
+        let color_atlas_dims = self.color_atlas.dimensions();
+
         // Second pass: build glyph instances
         for glyph_data in &glyph_infos {
             let data = match glyph_data {
@@ -631,7 +653,6 @@ impl TextRenderer {
 
         // Convert to GPU glyph instances
         let mut glyphs = Vec::with_capacity(positioned_glyphs.len());
-        let atlas_dims = self.atlas.dimensions();
 
         // First pass: rasterize all glyphs
         let mut glyph_infos: Vec<Option<GlyphInfo>> = Vec::with_capacity(positioned_glyphs.len());
@@ -651,6 +672,9 @@ impl TextRenderer {
                 self.rasterize_glyph_for_font(&font, font_id, positioned.glyph_id, font_size)?;
             glyph_infos.push(Some(glyph_info));
         }
+
+        // Re-read atlas dimensions after rasterization — the atlas may have grown
+        let atlas_dims = self.atlas.dimensions();
 
         // Second pass: build glyph instances with per-glyph colors
         // We need to map glyph cluster (byte position) to color
@@ -858,6 +882,8 @@ impl TextRenderer {
                 if !self.atlas.grow() {
                     return Err(TextError::AtlasFull);
                 }
+                let (nw, nh) = self.atlas.dimensions();
+                tracing::info!("Glyph atlas grew to {}x{}", nw, nh);
                 self.atlas.insert_glyph(
                     font_id,
                     glyph_id,
@@ -933,6 +959,8 @@ impl TextRenderer {
                 if !self.color_atlas.grow() {
                     return Err(TextError::AtlasFull);
                 }
+                let (nw, nh) = self.color_atlas.dimensions();
+                tracing::info!("Color glyph atlas grew to {}x{}", nw, nh);
                 self.color_atlas.insert_glyph(
                     font_id,
                     glyph_id,

@@ -4,6 +4,8 @@
 //! occurs outside their subtree. The event router calls `fire_click_outside()`
 //! on every mouse down, passing the hit target's ancestor element IDs.
 
+#![allow(clippy::incompatible_msrv)]
+
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -63,11 +65,7 @@ pub fn fire_click_outside(ancestor_element_ids: &[String]) {
             return;
         }
         reg.iter()
-            .filter(|(_, entry)| {
-                !ancestor_element_ids
-                    .iter()
-                    .any(|id| *id == entry.element_id)
-            })
+            .filter(|(_, entry)| !ancestor_element_ids.contains(&entry.element_id))
             .map(|(key, entry)| (key.clone(), Arc::clone(&entry.on_dismiss)))
             .collect()
     };

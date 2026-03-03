@@ -12060,10 +12060,8 @@ impl RenderTree {
                                 [bw, bw, bw, bw],
                                 bc,
                             );
-                        } else {
-                            if let Some(ref bg) = render_node.props.background {
-                                ctx.fill_rect(rect, radius, bg.clone());
-                            }
+                        } else if let Some(ref bg) = render_node.props.background {
+                            ctx.fill_rect(rect, radius, bg.clone());
                         }
                     }
 

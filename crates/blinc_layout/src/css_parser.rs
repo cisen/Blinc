@@ -2759,7 +2759,6 @@ where
     }
 }
 
-/// Result of parsing a stylesheet - rules, variables, and keyframes
 // ===========================================================================
 // @flow DAG parser
 // ===========================================================================
@@ -2987,7 +2986,7 @@ fn parse_flow_input<'a>(
         if type_decl.starts_with("builtin(") {
             // builtin(var-name) — explicit builtin source
             let inner = type_decl.strip_prefix("builtin(")?.strip_suffix(')')?;
-            if let Some(builtin) = blinc_core::flow::BuiltinVar::from_str(inner.trim()) {
+            if let Some(builtin) = blinc_core::flow::BuiltinVar::parse(inner.trim()) {
                 let ty = builtin.output_type();
                 graph.inputs.push(FlowInput {
                     name: name.to_string(),
@@ -3034,7 +3033,7 @@ fn parse_flow_input<'a>(
     } else {
         // Simple declaration: input name;
         let name = decl;
-        let source = if let Some(builtin) = blinc_core::flow::BuiltinVar::from_str(name) {
+        let source = if let Some(builtin) = blinc_core::flow::BuiltinVar::parse(name) {
             let ty = builtin.output_type();
             graph.inputs.push(FlowInput {
                 name: name.to_string(),
@@ -3298,7 +3297,7 @@ fn parse_flow_step<'a>(
     let body = &rest[..close];
     let after = &rest[close + 1..];
 
-    let step_type = match StepType::from_str(type_str) {
+    let step_type = match StepType::parse(type_str) {
         Some(st) => st,
         None => {
             errors.push(ParseError {
@@ -3529,7 +3528,7 @@ fn parse_chain_link(input: &str) -> Result<ChainLink, String> {
     };
 
     let step_type =
-        StepType::from_str(type_str).ok_or_else(|| format!("unknown step type: '{}'", type_str))?;
+        StepType::parse(type_str).ok_or_else(|| format!("unknown step type: '{}'", type_str))?;
 
     let mut params = HashMap::new();
 
@@ -3716,11 +3715,7 @@ fn parse_color_stop_list(input: &str) -> Result<Vec<(FlowExpr, f32)>, String> {
 
         let rest = rest[pos_end..].trim_start();
         // Consume optional comma
-        remaining = if rest.starts_with(',') {
-            rest[1..].trim_start()
-        } else {
-            rest
-        };
+        remaining = rest.strip_prefix(',').map_or(rest, |s| s.trim_start());
     }
 
     if stops.is_empty() {
@@ -3755,6 +3750,7 @@ fn parse_flow_expr(input: &str) -> Result<FlowExpr, String> {
 }
 
 /// Parse additive expressions: `a + b`, `a - b`
+#[allow(clippy::manual_strip)]
 fn parse_flow_additive(input: &str) -> Result<(FlowExpr, &str), String> {
     let (mut left, mut rest) = parse_flow_multiplicative(input)?;
 
@@ -3783,6 +3779,7 @@ fn parse_flow_additive(input: &str) -> Result<(FlowExpr, &str), String> {
 }
 
 /// Parse multiplicative expressions: `a * b`, `a / b`
+#[allow(clippy::manual_strip)]
 fn parse_flow_multiplicative(input: &str) -> Result<(FlowExpr, &str), String> {
     let (mut left, mut rest) = parse_flow_unary(input)?;
 
@@ -3805,6 +3802,7 @@ fn parse_flow_multiplicative(input: &str) -> Result<(FlowExpr, &str), String> {
 }
 
 /// Parse unary expressions: `-a`
+#[allow(clippy::manual_strip)]
 fn parse_flow_unary(input: &str) -> Result<(FlowExpr, &str), String> {
     let trimmed = input.trim_start();
     if trimmed.starts_with('-') {
@@ -3832,7 +3830,7 @@ fn parse_flow_primary(input: &str) -> Result<(FlowExpr, &str), String> {
 
 /// Check for and consume a swizzle suffix like `.x`, `.xy`, `.rgb`
 /// Tolerates whitespace around the dot (e.g. `uv . x` from stringify!())
-fn try_parse_flow_swizzle<'a>(expr: FlowExpr, rest: &'a str) -> (FlowExpr, &'a str) {
+fn try_parse_flow_swizzle(expr: FlowExpr, rest: &str) -> (FlowExpr, &str) {
     let trimmed = rest.trim_start();
     if !trimmed.starts_with('.') {
         return (expr, trimmed);
@@ -3860,6 +3858,7 @@ fn try_parse_flow_swizzle<'a>(expr: FlowExpr, rest: &'a str) -> (FlowExpr, &'a s
     )
 }
 
+#[allow(clippy::manual_strip)]
 fn parse_flow_primary_inner(input: &str) -> Result<(FlowExpr, &str), String> {
     let trimmed = input.trim_start();
 
@@ -3960,7 +3959,7 @@ fn parse_flow_primary_inner(input: &str) -> Result<(FlowExpr, &str), String> {
                 }
                 _ => {
                     // Look up as built-in function
-                    if let Some(func) = FlowFunc::from_str(name) {
+                    if let Some(func) = FlowFunc::parse(name) {
                         return Ok((FlowExpr::Call { func, args }, rest));
                     } else {
                         return Err(format!("unknown function '{}'", name));
@@ -7325,9 +7324,7 @@ fn split_transform_functions(input: &str) -> Vec<&str> {
                 depth += 1;
             }
             ')' => {
-                if depth > 0 {
-                    depth -= 1;
-                }
+                depth = depth.saturating_sub(1);
                 if depth == 0 && in_func {
                     let func = input[start..=i].trim();
                     if !func.is_empty() {

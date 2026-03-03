@@ -1245,7 +1245,7 @@ impl EventRouter {
                 }
 
                 // If we already have a foreground result, no need to check more
-                if best_hit.as_ref().map_or(false, |h| h.is_foreground) {
+                if best_hit.as_ref().is_some_and(|h| h.is_foreground) {
                     break;
                 }
             }

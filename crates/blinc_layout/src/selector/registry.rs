@@ -163,7 +163,7 @@ impl ElementRegistry {
             .unwrap_or(false)
     }
 
-    /// Build an inverted index: class_name → Vec<LayoutNodeId>.
+    /// Build an inverted index: class_name → `Vec<LayoutNodeId>`.
     ///
     /// Takes a single read lock on the classes map and builds the full index.
     /// Used by stylesheet application to avoid O(rules × nodes) iteration.

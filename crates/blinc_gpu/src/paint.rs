@@ -106,6 +106,9 @@ struct LayerState {
     parent_state_indices: (usize, usize, usize, usize),
 }
 
+/// Clip stack entry: (shape, optional polygon aux_data metadata (aux_offset, vertex_count), overflow_fade)
+type ClipStackEntry = (ClipShape, Option<(u32, u32)>, [f32; 4]);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GPU Paint Context
 // ─────────────────────────────────────────────────────────────────────────────
@@ -124,8 +127,7 @@ pub struct GpuPaintContext<'a> {
     /// Blend mode stack
     blend_mode_stack: Vec<BlendMode>,
     /// Clip stack (for tracking, actual clipping done in shader)
-    /// Each entry: (shape, optional polygon aux_data metadata: (aux_offset, vertex_count))
-    clip_stack: Vec<(ClipShape, Option<(u32, u32)>, [f32; 4])>,
+    clip_stack: Vec<ClipStackEntry>,
     /// Viewport size
     viewport: Size,
     /// Whether we're in a 3D context

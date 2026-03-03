@@ -238,8 +238,10 @@ impl FlowPipelineCache {
             .count();
 
         // Compute uniform buffer size: base FlowUniformData + dynamic fields (each f32-aligned)
+        // Align up to 16-byte boundary for GPU uniform requirements.
         let base_size = std::mem::size_of::<FlowUniformData>() as u64;
         let dynamic_size = (dynamic_field_count * 4) as u64;
+        #[allow(clippy::manual_div_ceil)]
         let uniform_size = ((base_size + dynamic_size + 15) / 16) * 16;
         let uniform_size = uniform_size.max(256);
 
@@ -590,9 +592,7 @@ impl FlowPipelineCache {
 
     /// Check if a compiled flow needs a scene texture for rendering.
     pub fn needs_scene_texture(&self, flow_name: &str) -> bool {
-        self.pipelines
-            .get(flow_name)
-            .map_or(false, |c| c.needs_scene)
+        self.pipelines.get(flow_name).is_some_and(|c| c.needs_scene)
     }
 
     /// Check if any compiled flow needs a scene texture.

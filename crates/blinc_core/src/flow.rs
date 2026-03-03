@@ -149,7 +149,7 @@ pub enum BuiltinVar {
 
 impl BuiltinVar {
     /// Parse a builtin variable name
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "uv" => Some(Self::Uv),
             "time" => Some(Self::Time),
@@ -359,7 +359,7 @@ pub enum FlowFunc {
 
 impl FlowFunc {
     /// Parse a function name to a FlowFunc
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "sin" => Some(Self::Sin),
             "cos" => Some(Self::Cos),
@@ -665,7 +665,7 @@ pub enum StepType {
 
 impl StepType {
     /// Parse a step type name (kebab-case)
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "pattern-noise" | "pattern_noise" => Some(Self::PatternNoise),
             "pattern-ripple" | "pattern_ripple" => Some(Self::PatternRipple),
@@ -2142,83 +2142,81 @@ fn expand_effect_frost(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
     let ny_p = format!("_s_{}_nyp", step.name);
     let s_name = format!("_s_{}_s", step.name);
 
-    let mut nodes = Vec::new();
-
-    // Noise X: uv * scale
-    nodes.push(FlowNode {
-        name: nx_p.clone(),
-        expr: FlowExpr::Mul(
-            Box::new(FlowExpr::Ref("uv".to_string())),
-            Box::new(scale.clone()),
-        ),
-        inferred_type: None,
-    });
-    nodes.push(FlowNode {
-        name: nx_name.clone(),
-        expr: FlowExpr::Call {
-            func: FlowFunc::Fbm,
-            args: vec![FlowExpr::Ref(nx_p), FlowExpr::Float(2.0)],
-        },
-        inferred_type: None,
-    });
-
-    // Noise Y: uv * scale + vec2(100, 0)
-    nodes.push(FlowNode {
-        name: ny_p.clone(),
-        expr: FlowExpr::Add(
-            Box::new(FlowExpr::Mul(
+    let nodes = vec![
+        // Noise X: uv * scale
+        FlowNode {
+            name: nx_p.clone(),
+            expr: FlowExpr::Mul(
                 Box::new(FlowExpr::Ref("uv".to_string())),
-                Box::new(scale),
-            )),
-            Box::new(FlowExpr::Vec2(
-                Box::new(FlowExpr::Float(100.0)),
-                Box::new(FlowExpr::Float(0.0)),
-            )),
-        ),
-        inferred_type: None,
-    });
-    nodes.push(FlowNode {
-        name: ny_name.clone(),
-        expr: FlowExpr::Call {
-            func: FlowFunc::Fbm,
-            args: vec![FlowExpr::Ref(ny_p), FlowExpr::Float(2.0)],
+                Box::new(scale.clone()),
+            ),
+            inferred_type: None,
         },
-        inferred_type: None,
-    });
-
-    // _s_{name}_s = strength * mask
-    nodes.push(FlowNode {
-        name: s_name.clone(),
-        expr: FlowExpr::Mul(Box::new(strength), Box::new(mask)),
-        inferred_type: None,
-    });
-
-    // {name} = vec2((nx - 0.5) * s, (ny - 0.5) * s)
-    nodes.push(FlowNode {
-        name: step.name.clone(),
-        expr: FlowExpr::Vec2(
-            Box::new(FlowExpr::Mul(
-                Box::new(FlowExpr::Sub(
-                    Box::new(FlowExpr::Ref(nx_name)),
-                    Box::new(FlowExpr::Float(0.5)),
+        FlowNode {
+            name: nx_name.clone(),
+            expr: FlowExpr::Call {
+                func: FlowFunc::Fbm,
+                args: vec![FlowExpr::Ref(nx_p), FlowExpr::Float(2.0)],
+            },
+            inferred_type: None,
+        },
+        // Noise Y: uv * scale + vec2(100, 0)
+        FlowNode {
+            name: ny_p.clone(),
+            expr: FlowExpr::Add(
+                Box::new(FlowExpr::Mul(
+                    Box::new(FlowExpr::Ref("uv".to_string())),
+                    Box::new(scale),
                 )),
-                Box::new(FlowExpr::Ref(s_name.clone())),
-            )),
-            Box::new(FlowExpr::Mul(
-                Box::new(FlowExpr::Sub(
-                    Box::new(FlowExpr::Ref(ny_name)),
-                    Box::new(FlowExpr::Float(0.5)),
+                Box::new(FlowExpr::Vec2(
+                    Box::new(FlowExpr::Float(100.0)),
+                    Box::new(FlowExpr::Float(0.0)),
                 )),
-                Box::new(FlowExpr::Ref(s_name)),
-            )),
-        ),
-        inferred_type: None,
-    });
+            ),
+            inferred_type: None,
+        },
+        FlowNode {
+            name: ny_name.clone(),
+            expr: FlowExpr::Call {
+                func: FlowFunc::Fbm,
+                args: vec![FlowExpr::Ref(ny_p), FlowExpr::Float(2.0)],
+            },
+            inferred_type: None,
+        },
+        // _s_{name}_s = strength * mask
+        FlowNode {
+            name: s_name.clone(),
+            expr: FlowExpr::Mul(Box::new(strength), Box::new(mask)),
+            inferred_type: None,
+        },
+        // {name} = vec2((nx - 0.5) * s, (ny - 0.5) * s)
+        FlowNode {
+            name: step.name.clone(),
+            expr: FlowExpr::Vec2(
+                Box::new(FlowExpr::Mul(
+                    Box::new(FlowExpr::Sub(
+                        Box::new(FlowExpr::Ref(nx_name)),
+                        Box::new(FlowExpr::Float(0.5)),
+                    )),
+                    Box::new(FlowExpr::Ref(s_name.clone())),
+                )),
+                Box::new(FlowExpr::Mul(
+                    Box::new(FlowExpr::Sub(
+                        Box::new(FlowExpr::Ref(ny_name)),
+                        Box::new(FlowExpr::Float(0.5)),
+                    )),
+                    Box::new(FlowExpr::Ref(s_name)),
+                )),
+            ),
+            inferred_type: None,
+        },
+    ];
 
     Ok(nodes)
 }
 
 /// effect-specular: hash-scatter specular highlights on masked areas
+#[allow(clippy::vec_init_then_push)]
 fn expand_effect_specular(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
     let scale = param_expr(&step.params, "scale", FlowExpr::Float(20.0));
     let mask = param_expr(&step.params, "mask", FlowExpr::Float(1.0));
@@ -2395,6 +2393,7 @@ fn expand_effect_specular(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
 }
 
 /// effect-fog: fog/haze composite with tint, density, highlights, and clear mask
+#[allow(clippy::vec_init_then_push)]
 fn expand_effect_fog(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
     let source = param_expr(&step.params, "source", FlowExpr::Float(0.0));
     let fog_density = param_expr(&step.params, "fog_density", FlowExpr::Float(0.1));
@@ -2515,7 +2514,9 @@ fn expand_effect_fog(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
 ///   - offset: vec2 spatial offset (default vec2(0,0))
 ///   - x_scale: horizontal scale multiplier (default 1.0)
 ///   - y_scale: vertical scale multiplier (default 1.0)
+///
 /// Requires inputs: uv, time, resolution
+#[allow(clippy::vec_init_then_push)]
 fn expand_transform_wet(step: &FlowStep) -> Result<Vec<FlowNode>, FlowError> {
     let speed = param_expr(&step.params, "speed", FlowExpr::Float(0.02));
     let offset = param_expr(
@@ -2972,7 +2973,7 @@ impl FlowGraph {
             if !name
                 .chars()
                 .next()
-                .map_or(false, |c| c.is_ascii_alphabetic() || c == '_')
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
             {
                 errors.push(FlowError::InvalidIdentifier {
                     name: name.to_string(),
@@ -3102,12 +3103,12 @@ impl FlowGraph {
         }
 
         // Kahn's algorithm: start with nodes that have no node dependencies
-        let mut queue: VecDeque<usize> = VecDeque::new();
-        for i in 0..n {
-            if in_degree[i] == 0 {
-                queue.push_back(i);
-            }
-        }
+        let mut queue: VecDeque<usize> = in_degree
+            .iter()
+            .enumerate()
+            .filter(|(_, &deg)| deg == 0)
+            .map(|(i, _)| i)
+            .collect();
 
         let mut order = Vec::with_capacity(n);
         while let Some(idx) = queue.pop_front() {
@@ -3757,17 +3758,17 @@ mod tests {
 
     #[test]
     fn test_flowfunc_from_str() {
-        assert_eq!(FlowFunc::from_str("sin"), Some(FlowFunc::Sin));
-        assert_eq!(FlowFunc::from_str("distance"), Some(FlowFunc::Distance));
+        assert_eq!(FlowFunc::parse("sin"), Some(FlowFunc::Sin));
+        assert_eq!(FlowFunc::parse("distance"), Some(FlowFunc::Distance));
         assert_eq!(
-            FlowFunc::from_str("sdf-smooth-union"),
+            FlowFunc::parse("sdf-smooth-union"),
             Some(FlowFunc::SdfSmoothUnion)
         );
         assert_eq!(
-            FlowFunc::from_str("sdf_smooth_union"),
+            FlowFunc::parse("sdf_smooth_union"),
             Some(FlowFunc::SdfSmoothUnion)
         );
-        assert_eq!(FlowFunc::from_str("unknown"), None);
+        assert_eq!(FlowFunc::parse("unknown"), None);
     }
 
     // -----------------------------------------------------------------------
@@ -3802,27 +3803,27 @@ mod tests {
     #[test]
     fn test_step_type_from_str() {
         assert_eq!(
-            StepType::from_str("pattern-noise"),
+            StepType::parse("pattern-noise"),
             Some(StepType::PatternNoise)
         );
-        assert_eq!(StepType::from_str("color-ramp"), Some(StepType::ColorRamp));
+        assert_eq!(StepType::parse("color-ramp"), Some(StepType::ColorRamp));
         assert_eq!(
-            StepType::from_str("compose-blend"),
+            StepType::parse("compose-blend"),
             Some(StepType::ComposeBlend)
         );
         assert_eq!(
-            StepType::from_str("transform-warp"),
+            StepType::parse("transform-warp"),
             Some(StepType::TransformWarp)
         );
         assert_eq!(
-            StepType::from_str("surface-light"),
+            StepType::parse("surface-light"),
             Some(StepType::SurfaceLight)
         );
         assert_eq!(
-            StepType::from_str("adjust-falloff"),
+            StepType::parse("adjust-falloff"),
             Some(StepType::AdjustFalloff)
         );
-        assert_eq!(StepType::from_str("unknown-step"), None);
+        assert_eq!(StepType::parse("unknown-step"), None);
     }
 
     #[test]
@@ -4501,21 +4502,18 @@ mod tests {
     #[test]
     fn test_step_type_from_str_new_types() {
         assert_eq!(
-            StepType::from_str("pattern-worley"),
+            StepType::parse("pattern-worley"),
             Some(StepType::PatternWorley)
         );
         assert_eq!(
-            StepType::from_str("effect-refract"),
+            StepType::parse("effect-refract"),
             Some(StepType::EffectRefract)
         );
+        assert_eq!(StepType::parse("effect-frost"), Some(StepType::EffectFrost));
         assert_eq!(
-            StepType::from_str("effect-frost"),
-            Some(StepType::EffectFrost)
-        );
-        assert_eq!(
-            StepType::from_str("effect-specular"),
+            StepType::parse("effect-specular"),
             Some(StepType::EffectSpecular)
         );
-        assert_eq!(StepType::from_str("effect-fog"), Some(StepType::EffectFog));
+        assert_eq!(StepType::parse("effect-fog"), Some(StepType::EffectFog));
     }
 }

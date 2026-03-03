@@ -2755,6 +2755,7 @@ impl RenderContext {
                             let mut lo = 0usize;
                             let mut hi = chars.len();
                             while lo < hi {
+                                #[allow(clippy::manual_div_ceil)]
                                 let mid = (lo + hi + 1) / 2;
                                 let sub: String = chars[..mid].iter().collect();
                                 let w = blinc_layout::text_measure::measure_text_with_options(

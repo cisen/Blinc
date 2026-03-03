@@ -55,7 +55,7 @@ pub enum CalcUnit {
 
 impl CalcUnit {
     /// Parse a unit suffix string
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "px" => Some(Self::Px),
             "em" => Some(Self::Em),
@@ -543,7 +543,7 @@ fn tokenize(input: &str) -> Option<Vec<Token>> {
                         }
                         if i > unit_start {
                             let unit_str: String = chars[unit_start..i].iter().collect();
-                            if let Some(unit) = CalcUnit::from_str(&unit_str) {
+                            if let Some(unit) = CalcUnit::parse(&unit_str) {
                                 tokens.push(Token::Dimension(num, unit));
                             } else {
                                 return None;
@@ -576,7 +576,7 @@ fn tokenize(input: &str) -> Option<Vec<Token>> {
                     }
                     if i > unit_start {
                         let unit_str: String = chars[unit_start..i].iter().collect();
-                        if let Some(unit) = CalcUnit::from_str(&unit_str) {
+                        if let Some(unit) = CalcUnit::parse(&unit_str) {
                             tokens.push(Token::Dimension(num, unit));
                         } else {
                             return None;

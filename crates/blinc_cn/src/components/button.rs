@@ -300,7 +300,7 @@ struct ButtonConfig {
 }
 
 /// The built button element — wraps `blinc_layout::widgets::button::Button`
-/// which provides Stateful<ButtonState> FSM for hover/press behavior.
+/// which provides `Stateful<ButtonState>`` FSM for hover/press behavior.
 pub struct Button {
     inner: layout_button::Button,
 }

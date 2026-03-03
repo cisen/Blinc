@@ -125,6 +125,7 @@ pub fn system_font_paths() -> &'static [&'static str] {
 mod app;
 mod context;
 mod error;
+mod svg_atlas;
 mod text_measurer;
 
 // Windowed module is compiled for desktop (windowed feature), Android, iOS, Fuchsia, and HarmonyOS

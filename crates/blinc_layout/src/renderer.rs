@@ -5589,6 +5589,22 @@ impl RenderTree {
                     }
                 }
             }
+
+            // Eagerly save base_styles for nodes matching classes with state rules
+            let state_class_names: std::collections::HashSet<&str> = complex_rules
+                .iter()
+                .filter(|(sel, _)| sel.has_state())
+                .filter_map(|(sel, _)| sel.simple_class_name())
+                .collect();
+            for class_name in &state_class_names {
+                if let Some(node_ids) = class_to_nodes.get(*class_name) {
+                    for &node_id in node_ids {
+                        if let Some(render_node) = self.render_nodes.get(&node_id) {
+                            self.base_styles.insert(node_id, render_node.props.clone());
+                        }
+                    }
+                }
+            }
         }
 
         // =====================================================================
@@ -8227,6 +8243,25 @@ impl RenderTree {
                     }
                 }
             }
+
+            // Eagerly save base_styles for nodes matching classes that also have
+            // state rules (:hover, :active, :focus). This prevents the lazy save
+            // in apply_complex_selector_styles() from capturing contaminated props
+            // (e.g. inline hover backgrounds set by Stateful component rebuilds).
+            let state_class_names: std::collections::HashSet<&str> = complex_rules
+                .iter()
+                .filter(|(sel, _)| sel.has_state())
+                .filter_map(|(sel, _)| sel.simple_class_name())
+                .collect();
+            for class_name in &state_class_names {
+                if let Some(node_ids) = class_to_nodes.get(*class_name) {
+                    for &node_id in node_ids {
+                        if let Some(render_node) = self.render_nodes.get(&node_id) {
+                            self.base_styles.insert(node_id, render_node.props.clone());
+                        }
+                    }
+                }
+            }
         }
 
         // Apply simple ID rules LAST — #id has highest specificity and overrides
@@ -8518,6 +8553,27 @@ impl RenderTree {
                     {
                         if let Some(render_node) = self.render_nodes.get_mut(&node_id) {
                             Self::apply_element_style_to_props(&mut render_node.props, style);
+                        }
+                    }
+                }
+            }
+
+            // Eagerly save base_styles for subtree nodes matching classes that
+            // also have :hover/:active/:focus state rules. This prevents the
+            // lazy save in apply_complex_selector_styles() from capturing
+            // contaminated props set by Stateful component rebuilds.
+            let state_class_names: std::collections::HashSet<&str> = complex_rules
+                .iter()
+                .filter(|(sel, _)| sel.has_state())
+                .filter_map(|(sel, _)| sel.simple_class_name())
+                .collect();
+            for class_name in &state_class_names {
+                if let Some(node_ids) = class_to_nodes.get(*class_name) {
+                    for &node_id in node_ids {
+                        if subtree_set.contains(&node_id) {
+                            if let Some(render_node) = self.render_nodes.get(&node_id) {
+                                self.base_styles.insert(node_id, render_node.props.clone());
+                            }
                         }
                     }
                 }

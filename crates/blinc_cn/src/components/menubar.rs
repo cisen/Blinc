@@ -859,15 +859,8 @@ fn build_menubar_hover_dropdown_content(
                 .on_state(move |ctx| {
                     let state = ctx.state();
                     let theme = ThemeState::get();
-                    // Apply hover background based on button state
-                    let item_bg = if (state == ButtonState::Hovered
-                        || state == ButtonState::Pressed)
-                        && !item_disabled
-                    {
-                        theme.color(ColorToken::SecondaryHover).with_alpha(0.65)
-                    } else {
-                        bg
-                    };
+                    // Background is handled by CSS .cn-menubar-item:hover
+                    let item_bg = bg;
 
                     let text_col = if (state == ButtonState::Hovered
                         || state == ButtonState::Pressed)
@@ -1185,11 +1178,8 @@ fn build_menubar_submenu_content(
                 .on_state(move |ctx| {
                     let state = ctx.state();
                     let theme = ThemeState::get();
-                    let item_bg = if (state == ButtonState::Hovered || state == ButtonState::Pressed) && !item_disabled {
-                        theme.color(ColorToken::SecondaryHover).with_alpha(0.65)
-                    } else {
-                        bg
-                    };
+                    // Background is handled by CSS .cn-menubar-item:hover
+                    let item_bg = bg;
 
                     let text_col = if (state == ButtonState::Hovered || state == ButtonState::Pressed) && !item_disabled {
                         theme.color(ColorToken::TextSecondary)
@@ -1387,15 +1377,8 @@ fn build_menubar_dropdown_content(
                 .on_state(move |ctx| {
                     let state = ctx.state();
                     let theme = ThemeState::get();
-                    // Apply hover background based on button state
-                    let item_bg = if (state == ButtonState::Hovered
-                        || state == ButtonState::Pressed)
-                        && !item_disabled
-                    {
-                        theme.color(ColorToken::SecondaryHover).with_alpha(0.65)
-                    } else {
-                        bg
-                    };
+                    // Background is handled by CSS .cn-menubar-item:hover
+                    let item_bg = bg;
 
                     let text_col = if (state == ButtonState::Hovered
                         || state == ButtonState::Pressed)

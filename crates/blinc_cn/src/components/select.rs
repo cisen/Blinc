@@ -307,6 +307,9 @@ impl Select {
                 // Dropdown content (only when open)
                 if is_open {
                     let current_selected = value_state_for_dropdown.get();
+                    // Use fixed Surface color for dropdown items — not the
+                    // trigger's state-dependent bg which changes on hover/press
+                    let dropdown_bg = theme.color(ColorToken::Surface);
                     let dropdown = build_dropdown_content(
                         &options_for_dropdown,
                         &current_selected,
@@ -319,7 +322,7 @@ impl Select {
                         font_size,
                         padding,
                         radius,
-                        bg,
+                        dropdown_bg,
                         border,
                         text_color,
                         text_tertiary,

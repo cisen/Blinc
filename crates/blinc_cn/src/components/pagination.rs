@@ -28,7 +28,7 @@ use blinc_core::State;
 use blinc_layout::div::{Div, ElementBuilder, ElementTypeId};
 use blinc_layout::element::CursorStyle;
 use blinc_layout::prelude::*;
-use blinc_layout::stateful::{stateful_with_key, ButtonState, NoState};
+use blinc_layout::stateful::{stateful_with_key, NoState};
 use blinc_layout::InstanceKey;
 use blinc_theme::{ColorToken, RadiusToken, ThemeState};
 
@@ -373,7 +373,7 @@ fn build_nav_button<F>(
     icon_size: f32,
     radius: f32,
     is_disabled: bool,
-    surface_elevated: blinc_core::Color,
+    _surface_elevated: blinc_core::Color,
     border: blinc_core::Color,
     text_secondary: blinc_core::Color,
     text_tertiary: blinc_core::Color,
@@ -384,57 +384,41 @@ where
 {
     let on_click = Arc::new(on_click);
 
-    stateful_with_key::<ButtonState>(key)
-        .on_state(move |ctx| {
-            let state = ctx.state();
-            let theme = ThemeState::get();
+    // Use plain div — no Stateful wrapper to avoid hover rebuild artifact.
+    // All hover visuals handled by CSS .cn-pagination-btn:hover
+    let icon_color = if is_disabled {
+        text_tertiary.with_alpha(0.5)
+    } else {
+        text_secondary
+    };
 
-            let (bg, icon_color) = if is_disabled {
-                (
-                    blinc_core::Color::TRANSPARENT,
-                    text_tertiary.with_alpha(0.5),
-                )
+    let mut btn = div()
+        .class("cn-pagination-btn")
+        .w(button_size)
+        .h(button_size)
+        .rounded(radius)
+        .items_center()
+        .justify_center()
+        .border(
+            1.0,
+            if is_disabled {
+                border.with_alpha(0.5)
             } else {
-                match state {
-                    ButtonState::Hovered | ButtonState::Pressed => {
-                        (surface_elevated, theme.color(ColorToken::TextPrimary))
-                    }
-                    _ => (blinc_core::Color::TRANSPARENT, text_secondary),
-                }
-            };
-
-            {
-                let mut btn = div()
-                    .class("cn-pagination-btn")
-                    .w(button_size)
-                    .h(button_size)
-                    .rounded(radius)
-                    .items_center()
-                    .justify_center()
-                    .bg(bg)
-                    .border(
-                        1.0,
-                        if is_disabled {
-                            border.with_alpha(0.5)
-                        } else {
-                            border
-                        },
-                    )
-                    .cursor(if is_disabled {
-                        CursorStyle::NotAllowed
-                    } else {
-                        CursorStyle::Pointer
-                    })
-                    .child(svg(icon_svg).size(icon_size, icon_size).color(icon_color));
-                if is_disabled {
-                    btn = btn.class("cn-pagination-btn--disabled");
-                }
-                btn
-            }
+                border
+            },
+        )
+        .cursor(if is_disabled {
+            CursorStyle::NotAllowed
+        } else {
+            CursorStyle::Pointer
         })
-        .on_click(move |_| {
-            on_click();
-        })
+        .child(svg(icon_svg).size(icon_size, icon_size).color(icon_color));
+    if is_disabled {
+        btn = btn.class("cn-pagination-btn--disabled");
+    }
+    btn.on_click(move |_| {
+        on_click();
+    })
 }
 
 /// Build a page number button
@@ -447,8 +431,8 @@ fn build_page_button<F>(
     font_size: f32,
     radius: f32,
     primary: blinc_core::Color,
-    primary_hover: blinc_core::Color,
-    surface_elevated: blinc_core::Color,
+    _primary_hover: blinc_core::Color,
+    _surface_elevated: blinc_core::Color,
     border: blinc_core::Color,
     text_primary: blinc_core::Color,
     text_secondary: blinc_core::Color,
@@ -460,53 +444,42 @@ where
     let on_click = Arc::new(on_click);
     let page_str = page.to_string();
 
-    stateful_with_key::<ButtonState>(key)
-        .on_state(move |ctx| {
-            let state = ctx.state();
-            let theme = ThemeState::get();
+    // Use plain div — no Stateful wrapper to avoid hover rebuild artifact.
+    // All hover visuals handled by CSS .cn-pagination-btn:hover
+    let theme = ThemeState::get();
+    let (bg, text_color, border_color) = if is_current {
+        (primary, theme.color(ColorToken::TextInverse), primary)
+    } else {
+        (blinc_core::Color::TRANSPARENT, text_secondary, border)
+    };
 
-            let (bg, text_color, border_color) = if is_current {
-                (primary, theme.color(ColorToken::TextInverse), primary)
-            } else {
-                match state {
-                    ButtonState::Hovered | ButtonState::Pressed => {
-                        (surface_elevated, text_primary, border)
-                    }
-                    _ => (blinc_core::Color::TRANSPARENT, text_secondary, border),
-                }
-            };
-
-            {
-                let mut btn = div()
-                    .class("cn-pagination-btn")
-                    .w(button_size)
-                    .h(button_size)
-                    .rounded(radius)
-                    .items_center()
-                    .justify_center()
-                    .bg(bg)
-                    .border(1.0, border_color)
-                    .cursor(if is_current {
-                        CursorStyle::Default
-                    } else {
-                        CursorStyle::Pointer
-                    })
-                    .child(
-                        text(&page_str)
-                            .size(font_size)
-                            .color(text_color)
-                            .medium()
-                            .no_cursor(),
-                    );
-                if is_current {
-                    btn = btn.class("cn-pagination-btn--active");
-                }
-                btn
-            }
+    let mut btn = div()
+        .class("cn-pagination-btn")
+        .w(button_size)
+        .h(button_size)
+        .rounded(radius)
+        .items_center()
+        .justify_center()
+        .bg(bg)
+        .border(1.0, border_color)
+        .cursor(if is_current {
+            CursorStyle::Default
+        } else {
+            CursorStyle::Pointer
         })
-        .on_click(move |_| {
-            on_click();
-        })
+        .child(
+            text(&page_str)
+                .size(font_size)
+                .color(text_color)
+                .medium()
+                .no_cursor(),
+        );
+    if is_current {
+        btn = btn.class("cn-pagination-btn--active");
+    }
+    btn.on_click(move |_| {
+        on_click();
+    })
 }
 
 impl Deref for Pagination {

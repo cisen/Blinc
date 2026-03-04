@@ -565,7 +565,6 @@ impl NavigationLink {
 
         let link = stateful_with_key::<ButtonState>(&key)
             .on_state(move |_ctx| {
-
                 // Background is handled by CSS .cn-nav-link:hover
                 let bg = blinc_core::Color::TRANSPARENT;
 

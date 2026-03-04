@@ -605,8 +605,16 @@ fn lerp_opt_array4(a: Option<[f32; 4]>, b: Option<[f32; 4]>, t: f32) -> Option<[
             a[2] + (b[2] - a[2]) * t,
             a[3] + (b[3] - a[3]) * t,
         ]),
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
+        // Fade towards zero when one side is None (e.g. color → transparent,
+        // padding → removed). This is correct for CSS transitions where None
+        // means "property not set in this state" rather than "keep previous value".
+        (Some(a), None) => Some([
+            a[0] * (1.0 - t),
+            a[1] * (1.0 - t),
+            a[2] * (1.0 - t),
+            a[3] * (1.0 - t),
+        ]),
+        (None, Some(b)) => Some([b[0] * t, b[1] * t, b[2] * t, b[3] * t]),
         (None, None) => None,
     }
 }
@@ -623,8 +631,29 @@ fn lerp_opt_array8(a: Option<[f32; 8]>, b: Option<[f32; 8]>, t: f32) -> Option<[
             a[6] + (b[6] - a[6]) * t,
             a[7] + (b[7] - a[7]) * t,
         ]),
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
+        (Some(a), None) => {
+            let s = 1.0 - t;
+            Some([
+                a[0] * s,
+                a[1] * s,
+                a[2] * s,
+                a[3] * s,
+                a[4] * s,
+                a[5] * s,
+                a[6] * s,
+                a[7] * s,
+            ])
+        }
+        (None, Some(b)) => Some([
+            b[0] * t,
+            b[1] * t,
+            b[2] * t,
+            b[3] * t,
+            b[4] * t,
+            b[5] * t,
+            b[6] * t,
+            b[7] * t,
+        ]),
         (None, None) => None,
     }
 }

@@ -2487,10 +2487,6 @@ impl WindowedApp {
                                     if let Some(ref mut windowed_ctx) = ctx {
                                         let router = &mut windowed_ctx.event_router;
                                         if let Some(hit) = router.hit_test(tree, mouse_x, mouse_y) {
-                                            tracing::trace!(
-                                                "Hit: node={:?}, ancestors={:?}",
-                                                hit.node, hit.ancestors
-                                            );
                                             tree.dispatch_scroll_chain(
                                                 hit.node,
                                                 &hit.ancestors,

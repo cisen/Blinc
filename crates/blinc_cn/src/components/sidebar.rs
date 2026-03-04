@@ -298,22 +298,21 @@ impl Sidebar {
                                     .snappy(),
                             )
                             .when(!is_collapsed, |d| {
-                                d.child(div().flex_shrink_0().child(
-                                    svg(&item_icon).size(18.0, 18.0).color(icon_color),
-                                ))
+                                d.child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .child(svg(&item_icon).size(18.0, 18.0).color(icon_color)),
+                                )
                                 .child(
-                                    div().child(
-                                        text(&item_label)
-                                            .size(14.0)
-                                            .no_cursor()
-                                            .no_wrap(),
-                                    ),
+                                    div().child(text(&item_label).size(14.0).no_cursor().no_wrap()),
                                 )
                             })
                             .when(is_collapsed, |d| {
-                                d.child(div().flex_shrink_0().child(
-                                    svg(&item_icon).size(18.0, 18.0).color(icon_color),
-                                ))
+                                d.child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .child(svg(&item_icon).size(18.0, 18.0).color(icon_color)),
+                                )
                             })
                             .on_click(move |_| {
                                 active_menu_for_trigger.update(|_| Some(item_for_trigger.clone()));

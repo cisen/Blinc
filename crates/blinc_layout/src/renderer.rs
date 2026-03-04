@@ -2954,11 +2954,6 @@ impl RenderTree {
                     p.viewport_height = viewport_height;
                     p.content_width = content_width;
                     p.content_height = content_height;
-
-                    tracing::trace!(
-                        "Scroll physics updated: viewport=({:.0}, {:.0}) content=({:.0}, {:.0}) max_offset=({:.0}, {:.0}) direction={:?}",
-                        viewport_width, viewport_height, content_width, content_height, p.max_offset_x(), p.max_offset_y(), p.config.direction
-                    );
                 }
             }
         }
@@ -3448,14 +3443,6 @@ impl RenderTree {
             }
         }
 
-        tracing::trace!(
-            "dispatch_scroll_chain: hit={:?}, chain_len={}, delta=({:.1}, {:.1})",
-            hit_node,
-            chain.len(),
-            delta_x,
-            delta_y
-        );
-
         // Dispatch to each node in the chain
         for node_id in chain {
             // Skip if no remaining delta
@@ -3463,12 +3450,13 @@ impl RenderTree {
                 break;
             }
 
-            // Check if this node has a scroll handler
+            // Check if this node has a scroll handler or registered scroll physics
             let has_handler = self
                 .handler_registry
                 .has_handler(node_id, blinc_core::events::event_types::SCROLL);
+            let has_registered_physics = self.scroll_physics.contains_key(&node_id);
 
-            if !has_handler {
+            if !has_handler && !has_registered_physics {
                 continue;
             }
 
@@ -3498,31 +3486,23 @@ impl RenderTree {
             let dispatch_y = if handles_y { delta_y } else { 0.0 };
 
             tracing::trace!(
-                "  node={:?}, direction={:?}, handles=({}, {}), can_consume=({}, {}), dispatch=({:.1}, {:.1})",
+                "scroll_disp node={:?} dir={:?} handles=({},{}) can_consume=({},{}) dispatch=({:.1},{:.1})",
                 node_id, direction, handles_x, handles_y, can_consume_x, can_consume_y, dispatch_x, dispatch_y
             );
 
             // Dispatch if there's delta for this scroll's direction
             if dispatch_x.abs() > 0.001 || dispatch_y.abs() > 0.001 {
-                let ctx = crate::event_handler::EventContext::new(
-                    blinc_core::events::event_types::SCROLL,
-                    node_id,
-                )
-                .with_mouse_pos(mouse_x, mouse_y)
-                .with_scroll_delta(dispatch_x, dispatch_y);
-
-                tracing::trace!(
-                    "    dispatching to {:?}: delta=({:.1}, {:.1})",
-                    node_id,
-                    dispatch_x,
-                    dispatch_y
-                );
-                self.handler_registry.dispatch(&ctx);
-
-                // Consume the delta for axes this scroll CAN consume (has room to scroll)
-                // This prevents bubbling to outer scrolls for that axis
-                // For custom scroll handlers (no physics), consume all dispatched delta
                 if has_scroll_physics {
+                    // For physics-backed scrolls, update the REGISTERED physics directly.
+                    // This avoids the stale-Arc problem where event handlers may capture
+                    // a different physics instance than what's registered in the tree
+                    // (happens when Stateful rebuilds create new physics during merge).
+                    if let Some(physics) = self.scroll_physics.get(&node_id) {
+                        let mut p = physics.lock().unwrap();
+                        p.apply_scroll_delta(dispatch_x, dispatch_y);
+                        p.on_scroll_activity();
+                    }
+
                     if can_consume_x && handles_x {
                         delta_x = 0.0;
                     }
@@ -3530,7 +3510,16 @@ impl RenderTree {
                         delta_y = 0.0;
                     }
                 } else {
-                    // Custom scroll handler - consume all delta (it handles its own bounds)
+                    // Custom scroll handler (no physics) - dispatch via handler registry
+                    let ctx = crate::event_handler::EventContext::new(
+                        blinc_core::events::event_types::SCROLL,
+                        node_id,
+                    )
+                    .with_mouse_pos(mouse_x, mouse_y)
+                    .with_scroll_delta(dispatch_x, dispatch_y);
+
+                    self.handler_registry.dispatch(&ctx);
+
                     if handles_x {
                         delta_x = 0.0;
                     }
@@ -3577,8 +3566,9 @@ impl RenderTree {
             let has_handler = self
                 .handler_registry
                 .has_handler(node_id, blinc_core::events::event_types::SCROLL);
+            let has_registered_physics = self.scroll_physics.contains_key(&node_id);
 
-            if !has_handler {
+            if !has_handler && !has_registered_physics {
                 continue;
             }
 
@@ -3605,17 +3595,14 @@ impl RenderTree {
             let dispatch_y = if handles_y { remaining_dy } else { 0.0 };
 
             if dispatch_x.abs() > 0.001 || dispatch_y.abs() > 0.001 {
-                let ctx = crate::event_handler::EventContext::new(
-                    blinc_core::events::event_types::SCROLL,
-                    node_id,
-                )
-                .with_mouse_pos(mouse_x, mouse_y)
-                .with_scroll_delta(dispatch_x, dispatch_y)
-                .with_scroll_time(scroll_time);
-
-                self.handler_registry.dispatch(&ctx);
-
                 if has_scroll_physics {
+                    // For physics-backed scrolls, update the REGISTERED physics directly
+                    if let Some(physics) = self.scroll_physics.get(&node_id) {
+                        let mut p = physics.lock().unwrap();
+                        p.apply_touch_scroll_delta(dispatch_x, dispatch_y, scroll_time);
+                        p.on_scroll_activity();
+                    }
+
                     if can_consume_x && handles_x {
                         remaining_dx = 0.0;
                     }
@@ -3623,6 +3610,17 @@ impl RenderTree {
                         remaining_dy = 0.0;
                     }
                 } else {
+                    // Custom scroll handler (no physics) - dispatch via handler registry
+                    let ctx = crate::event_handler::EventContext::new(
+                        blinc_core::events::event_types::SCROLL,
+                        node_id,
+                    )
+                    .with_mouse_pos(mouse_x, mouse_y)
+                    .with_scroll_delta(dispatch_x, dispatch_y)
+                    .with_scroll_time(scroll_time);
+
+                    self.handler_registry.dispatch(&ctx);
+
                     if handles_x {
                         remaining_dx = 0.0;
                     }
@@ -6081,6 +6079,11 @@ impl RenderTree {
 
         // Create physics and register handlers
         for (node_id, direction) in needs_physics {
+            tracing::trace!(
+                "auto_create_css_scroll_physics: creating for {:?} direction={:?}",
+                node_id,
+                direction
+            );
             let config = ScrollConfig {
                 direction,
                 ..Default::default()
@@ -9205,6 +9208,23 @@ impl RenderTree {
                     self.layout_tree.set_style(rebuild.parent_id, style.clone());
                 }
 
+                // Re-register scroll_physics and event_handlers for the parent node.
+                // Without this, Stateful containers with overflow_y_scroll() lose their
+                // scroll state during rebuilds because only children get collect_render_props_boxed.
+                if let Some(physics) = rebuild.new_child.scroll_physics() {
+                    if let Some(scheduler) = self.animations.upgrade() {
+                        physics.lock().unwrap().set_scheduler(&scheduler);
+                    }
+                    self.scroll_physics.insert(rebuild.parent_id, physics);
+                }
+                {
+                    let handlers = rebuild.new_child.event_handlers();
+                    if !handlers.is_empty() {
+                        self.handler_registry
+                            .register(rebuild.parent_id, handlers.clone());
+                    }
+                }
+
                 // Always remove old children first (even if new children is empty)
                 // This fixes the bug where SVG checkmarks would persist after unchecking
                 let old_children = self.layout_tree.children(rebuild.parent_id);
@@ -9282,6 +9302,18 @@ impl RenderTree {
                 // but callbacks may capture new closure state that needs updating.
                 if let Some(handlers) = new_child.event_handlers() {
                     self.handler_registry.register(*child_id, handlers.clone());
+                }
+
+                // Update CSS class registrations so apply_stylesheet_base_styles_for_subtree
+                // uses the current classes (not stale ones from the previous build).
+                // Without this, adding/removing classes (e.g. cn-sidebar-item--active)
+                // wouldn't take effect during visual-only rebuilds.
+                let new_classes = new_child.element_classes();
+                if !new_classes.is_empty() {
+                    self.element_registry
+                        .register_classes(*child_id, new_classes.to_vec());
+                } else {
+                    self.element_registry.clear_classes(*child_id);
                 }
 
                 // Recursively update grandchildren
@@ -10613,42 +10645,43 @@ impl RenderTree {
                         .map(|b| (b.width, b.color))
                         .unwrap_or((uniform_width, uniform_color));
 
-                    if left_border.0 > 0.0 {
-                        let border_rect = Rect::new(0.0, 0.0, left_border.0, rect.height());
+                    // Draw vertical borders (left/right) full height first,
+                    // then horizontal borders (top/bottom) trimmed to avoid
+                    // overlapping at corners. This ensures the dominant side
+                    // border color fills corner areas cleanly.
+                    let lw = left_border.0;
+                    let rw = right_border.0;
+
+                    if lw > 0.0 {
+                        let border_rect = Rect::new(0.0, 0.0, lw, rect.height());
                         ctx.fill_rect(
                             border_rect,
                             CornerRadius::default(),
                             Brush::Solid(apply_motion(left_border.1)),
                         );
                     }
-                    if right_border.0 > 0.0 {
-                        let border_rect = Rect::new(
-                            rect.width() - right_border.0,
-                            0.0,
-                            right_border.0,
-                            rect.height(),
-                        );
+                    if rw > 0.0 {
+                        let border_rect = Rect::new(rect.width() - rw, 0.0, rw, rect.height());
                         ctx.fill_rect(
                             border_rect,
                             CornerRadius::default(),
                             Brush::Solid(apply_motion(right_border.1)),
                         );
                     }
-                    if top_border.0 > 0.0 {
-                        let border_rect = Rect::new(0.0, 0.0, rect.width(), top_border.0);
+                    // Horizontal borders trimmed to fit between vertical borders
+                    let h_x = lw;
+                    let h_w = (rect.width() - lw - rw).max(0.0);
+                    if top_border.0 > 0.0 && h_w > 0.0 {
+                        let border_rect = Rect::new(h_x, 0.0, h_w, top_border.0);
                         ctx.fill_rect(
                             border_rect,
                             CornerRadius::default(),
                             Brush::Solid(apply_motion(top_border.1)),
                         );
                     }
-                    if bottom_border.0 > 0.0 {
-                        let border_rect = Rect::new(
-                            0.0,
-                            rect.height() - bottom_border.0,
-                            rect.width(),
-                            bottom_border.0,
-                        );
+                    if bottom_border.0 > 0.0 && h_w > 0.0 {
+                        let border_rect =
+                            Rect::new(h_x, rect.height() - bottom_border.0, h_w, bottom_border.0);
                         ctx.fill_rect(
                             border_rect,
                             CornerRadius::default(),

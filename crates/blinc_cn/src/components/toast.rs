@@ -397,7 +397,6 @@ fn build_toast_content(
     // Add left border accent for variant toasts
     if has_accent {
         toast = toast.border_left(4.0, accent_color);
-        toast = toast.rounded_corners(0.0, radius, radius, 0.0)
     }
 
     // Inner content container

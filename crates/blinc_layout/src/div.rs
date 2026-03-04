@@ -1325,7 +1325,15 @@ impl Div {
             self.flow_graph = other.flow_graph;
         }
 
-        // Note: event_handlers are NOT merged - they're set on the base element
+        // Merge scroll physics - take other's if set
+        if other.scroll_physics.is_some() {
+            self.scroll_physics = other.scroll_physics;
+        }
+
+        // Merge event handlers - combine both sets so scroll handlers etc. survive
+        if !other.event_handlers.is_empty() {
+            self.event_handlers.merge(other.event_handlers);
+        }
     }
 
     /// Merge taffy Style fields from other if they differ from default

@@ -48,7 +48,6 @@ use blinc_layout::element::{CursorStyle, RenderProps};
 use blinc_layout::prelude::*;
 use blinc_layout::stateful::{stateful_with_key, ButtonState};
 use blinc_layout::tree::{LayoutNodeId, LayoutTree};
-use blinc_layout::widgets::scroll::scroll;
 use blinc_layout::widgets::text_input::SharedTextInputData;
 use blinc_theme::{ColorToken, RadiusToken, SpacingToken, ThemeState};
 
@@ -742,8 +741,9 @@ fn build_dropdown_content(
     let key_for_opts = key.to_string();
 
     let options_container_key = format!("{}_options_container", key);
+    let options_content_key = format!("{}_options_content", key);
 
-    let options_stateful = stateful_with_key::<ButtonState>(&options_container_key)
+    let options_stateful = stateful_with_key::<NoState>(&options_container_key)
         .deps([search_query_state.signal_id()])
         .on_state(move |_ctx| {
             let search_text = search_query_for_opts.get();
@@ -753,7 +753,12 @@ fn build_dropdown_content(
                 .filter(|opt| opt.matches(&search_text))
                 .collect();
 
-            let mut options_content = div().flex_col().w_full();
+            let mut options_content = div()
+                .id(&options_content_key)
+                .flex_col()
+                .max_h(200.0)
+                .overflow_y_scroll()
+                .w_full();
 
             if filtered_options.is_empty() {
                 let no_results = div().w_full().p_px(padding).child(
@@ -885,12 +890,7 @@ fn build_dropdown_content(
                 }
             }
 
-            // Wrap in scroll container
-            div()
-                .w_full()
-                .max_h(200.0)
-                .overflow_clip()
-                .child(scroll().w_full().h_full().child(options_content))
+            options_content
         });
 
     dropdown_div = dropdown_div.child(options_stateful);

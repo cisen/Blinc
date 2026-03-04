@@ -2356,6 +2356,18 @@ impl<S: StateTransitions> Stateful<S> {
             // Mark as updated
             self.shared_state.lock().unwrap().needs_visual_update = false;
 
+            // After merge, the inner Div may have event_handlers (e.g. scroll handlers
+            // from overflow_y_scroll()). Merge them into the event_handlers_cache so
+            // they're returned by event_handlers() and registered in the handler_registry.
+            {
+                let inner = self.inner.borrow();
+                if !inner.event_handlers.is_empty() {
+                    let handlers_clone = inner.event_handlers.clone();
+                    drop(inner);
+                    self.event_handlers_cache.borrow_mut().merge(handlers_clone);
+                }
+            }
+
             // Log children count after callback
             let children_count = self.inner.borrow().children.len();
             tracing::trace!("After callback: {} children in inner Div", children_count);
@@ -2896,6 +2908,20 @@ impl<S: StateTransitions> Stateful<S> {
             shared.needs_visual_update = false;
             drop(shared); // Release lock before calling callback
             callback(&state_copy, &mut self.inner.borrow_mut());
+
+            // Sync event_handlers_cache from inner Div after callback.
+            // The callback may have merged event handlers (e.g. scroll handlers
+            // from overflow_y_scroll()) into the inner Div. Without this sync,
+            // event_handlers() returns an empty cache and collect_render_props_boxed
+            // never registers the handlers — breaking scroll dispatch on first build.
+            {
+                let inner = self.inner.borrow();
+                if !inner.event_handlers.is_empty() {
+                    let handlers_clone = inner.event_handlers.clone();
+                    drop(inner);
+                    self.event_handlers_cache.borrow_mut().merge(handlers_clone);
+                }
+            }
         }
     }
 
@@ -4095,6 +4121,11 @@ impl<S: StateTransitions> ElementBuilder for Stateful<S> {
     fn visual_animation_config(&self) -> Option<crate::visual_animation::VisualAnimationConfig> {
         self.ensure_callback_invoked();
         self.inner.borrow().visual_animation_config()
+    }
+
+    fn scroll_physics(&self) -> Option<crate::scroll::SharedScrollPhysics> {
+        self.ensure_callback_invoked();
+        self.inner.borrow().scroll_physics.clone()
     }
 }
 

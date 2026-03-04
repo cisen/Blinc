@@ -305,7 +305,7 @@ pub const CN_STYLES: &str = r#"
 .cn-tabs-list {
     background: var(--cn-tabs-list-bg, var(--surface-elevated));
     border-radius: 8px;
-    padding: 4px;
+    padding: 6px;
     gap: 4px;
 }
 .cn-tabs-trigger {
@@ -689,9 +689,18 @@ pub const CN_STYLES: &str = r#"
     cursor: pointer;
     color: var(--text-primary);
     font-size: 14px;
+    background: transparent;
     transition: background 100ms;
 }
 .cn-menubar-trigger:hover {
+    background: var(--surface-elevated);
+}
+.cn-menubar-item {
+    border-radius: 4px;
+    background: transparent;
+    transition: background 100ms;
+}
+.cn-menubar-item:hover {
     background: var(--surface-elevated);
 }
 

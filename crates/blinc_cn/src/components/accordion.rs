@@ -296,7 +296,7 @@ impl AccordionBuilder {
                         blinc_layout::visual_animation::VisualAnimationConfig::height()
                             .with_key(&anim_key_for_container)
                             .clip_to_animated()
-                            .gentle(),
+                            .snappy(),
                     );
 
                 for (index, (item, item_state)) in items_with_state.iter().enumerate() {
@@ -394,7 +394,7 @@ impl AccordionBuilder {
                             blinc_layout::visual_animation::VisualAnimationConfig::height()
                                 .with_key(&anim_key)
                                 .clip_to_animated()
-                                .gentle(),
+                                .snappy(),
                         )
                         // Always render content so collapse animation has something to clip
                         .child(content_fn())
@@ -412,7 +412,7 @@ impl AccordionBuilder {
                         .animate_bounds(
                             blinc_layout::visual_animation::VisualAnimationConfig::position()
                                 .with_key(&item_div_key)
-                                .gentle(),
+                                .snappy(),
                         )
                         .child(trigger)
                         .child(collapsible_content);
@@ -427,7 +427,7 @@ impl AccordionBuilder {
                             div().w_full().h(1.0).bg(border_color).animate_bounds(
                                 blinc_layout::visual_animation::VisualAnimationConfig::position()
                                     .with_key(&separator_key)
-                                    .gentle(),
+                                    .snappy(),
                             ),
                         );
                     }

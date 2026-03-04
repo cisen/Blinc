@@ -1122,13 +1122,18 @@ impl EventRouter {
         // If it does NOT clip (overflow: visible), children may extend beyond
         // the parent bounds and still be interactive — so we must test them.
         // If it DOES clip, children outside bounds are invisible → skip.
+        // Track whether we're outside a clipping parent — if so, only foreground hits count
+        let mut clipped_non_foreground = false;
         if !in_bounds {
             let clips = tree
                 .get_render_node(node)
                 .map(|n| n.props.clips_content)
                 .unwrap_or(true); // default to clipping if no render node
             if clips {
-                return None;
+                // Don't return None immediately — foreground descendants render
+                // outside the clip and should still be hittable. We'll only
+                // accept foreground results from the children walk below.
+                clipped_non_foreground = true;
             }
             // overflow: visible — fall through to test children
         }
@@ -1229,6 +1234,13 @@ impl EventRouter {
                 // Mark result as foreground if this child or the result itself is foreground
                 if child_is_fg {
                     result.is_foreground = true;
+                }
+
+                // When parent clips and point is outside its bounds, only accept
+                // foreground hits — non-foreground children are invisible outside
+                // the clip rect, but foreground children render above the clip.
+                if clipped_non_foreground && !result.is_foreground {
+                    continue;
                 }
 
                 match &best_hit {

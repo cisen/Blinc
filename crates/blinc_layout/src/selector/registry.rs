@@ -132,6 +132,13 @@ impl ElementRegistry {
         }
     }
 
+    /// Remove all CSS class registrations for a node
+    pub fn clear_classes(&self, node_id: LayoutNodeId) {
+        if let Ok(mut map) = self.classes.write() {
+            map.remove(&node_id);
+        }
+    }
+
     /// Register a semantic element type for CSS type selector matching
     pub fn register_element_type(&self, node_id: LayoutNodeId, type_name: String) {
         if let Ok(mut types) = self.element_types.write() {

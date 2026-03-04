@@ -42,7 +42,6 @@ use blinc_layout::element::{CursorStyle, RenderProps};
 use blinc_layout::motion::motion_derived;
 use blinc_layout::overlay_state::get_overlay_manager;
 use blinc_layout::prelude::*;
-use blinc_layout::stateful::{stateful_with_key, ButtonState};
 use blinc_layout::tree::{LayoutNodeId, LayoutTree};
 use blinc_layout::widgets::hr::hr_with_bg;
 use blinc_layout::widgets::overlay::{OverlayAnimation, OverlayHandle, OverlayManagerExt};
@@ -50,7 +49,6 @@ use blinc_layout::InstanceKey;
 use blinc_theme::{ColorToken, RadiusToken, ThemeState};
 
 use super::context_menu::{ContextMenuItem, SubmenuBuilder};
-use crate::button::reset_button_state;
 
 /// How menus are triggered to open
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -405,7 +403,6 @@ impl MenubarBuilder {
             let menu_key = format!("{}_{}", key_base, idx);
 
             let active_menu_for_trigger = active_menu.clone();
-            let active_menu_for_state = active_menu.clone();
             let active_menu_for_hover = active_menu.clone();
             let overlay_handle_for_trigger = overlay_handle_state.clone();
             let overlay_handle_for_show = overlay_handle_state.clone();
@@ -420,68 +417,44 @@ impl MenubarBuilder {
             let style_px = trigger_style.px;
             let style_py = trigger_style.py;
             let style_font_size = trigger_style.font_size;
-            let style_hover_bg = trigger_style.hover_bg;
             let style_radius = trigger_style.radius;
 
-            // Build the menu trigger button
-            let mut trigger = stateful_with_key::<ButtonState>(&format!("{}_btn", menu_key))
-                .deps([active_menu.signal_id()])
-                .on_state(move |ctx| {
-                    let state = ctx.state();
-                    let theme = ThemeState::get();
-                    let is_active = active_menu_for_state.get() == Some(idx);
+            // Build the menu trigger as a plain div — no Stateful wrapper.
+            // Stateful subtree rebuilds contaminate base_styles with hover
+            // state, causing hover backgrounds to persist after mouse leaves.
+            // CSS .cn-menubar-trigger:hover handles hover background.
+            let radius = style_radius.unwrap_or_else(|| theme.radius(RadiusToken::Sm));
 
-                    // Background: highlight when hovered, pressed, or active (menu open)
-                    let item_bg = if is_active
-                        || state == ButtonState::Hovered
-                        || state == ButtonState::Pressed
-                    {
-                        style_hover_bg.unwrap_or_else(|| {
-                            theme.color(ColorToken::SecondaryHover).with_alpha(0.65)
-                        })
-                    } else {
-                        Color::TRANSPARENT
-                    };
+            let trigger_content: Div = match &menu_trigger {
+                MenubarTrigger::Label(label) => {
+                    let text_col = theme.color(ColorToken::TextPrimary);
+                    div()
+                        .flex_row()
+                        .items_center()
+                        .rounded(radius)
+                        .px(2.0)
+                        .py(1.0)
+                        .child(
+                            text(label)
+                                .size(style_font_size)
+                                .color(text_col)
+                                .no_cursor()
+                                .pointer_events_none(),
+                        )
+                }
+                MenubarTrigger::Custom(custom_fn) => div()
+                    .flex_row()
+                    .items_center()
+                    .rounded(radius)
+                    .child(custom_fn(false)),
+            };
 
-                    let radius = style_radius.unwrap_or_else(|| theme.radius(RadiusToken::Sm));
-
-                    // Build trigger content based on trigger type
-                    let trigger_content: Div = match &menu_trigger {
-                        MenubarTrigger::Label(label) => {
-                            let text_col = theme.color(ColorToken::TextPrimary);
-                            div()
-                                .flex_row()
-                                .items_center()
-                                .bg(item_bg)
-                                .rounded(radius)
-                                .px(2.0)
-                                .py(1.0)
-                                .child(
-                                    text(label)
-                                        .size(style_font_size)
-                                        .color(text_col)
-                                        .no_cursor()
-                                        .pointer_events_none(),
-                                )
-                        }
-                        MenubarTrigger::Custom(custom_fn) => {
-                            // Call custom trigger with is_open state
-                            div()
-                                .flex_row()
-                                .items_center()
-                                .bg(item_bg)
-                                .rounded(radius)
-                                .child(custom_fn(is_active))
-                        }
-                    };
-
-                    trigger_content
-                        .class("cn-menubar-trigger")
-                        .h_fit()
-                        .px(style_px / 4.0)
-                        .py(style_py / 4.0)
-                        .cursor_pointer()
-                });
+            let mut trigger = trigger_content
+                .class("cn-menubar-trigger")
+                .h_fit()
+                .px(style_px / 4.0)
+                .py(style_py / 4.0)
+                .cursor_pointer();
 
             // Add click handler (used for Click mode, or to toggle in Hover mode)
             trigger = trigger.on_click(move |ctx| {
@@ -521,6 +494,7 @@ impl MenubarBuilder {
                     overlay_handle_for_show.clone(),
                     active_menu_for_trigger.clone(),
                     menu_key_for_click.clone(),
+                    idx,
                 );
 
                 overlay_handle_for_show.set(Some(handle.id()));
@@ -575,6 +549,7 @@ impl MenubarBuilder {
                         overlay_handle_for_hover.clone(),
                         active_menu_for_hover.clone(),
                         menu_key_for_hover.clone(),
+                        idx,
                     );
 
                     overlay_handle_for_hover.set(Some(handle.id()));
@@ -616,6 +591,7 @@ impl Default for MenubarBuilder {
 }
 
 /// Show the menubar dropdown overlay
+#[allow(clippy::too_many_arguments)]
 fn show_menubar_dropdown(
     x: f32,
     y: f32,
@@ -624,6 +600,7 @@ fn show_menubar_dropdown(
     handle_state: State<Option<u64>>,
     active_menu_state: State<Option<usize>>,
     key: String,
+    menu_idx: usize,
 ) -> OverlayHandle {
     let theme = ThemeState::get();
     let bg = theme.color(ColorToken::Surface);
@@ -636,8 +613,6 @@ fn show_menubar_dropdown(
     let padding = 12.0;
 
     let items = items.to_vec();
-    let item_count = items.len();
-
     let handle_state_for_content = handle_state.clone();
     let active_menu_for_content = active_menu_state.clone();
     let handle_state_for_close = handle_state.clone();
@@ -645,25 +620,18 @@ fn show_menubar_dropdown(
 
     let mgr = get_overlay_manager();
 
-    // Motion key for animation
     let motion_key_str = format!("menubar_{}", key);
-    let key_for_close = key.clone();
-    // let motion_key_with_child = format!("{}:child:0", motion_key_str);
 
     let handle = mgr
         .dropdown()
         .at(x, y)
-        .animation(OverlayAnimation::none()) // Instant show/hide
+        .animation(OverlayAnimation::none())
         .dismiss_on_escape(true)
-        // .motion_key(&motion_key_with_child)
         .on_close(move || {
-            active_menu_for_close.set(None);
-            handle_state_for_close.set(None);
-            // Reset all button states to clear lingering hover/pressed states
-            for idx in 0..item_count {
-                let item_key = format!("{}_item-{}", key_for_close, idx);
-                reset_button_state(&item_key);
+            if active_menu_for_close.get() == Some(menu_idx) {
+                active_menu_for_close.set(None);
             }
+            handle_state_for_close.set(None);
         })
         .content(move || {
             build_menubar_dropdown_content(
@@ -688,6 +656,7 @@ fn show_menubar_dropdown(
 }
 
 /// Show the menubar dropdown overlay using hover-based overlay (for Hover trigger mode)
+#[allow(clippy::too_many_arguments)]
 fn show_menubar_hover_dropdown(
     x: f32,
     y: f32,
@@ -696,6 +665,7 @@ fn show_menubar_hover_dropdown(
     handle_state: State<Option<u64>>,
     active_menu_state: State<Option<usize>>,
     key: String,
+    menu_idx: usize,
 ) -> OverlayHandle {
     let theme = ThemeState::get();
     let bg = theme.color(ColorToken::Surface);
@@ -708,7 +678,6 @@ fn show_menubar_hover_dropdown(
     let padding = 12.0;
 
     let items = items.to_vec();
-    let item_count = items.len();
 
     let handle_state_for_content = handle_state.clone();
     let active_menu_for_content = active_menu_state.clone();
@@ -719,24 +688,18 @@ fn show_menubar_hover_dropdown(
     let mgr = get_overlay_manager();
 
     let menu_key = key.clone();
-    let key_for_close = key.clone();
 
-    // Use hover_card() for transient hover-based overlay
-    // No motion animation - menus show/hide instantly for snappy feel
     let handle = mgr
         .hover_card()
         .at(x, y)
         .anchor_direction(blinc_layout::widgets::overlay::AnchorDirection::Bottom)
-        .animation(OverlayAnimation::none()) // Instant show/hide
+        .animation(OverlayAnimation::none())
         .dismiss_on_escape(true)
         .on_close(move || {
-            active_menu_for_close.set(None);
-            handle_state_for_close.set(None);
-            // Reset all button states to clear lingering hover/pressed states
-            for idx in 0..item_count {
-                let item_key = format!("{}_item-{}", key_for_close, idx);
-                reset_button_state(&item_key);
+            if active_menu_for_close.get() == Some(menu_idx) {
+                active_menu_for_close.set(None);
             }
+            handle_state_for_close.set(None);
         })
         .content(move || {
             build_menubar_hover_dropdown_content(
@@ -833,12 +796,9 @@ fn build_menubar_hover_dropdown_content(
             let has_submenu = item.has_submenu();
             let submenu_items = item.get_submenu().cloned();
 
-            // let handle_state_for_click = overlay_handle_state.clone();
             let submenu_handle_for_hover = submenu_handle.clone();
             let submenu_handle_for_leave = submenu_handle.clone();
 
-            // Create a stable key for this item's button state
-            let item_key = format!("{}_item-{}", key, idx);
             let submenu_key = format!("{}_sub-{}", key, idx);
 
             let item_text_color = if item_disabled {
@@ -854,86 +814,67 @@ fn build_menubar_hover_dropdown_content(
                 CursorStyle::Pointer
             };
 
-            // Build the stateful row element
-            let mut row = stateful_with_key::<ButtonState>(&item_key)
-                .on_state(move |ctx| {
-                    let state = ctx.state();
-                    let theme = ThemeState::get();
-                    // Background is handled by CSS .cn-menubar-item:hover
-                    let item_bg = bg;
+            // Build the row as a plain div — no Stateful wrapper.
+            let mut left_side = div()
+                .w_fit()
+                .h_fit()
+                .flex_row()
+                .items_center()
+                .gap(padding / 4.0);
 
-                    let text_col = if (state == ButtonState::Hovered
-                        || state == ButtonState::Pressed)
-                        && !item_disabled
-                    {
-                        theme.color(ColorToken::TextSecondary)
-                    } else {
-                        item_text_color
-                    };
+            if let Some(ref icon_svg) = item_icon {
+                left_side = left_side.child(svg(icon_svg).size(16.0, 16.0).color(item_text_color));
+            }
 
-                    // Left side: icon + label
-                    let mut left_side = div()
-                        .w_fit()
-                        .h_fit()
-                        .flex_row()
-                        .items_center()
-                        .gap(padding / 4.0);
+            left_side = left_side
+                .child(
+                    text(&item_label)
+                        .size(font_size)
+                        .color(item_text_color)
+                        .no_cursor()
+                        .pointer_events_none(),
+                )
+                .pointer_events_none();
 
-                    if let Some(ref icon_svg) = item_icon {
-                        left_side =
-                            left_side.child(svg(icon_svg).size(16.0, 16.0).color(item_text_color));
-                    }
+            let right_side: Option<Div> = if let Some(ref shortcut) = item_shortcut {
+                Some(
+                    div().child(
+                        text(shortcut)
+                            .size(font_size - 2.0)
+                            .color(shortcut_color)
+                            .no_cursor(),
+                    ),
+                )
+            } else if has_submenu {
+                let chevron_right = r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>"#;
+                Some(
+                    div()
+                        .child(svg(chevron_right).size(12.0, 12.0).color(text_tertiary))
+                        .pointer_events_none(),
+                )
+            } else {
+                None
+            };
 
-                    left_side = left_side
-                        .child(
-                            text(&item_label)
-                                .size(font_size)
-                                .color(text_col)
-                                .no_cursor()
-                                .pointer_events_none(),
-                        )
-                        .pointer_events_none();
+            let mut row_content = div()
+                .w_full()
+                .h_fit()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .child(left_side);
 
-                    // Right side: shortcut or submenu arrow
-                    let right_side: Option<Div> = if let Some(ref shortcut) = item_shortcut {
-                        Some(div().child(
-                            text(shortcut)
-                                .size(font_size - 2.0)
-                                .color(shortcut_color)
-                                .no_cursor(),
-                        ))
-                    } else if has_submenu {
-                        let chevron_right = r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>"#;
-                        Some(
-                            div()
-                                .child(svg(chevron_right).size(12.0, 12.0).color(text_tertiary))
-                                .pointer_events_none(),
-                        )
-                    } else {
-                        None
-                    };
+            if let Some(right) = right_side {
+                row_content = row_content.child(right);
+            }
 
-                    let mut row_content = div()
-                        .w_full()
-                        .h_fit()
-                        .flex_row()
-                        .items_center()
-                        .justify_between()
-                        .bg(item_bg)
-                        .child(left_side);
-
-                    if let Some(right) = right_side {
-                        row_content = row_content.child(right);
-                    }
-
-                    row_content
-                        .w_full()
-                        .h_fit()
-                        .py(padding / 4.0)
-                        .px(padding / 2.0)
-                        .bg(bg)
-                        .cursor(cursor)
-                })
+            let mut row = row_content
+                .class("cn-menubar-item")
+                .w_full()
+                .h_fit()
+                .py(padding / 4.0)
+                .px(padding / 2.0)
+                .cursor(cursor)
                 .on_click(move |_| {
                     if !item_disabled && !has_submenu {
                         if let Some(ref cb) = item_on_click {
@@ -1021,7 +962,6 @@ fn show_menubar_submenu(
     let padding = 12.0;
 
     let items = items.to_vec();
-    let item_count = items.len();
 
     let submenu_handle_for_content = submenu_handle_state.clone();
     let parent_handle_for_content = parent_handle_state.clone();
@@ -1030,22 +970,14 @@ fn show_menubar_submenu(
 
     let mgr = get_overlay_manager();
 
-    let key_for_close = key.clone();
-
-    // Use hover_card() for transient hover-based overlay (like main menu)
     let handle = mgr
         .hover_card()
         .at(x, y)
         .anchor_direction(blinc_layout::widgets::overlay::AnchorDirection::Right)
-        .animation(OverlayAnimation::none()) // Instant show/hide
+        .animation(OverlayAnimation::none())
         .dismiss_on_escape(true)
         .on_close(move || {
             submenu_handle_for_close.set(None);
-            // Reset all button states to clear lingering hover/pressed states
-            for idx in 0..item_count {
-                let item_key = format!("{}_item-{}", key_for_close, idx);
-                reset_button_state(&item_key);
-            }
         })
         .content(move || {
             build_menubar_submenu_content(
@@ -1154,11 +1086,9 @@ fn build_menubar_submenu_content(
             let submenu_items = item.get_submenu().cloned();
 
             let parent_handle_for_click = parent_handle_state.clone();
-            let submenu_handle_for_click = submenu_handle_state.clone();
             let nested_submenu_for_hover = nested_submenu_handle.clone();
             let nested_submenu_for_leave = nested_submenu_handle.clone();
 
-            let item_key = format!("{}_item-{}", key, idx);
             let submenu_key = format!("{}_sub-{}", key, idx);
 
             let item_text_color = if item_disabled {
@@ -1174,72 +1104,67 @@ fn build_menubar_submenu_content(
                 CursorStyle::Pointer
             };
 
-            let mut row = stateful_with_key::<ButtonState>(&item_key)
-                .on_state(move |ctx| {
-                    let state = ctx.state();
-                    let theme = ThemeState::get();
-                    // Background is handled by CSS .cn-menubar-item:hover
-                    let item_bg = bg;
+            // Build the row as a plain div — no Stateful wrapper.
+            let mut left_side = div()
+                .w_fit()
+                .h_fit()
+                .flex_row()
+                .items_center()
+                .gap(padding / 4.0);
 
-                    let text_col = if (state == ButtonState::Hovered || state == ButtonState::Pressed) && !item_disabled {
-                        theme.color(ColorToken::TextSecondary)
-                    } else {
-                        item_text_color
-                    };
+            if let Some(ref icon_svg) = item_icon {
+                left_side = left_side.child(svg(icon_svg).size(16.0, 16.0).color(item_text_color));
+            }
 
-                    let mut left_side = div()
-                        .w_fit()
-                        .h_fit()
-                        .flex_row()
-                        .items_center()
-                        .gap(padding / 4.0);
+            left_side = left_side
+                .child(
+                    text(&item_label)
+                        .size(font_size)
+                        .color(item_text_color)
+                        .no_cursor()
+                        .pointer_events_none(),
+                )
+                .pointer_events_none();
 
-                    if let Some(ref icon_svg) = item_icon {
-                        left_side = left_side.child(svg(icon_svg).size(16.0, 16.0).color(item_text_color));
-                    }
+            let right_side: Option<Div> = if let Some(ref shortcut) = item_shortcut {
+                Some(
+                    div().child(
+                        text(shortcut)
+                            .size(font_size - 2.0)
+                            .color(shortcut_color)
+                            .no_cursor(),
+                    ),
+                )
+            } else if has_submenu {
+                let chevron_right = r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>"#;
+                Some(
+                    div()
+                        .child(svg(chevron_right).size(12.0, 12.0).color(text_tertiary))
+                        .pointer_events_none(),
+                )
+            } else {
+                None
+            };
 
-                    left_side = left_side.child(
-                        text(&item_label)
-                            .size(font_size)
-                            .color(text_col)
-                            .no_cursor().pointer_events_none(),
-                    ).pointer_events_none();
+            let mut row_content = div()
+                .w_full()
+                .h_fit()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .child(left_side);
 
-                    let right_side: Option<Div> = if let Some(ref shortcut) = item_shortcut {
-                        Some(div().child(
-                            text(shortcut)
-                                .size(font_size - 2.0)
-                                .color(shortcut_color)
-                                .no_cursor(),
-                        ))
-                    } else if has_submenu {
-                        let chevron_right = r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>"#;
-                        Some(div().child(svg(chevron_right).size(12.0, 12.0).color(text_tertiary)).pointer_events_none())
-                    } else {
-                        None
-                    };
+            if let Some(right) = right_side {
+                row_content = row_content.child(right);
+            }
 
-                    let mut row_content = div()
-                        .w_full()
-                        .h_fit()
-                        .flex_row()
-                        .items_center()
-                        .justify_between()
-                        .bg(item_bg)
-                        .child(left_side);
-
-                    if let Some(right) = right_side {
-                        row_content = row_content.child(right);
-                    }
-
-                    row_content
-                        .w_full()
-                        .h_fit()
-                        .py(padding / 4.0)
-                        .px(padding / 2.0)
-                        .bg(bg)
-                        .cursor(cursor)
-                })
+            let mut row = row_content
+                .class("cn-menubar-item")
+                .w_full()
+                .h_fit()
+                .py(padding / 4.0)
+                .px(padding / 2.0)
+                .cursor(cursor)
                 .on_click(move |_| {
                     if !item_disabled && !has_submenu {
                         if let Some(ref cb) = item_on_click {
@@ -1355,8 +1280,6 @@ fn build_menubar_dropdown_content(
             let submenu_handle_for_hover = submenu_handle.clone();
             let submenu_handle_for_leave = submenu_handle.clone();
 
-            // Create a stable key for this item's button state
-            let item_key = format!("{}_item-{}", key, idx);
             let submenu_key = format!("{}_sub-{}", key, idx);
 
             let item_text_color = if item_disabled {
@@ -1372,86 +1295,70 @@ fn build_menubar_dropdown_content(
                 CursorStyle::Pointer
             };
 
-            // Build the stateful row element
-            let mut row = stateful_with_key::<ButtonState>(&item_key)
-                .on_state(move |ctx| {
-                    let state = ctx.state();
-                    let theme = ThemeState::get();
-                    // Background is handled by CSS .cn-menubar-item:hover
-                    let item_bg = bg;
+            // Build the row as a plain div — no Stateful wrapper.
+            // Stateful subtree rebuilds contaminate base_styles with hover
+            // state, causing hover backgrounds to persist after mouse leaves.
+            // CSS .cn-menubar-item:hover handles hover background.
+            let mut left_side = div()
+                .w_fit()
+                .h_fit()
+                .flex_row()
+                .items_center()
+                .gap(padding / 4.0);
 
-                    let text_col = if (state == ButtonState::Hovered
-                        || state == ButtonState::Pressed)
-                        && !item_disabled
-                    {
-                        theme.color(ColorToken::TextSecondary)
-                    } else {
-                        item_text_color
-                    };
+            if let Some(ref icon_svg) = item_icon {
+                left_side = left_side.child(svg(icon_svg).size(16.0, 16.0).color(item_text_color));
+            }
 
-                    // Left side: icon + label
-                    let mut left_side = div()
-                        .w_fit()
-                        .h_fit()
-                        .flex_row()
-                        .items_center()
-                        .gap(padding / 4.0);
+            left_side = left_side
+                .child(
+                    text(&item_label)
+                        .size(font_size)
+                        .color(item_text_color)
+                        .no_cursor()
+                        .pointer_events_none(),
+                )
+                .pointer_events_none();
 
-                    if let Some(ref icon_svg) = item_icon {
-                        left_side =
-                            left_side.child(svg(icon_svg).size(16.0, 16.0).color(item_text_color));
-                    }
+            let right_side: Option<Div> = if let Some(ref shortcut) = item_shortcut {
+                Some(
+                    div().child(
+                        text(shortcut)
+                            .size(font_size - 2.0)
+                            .color(shortcut_color)
+                            .no_cursor(),
+                    ),
+                )
+            } else if has_submenu {
+                let chevron_right = r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>"#;
+                Some(
+                    div()
+                        .child(svg(chevron_right).size(12.0, 12.0).color(text_tertiary))
+                        .pointer_events_none(),
+                )
+            } else {
+                None
+            };
 
-                    left_side = left_side
-                        .child(
-                            text(&item_label)
-                                .size(font_size)
-                                .color(text_col)
-                                .no_cursor()
-                                .pointer_events_none(),
-                        )
-                        .pointer_events_none();
+            let mut row_content = div()
+                .w_full()
+                .h_fit()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .child(left_side);
 
-                    // Right side: shortcut or submenu arrow
-                    let right_side: Option<Div> = if let Some(ref shortcut) = item_shortcut {
-                        Some(div().child(
-                            text(shortcut)
-                                .size(font_size - 2.0)
-                                .color(shortcut_color)
-                                .no_cursor(),
-                        ))
-                    } else if has_submenu {
-                        let chevron_right = r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>"#;
-                        Some(
-                            div()
-                                .child(svg(chevron_right).size(12.0, 12.0).color(text_tertiary))
-                                .pointer_events_none(),
-                        )
-                    } else {
-                        None
-                    };
+            if let Some(right) = right_side {
+                row_content = row_content.child(right);
+            }
 
-                    let mut row_content = div()
-                        .w_full()
-                        .h_fit()
-                        .flex_row()
-                        .items_center()
-                        .justify_between()
-                        .bg(item_bg)
-                        .child(left_side);
-
-                    if let Some(right) = right_side {
-                        row_content = row_content.child(right);
-                    }
-
-                    row_content
-                        .w_full()
-                        .h_fit()
-                        .py(padding / 4.0)
-                        .px(padding / 2.0)
-                        .bg(bg)
-                        .cursor(cursor)
-                })
+            let mut row = row_content
+                .class("cn-menubar-item")
+                .w_full()
+                .h_fit()
+                .py(padding / 4.0)
+                .px(padding / 2.0)
+                .cursor(cursor)
                 .on_click(move |_| {
                     if !item_disabled && !has_submenu {
                         if let Some(ref cb) = item_on_click {

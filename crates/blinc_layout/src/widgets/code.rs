@@ -1641,8 +1641,7 @@ impl CodeEditor {
                         return;
                     }
 
-                    // When search bar is active, block all keys except
-                    // Cmd+key shortcuts (Cmd+F to close, Cmd+G for next match)
+                    // When search is active, only allow specific keys through
                     if d.search_active {
                         let mod_key = ctx.meta || ctx.ctrl;
                         if !mod_key {
@@ -1651,10 +1650,14 @@ impl CodeEditor {
                                 drop(d);
                                 refresh_stateful(&shared_for_key);
                             }
-                            // Block all other non-modifier keys from reaching code editor
                             return;
                         }
-                        // Cmd+key combos still fall through (Cmd+F, Cmd+G, etc.)
+                        // Only allow Cmd+F, Cmd+G, Cmd+H, Cmd+R through to code editor
+                        // Block everything else (Cmd+A, Cmd+C etc. go to text_input)
+                        match ctx.key_code {
+                            70 | 71 | 72 | 82 => {} // F, G, H, R — fall through
+                            _ => return,
+                        }
                     }
 
                     let mut cursor_changed = true;
@@ -2745,6 +2748,7 @@ fn open_search_overlay(shared_state: &SharedCodeEditorState, instance_key: &str)
 
     let handle = mgr
         .dropdown()
+        .at(400.0, 40.0)
         .animation(OverlayAnimation::none())
         .dismiss_on_escape(true)
         .on_close({

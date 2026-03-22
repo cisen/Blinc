@@ -2,6 +2,12 @@
 
 All notable changes to `blinc_animation` will be documented in this file.
 
+## [0.1.15] - 2026-03-22
+
+### Fixed
+
+- Smooth corner radius artifact on thin borders in keyframe interpolation
+
 ## [0.1.13] - 2026-02-18
 
 ### Added

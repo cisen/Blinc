@@ -2,6 +2,25 @@
 
 All notable changes to `blinc_layout` will be documented in this file.
 
+## [0.1.15] - 2026-03-22
+
+### Added
+
+- `class_name_with_state()` on `ComplexSelector` for extracting class names from state-bearing selectors (e.g. `.cn-sidebar-item:hover`)
+- `get_classes()` on `ElementRegistry` for retrieving registered CSS classes by node ID
+
+### Fixed
+
+- Hover transition artifacts on sidebar, nav-link, and menubar components caused by incorrect base_styles caching and transition restart loops on sustained hover
+- Checkbox background not updating on check/uncheck: parent node CSS class registrations now updated during full structural rebuilds so `.cn-checkbox--checked` is matched correctly
+- Per-side borders with different colors now use SDF-based rendering with proper corner radius instead of rectangular fill strips
+- Combobox dropdown scroll by using registered physics directly
+- Smooth corner radius artifact on thin borders
+- Stale element data (SVG tint, text content, images) during visual-only rebuilds: `element_type` is now updated in `update_subtree_props_from_builder`
+- Base styles cache invalidated when CSS classes change during visual-only rebuilds
+- Transition detection skipped for nodes already sustaining a hover state to prevent restart loops
+- Toast stack container uses absolute positioning so it covers the full viewport independently of other overlay siblings
+
 ## [0.1.14] - 2026-02-24
 
 ### Added

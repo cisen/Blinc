@@ -2,6 +2,12 @@
 
 All notable changes to `blinc_app` will be documented in this file.
 
+## [0.1.15] - 2026-03-22
+
+### Fixed
+
+- Combobox dropdown scroll by using registered scroll physics directly from the windowed context
+
 ## [0.1.14] - 2026-02-24
 
 ### Added

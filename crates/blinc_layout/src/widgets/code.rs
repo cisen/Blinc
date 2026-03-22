@@ -1093,6 +1093,7 @@ impl CodeEditor {
                     // Apply visual styling
                     container.set_bg(data.config.bg_color);
                     container.set_rounded(data.config.corner_radius);
+                    container.set_overflow_clip(true);
                 },
             ));
             shared.needs_visual_update = true;
@@ -1300,12 +1301,8 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
         container = container.child(build_gutter(num_lines, line_height_px, config));
     }
 
-    let mut code_area = div()
-        .flex_col()
-        .flex_grow()
-        .padding_x_px(config.padding)
-        .padding_y_px(config.padding)
-        .relative();
+    let pad = config.padding;
+    let mut code_area = div().flex_col().flex_grow().relative();
 
     // Selection highlights (behind text)
     if let Some(sel_start) = data.selection_start {
@@ -1338,11 +1335,11 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
                 };
 
                 if width > 0.0 {
-                    let sel_top = line_idx as f32 * line_height_px;
+                    let sel_top = line_idx as f32 * line_height_px + pad;
                     code_area = code_area.child(
                         div()
                             .absolute()
-                            .left(x_start)
+                            .left(x_start + pad)
                             .top(sel_top)
                             .w(width)
                             .h(line_height_px)
@@ -1354,21 +1351,23 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
         }
     }
 
-    // Text lines
+    // Text lines in a padded wrapper
+    let mut text_wrapper = div().flex_col().padding_x_px(pad).padding_y_px(pad);
     for styled_line in &styled.lines {
-        code_area = code_area.child(build_styled_line(styled_line, config, line_height_px));
+        text_wrapper = text_wrapper.child(build_styled_line(styled_line, config, line_height_px));
     }
+    code_area = code_area.child(text_wrapper);
 
-    // Cursor
+    // Cursor (offset by padding to align with text)
     if is_focused {
         let cursor_height = config.font_size * 1.2;
         let cursor_line = data.cursor.line;
         let cursor_col = data.cursor.column;
 
-        let cursor_x = cursor_col as f32 * char_width;
+        let cursor_x = cursor_col as f32 * char_width + pad;
 
         let cursor_top =
-            (cursor_line as f32 * line_height_px) + (line_height_px - cursor_height) / 2.0;
+            (cursor_line as f32 * line_height_px) + (line_height_px - cursor_height) / 2.0 + pad;
 
         let cursor_state_clone = Arc::clone(&data.cursor_state);
         let cursor_color = config.cursor_color;

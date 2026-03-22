@@ -2793,7 +2793,7 @@ fn search_toggle_button(
     .on_click(move |_| on_click())
 }
 
-/// Build the search bar overlay
+/// Build the search bar overlay (VS Code style)
 fn build_search_bar(
     data: &CodeEditorData,
     config: &CodeConfig,
@@ -2802,13 +2802,13 @@ fn build_search_bar(
 ) -> Div {
     let theme = ThemeState::get();
     let small_font = config.font_size * 0.85;
-    let icon_size = config.font_size * 0.85;
+    let icon_size = config.font_size + 2.0;
     let label_color = config.line_number_color;
     let accent = config.cursor_color;
     let text_col = config.text_color;
     let border_color = config.gutter_separator_color;
+    let input_w = 240.0;
 
-    // Match info text
     let match_info = if data.search_query.is_empty() {
         String::new()
     } else if data.search_matches.is_empty() {
@@ -2821,15 +2821,15 @@ fn build_search_bar(
         )
     };
 
-    // --- Chevron toggle (expand/collapse replace) ---
+    // --- Chevron (toggle replace) ---
     let chevron_svg = if data.replace_active {
         FOLD_EXPANDED_SVG
     } else {
         FOLD_COLLAPSED_SVG
     };
     let state_for_toggle = Arc::clone(shared_state);
-    let chevron_btn = search_icon_button(
-        &format!("{}:search_toggle_replace", instance_key),
+    let chevron = search_icon_button(
+        &format!("{}:stoggle", instance_key),
         chevron_svg,
         icon_size,
         text_col,
@@ -2840,14 +2840,10 @@ fn build_search_bar(
         },
     );
 
-    // --- Find input (flex_grow) ---
-    let search_state = Arc::clone(&data.search_input_state);
-    let find_input = text_input(&search_state).flex_grow().text_size(small_font);
-
-    // --- Toggle buttons: [Aa] [ab] [.*] ---
+    // --- Toggle buttons (Aa, ab, .*) — absolutely positioned inside find input ---
     let state_for_case = Arc::clone(shared_state);
     let case_btn = search_toggle_button(
-        &format!("{}:search_case", instance_key),
+        &format!("{}:scase", instance_key),
         "Aa",
         data.search_case_sensitive,
         label_color,
@@ -2860,10 +2856,9 @@ fn build_search_bar(
             }
         },
     );
-
     let state_for_word = Arc::clone(shared_state);
     let word_btn = search_toggle_button(
-        &format!("{}:search_word", instance_key),
+        &format!("{}:sword", instance_key),
         "ab",
         data.search_whole_word,
         label_color,
@@ -2876,10 +2871,9 @@ fn build_search_bar(
             }
         },
     );
-
     let state_for_regex = Arc::clone(shared_state);
     let regex_btn = search_toggle_button(
-        &format!("{}:search_regex", instance_key),
+        &format!("{}:sregex", instance_key),
         ".*",
         data.search_regex,
         label_color,
@@ -2893,10 +2887,30 @@ fn build_search_bar(
         },
     );
 
-    // --- Navigation: [↑] [↓] [×] ---
+    // Find input with toggle buttons overlaid at the right edge
+    let search_state = Arc::clone(&data.search_input_state);
+    let find_input_with_toggles = div()
+        .relative()
+        .w(input_w)
+        .child(text_input(&search_state).w_full().text_size(small_font))
+        .child(
+            div()
+                .absolute()
+                .right(2.0)
+                .top(0.0)
+                .h_full()
+                .flex_row()
+                .items_center()
+                .gap_px(1.0)
+                .child(case_btn)
+                .child(word_btn)
+                .child(regex_btn),
+        );
+
+    // --- Nav buttons ---
     let state_for_prev = Arc::clone(shared_state);
     let prev_btn = search_icon_button(
-        &format!("{}:search_prev", instance_key),
+        &format!("{}:sprev", instance_key),
         ICON_UP,
         icon_size,
         text_col,
@@ -2906,10 +2920,9 @@ fn build_search_bar(
             }
         },
     );
-
     let state_for_next = Arc::clone(shared_state);
     let next_btn = search_icon_button(
-        &format!("{}:search_next", instance_key),
+        &format!("{}:snext", instance_key),
         ICON_DOWN,
         icon_size,
         text_col,
@@ -2919,10 +2932,9 @@ fn build_search_bar(
             }
         },
     );
-
     let state_for_close = Arc::clone(shared_state);
     let close_btn = search_icon_button(
-        &format!("{}:search_close", instance_key),
+        &format!("{}:sclose", instance_key),
         ICON_CLOSE,
         icon_size,
         text_col,
@@ -2932,39 +2944,34 @@ fn build_search_bar(
                 d.replace_active = false;
                 d.search_query.clear();
                 d.search_matches.clear();
-                if let Ok(mut input) = d.search_input_state.lock() {
-                    input.value.clear();
-                    input.cursor = 0;
+                if let Ok(mut i) = d.search_input_state.lock() {
+                    i.value.clear();
+                    i.cursor = 0;
                 }
-                if let Ok(mut input) = d.replace_input_state.lock() {
-                    input.value.clear();
-                    input.cursor = 0;
+                if let Ok(mut i) = d.replace_input_state.lock() {
+                    i.value.clear();
+                    i.cursor = 0;
                 }
             }
         },
     );
 
-    // === FIND ROW ===
-    // [>] [Find input___________] [Aa] [ab] [.*] [count] [↑] [↓] [×]
+    // === FIND ROW: [>] [input+toggles] [count] [↑] [↓] [×] ===
     let mut find_row = div()
         .flex_row()
         .items_center()
-        .gap_px(2.0)
-        .child(chevron_btn)
-        .child(find_input)
-        .child(case_btn)
-        .child(word_btn)
-        .child(regex_btn);
+        .gap_px(4.0)
+        .child(chevron)
+        .child(find_input_with_toggles);
 
     if !match_info.is_empty() {
         find_row = find_row.child(
             text(&match_info)
-                .size(small_font * 0.85)
+                .size(small_font * 0.9)
                 .color(label_color)
                 .no_wrap(),
         );
     }
-
     find_row = find_row.child(prev_btn).child(next_btn).child(close_btn);
 
     // === CONTAINER ===
@@ -2972,58 +2979,54 @@ fn build_search_bar(
         .absolute()
         .right(4.0)
         .top(0.0)
-        .w(420.0)
         .flex_col()
-        .gap_px(2.0)
+        .gap_px(4.0)
         .p_px(4.0)
         .bg(config.bg_color)
-        .border_bottom(1.0, border_color)
-        .border_left(1.0, border_color)
-        .rounded(0.0) // VS Code uses no rounding on top
-        .shadow_sm()
+        .border(1.0, border_color)
+        .rounded(4.0)
+        .shadow_md()
         .stack_layer()
+        .foreground()
         .on_mouse_down(|_| {})
         .child(find_row);
 
-    // === REPLACE ROW (if expanded) ===
-    // [spacer] [Replace input_______] [⇄] [⇄⇄]
+    // === REPLACE ROW: [spacer] [input] [⇄] [⇄⇄] ===
     if data.replace_active {
         let replace_state = Arc::clone(&data.replace_input_state);
-        let replace_input = text_input(&replace_state).flex_grow().text_size(small_font);
+        let replace_input = text_input(&replace_state).w(input_w).text_size(small_font);
 
-        let state_for_replace = Arc::clone(shared_state);
+        let state_for_r1 = Arc::clone(shared_state);
         let replace_btn = search_icon_button(
-            &format!("{}:replace_one", instance_key),
+            &format!("{}:sr1", instance_key),
             ICON_REPLACE,
             icon_size,
             text_col,
             move || {
-                if let Ok(mut d) = state_for_replace.lock() {
+                if let Ok(mut d) = state_for_r1.lock() {
                     d.replace_current();
                 }
             },
         );
-
-        let state_for_replace_all = Arc::clone(shared_state);
+        let state_for_ra = Arc::clone(shared_state);
         let replace_all_btn = search_icon_button(
-            &format!("{}:replace_all", instance_key),
+            &format!("{}:sra", instance_key),
             ICON_REPLACE_ALL,
             icon_size,
             text_col,
             move || {
-                if let Ok(mut d) = state_for_replace_all.lock() {
+                if let Ok(mut d) = state_for_ra.lock() {
                     d.replace_all();
                 }
             },
         );
 
-        // Indent replace row to align with find input (skip chevron width)
-        let chevron_spacer_w = icon_size + 8.0;
+        let chevron_w = icon_size + 8.0;
         let replace_row = div()
             .flex_row()
             .items_center()
-            .gap_px(2.0)
-            .child(div().w(chevron_spacer_w))
+            .gap_px(4.0)
+            .child(div().w(chevron_w)) // spacer to align with find input
             .child(replace_input)
             .child(replace_btn)
             .child(replace_all_btn);

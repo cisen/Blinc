@@ -1921,7 +1921,6 @@ fn build_indent_guides(
     visible_lines: &[usize],
     line_height_px: f32,
     pad: f32,
-    char_width: f32,
 ) -> Vec<Div> {
     let config = &data.config;
     let indent_size = 4;
@@ -1942,9 +1941,12 @@ fn build_indent_guides(
     // Find max indent level
     let max_indent = indent_levels.iter().map(|&(_, l)| l).max().unwrap_or(0);
 
+    // Measure indent width using monospace font (same as rendered text)
+    let indent_unit_width = data.measure_mono("    "); // 4 spaces
+
     // For each indent level, find contiguous spans of lines at or deeper than that level
     for level in 1..=max_indent {
-        let x = (level * indent_size) as f32 * char_width + pad;
+        let x = level as f32 * indent_unit_width + pad;
         let mut span_start: Option<usize> = None;
 
         for &(vis_idx, indent) in &indent_levels {
@@ -2075,8 +2077,7 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
 
     // Indentation guides (behind text)
     if config.indent_guides {
-        for guide_div in build_indent_guides(data, &visible_lines, line_height_px, pad, char_width)
-        {
+        for guide_div in build_indent_guides(data, &visible_lines, line_height_px, pad) {
             code_area = code_area.child(guide_div);
         }
     }
@@ -2084,19 +2085,27 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
     // Text lines in a padded wrapper (only visible lines)
     let mut text_wrapper = div().flex_col().padding_x_px(pad).padding_y_px(pad);
     for &line_idx in &visible_lines {
-        if line_idx < styled.lines.len() {
-            let mut line_div = build_styled_line(&styled.lines[line_idx], config, line_height_px);
+        let line_div = if line_idx < styled.lines.len() {
+            let mut ld = build_styled_line(&styled.lines[line_idx], config, line_height_px);
             // Show fold indicator on fold start lines
             if config.code_folding && data.is_fold_start(line_idx) {
-                line_div = line_div.child(
+                ld = ld.child(
                     text(" ...")
                         .size(config.font_size * 0.85)
                         .color(config.line_number_color)
                         .monospace(),
                 );
             }
-            text_wrapper = text_wrapper.child(line_div);
-        }
+            ld
+        } else {
+            // Fallback for lines beyond styled content (shouldn't happen but safety)
+            div()
+                .h(line_height_px)
+                .flex_row()
+                .items_center()
+                .child(text(" ").size(config.font_size).color(config.text_color))
+        };
+        text_wrapper = text_wrapper.child(line_div);
     }
     code_area = code_area.child(text_wrapper);
 

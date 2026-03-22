@@ -1950,66 +1950,45 @@ fn build_minimap(data: &CodeEditorData, line_height_px: f32) -> Div {
 
 /// Build indentation guides as absolutely-positioned vertical lines.
 /// Each guide spans only the block of consecutive lines at that indent level.
+/// Build indent guides based on fold regions (bracket-matched blocks only).
+/// Each guide runs vertically from the line after `{` to the line with `}`.
 fn build_indent_guides(
     data: &CodeEditorData,
     visible_lines: &[usize],
     line_height_px: f32,
     pad: f32,
 ) -> Vec<Div> {
-    let config = &data.config;
-    let indent_size = 4;
-    let guide_color = config.indent_guide_color;
+    let guide_color = data.config.indent_guide_color;
+    let fold_regions = data.detect_fold_regions();
     let mut guides = Vec::new();
 
-    // For each visible line, compute its indent level
-    let indent_levels: Vec<(usize, usize)> = visible_lines
-        .iter()
-        .enumerate()
-        .map(|(vis_idx, &line_idx)| {
-            let line = &data.lines[line_idx];
-            let spaces = line.chars().take_while(|c| *c == ' ').count();
-            (vis_idx, spaces / indent_size)
-        })
-        .collect();
+    // Build a map from actual line index to visible row index
+    let mut line_to_vis: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    for (vis_idx, &line_idx) in visible_lines.iter().enumerate() {
+        line_to_vis.insert(line_idx, vis_idx);
+    }
 
-    // Find max indent level
-    let max_indent = indent_levels.iter().map(|&(_, l)| l).max().unwrap_or(0);
-
-    // Measure indent width using monospace font (same as rendered text)
-    let indent_unit_width = data.measure_mono("    "); // 4 spaces
-
-    // For each indent level, find contiguous spans of lines at or deeper than that level
-    for level in 1..=max_indent {
-        let x = level as f32 * indent_unit_width + pad;
-        let mut span_start: Option<usize> = None;
-
-        for &(vis_idx, indent) in &indent_levels {
-            if indent >= level {
-                if span_start.is_none() {
-                    span_start = Some(vis_idx);
-                }
-            } else if let Some(start) = span_start.take() {
-                // End of span — draw guide from start to vis_idx-1
-                let top = start as f32 * line_height_px + pad;
-                let h = (vis_idx - start) as f32 * line_height_px;
-                if h > line_height_px {
-                    guides.push(
-                        div()
-                            .absolute()
-                            .left(x)
-                            .top(top)
-                            .w(1.0)
-                            .h(h)
-                            .bg(guide_color),
-                    );
-                }
-            }
+    for region in &fold_regions {
+        // Skip folded regions (they're not visible)
+        if data.is_fold_start(region.start_line) {
+            continue;
         }
-        // Close any open span at end
-        if let Some(start) = span_start {
-            let top = start as f32 * line_height_px + pad;
-            let h = (indent_levels.len() - start) as f32 * line_height_px;
-            if h > line_height_px {
+
+        // Get the indent level of the opening line
+        let open_line = &data.lines[region.start_line];
+        let indent_chars = open_line.chars().take_while(|c| c.is_whitespace()).count();
+        let x = data.measure_mono(&" ".repeat(indent_chars + 1)) + pad;
+
+        // Guide runs from line after { to line with }
+        let guide_start = region.start_line + 1;
+        let guide_end = region.end_line;
+
+        if let (Some(&vis_start), Some(&vis_end)) =
+            (line_to_vis.get(&guide_start), line_to_vis.get(&guide_end))
+        {
+            let top = vis_start as f32 * line_height_px + pad;
+            let h = (vis_end - vis_start + 1) as f32 * line_height_px;
+            if h > 0.0 {
                 guides.push(
                     div()
                         .absolute()

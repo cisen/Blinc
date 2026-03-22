@@ -488,13 +488,6 @@ pub fn check_stateful_deps(changed_signals: &[SignalId]) -> bool {
     // -> register_stateful_deps() which would try to acquire the same lock.
     let callbacks_to_call: Vec<Arc<dyn Fn() + Send + Sync>> = {
         let registry = STATEFUL_DEPS.lock().unwrap();
-        if !changed_signals.is_empty() {
-            tracing::debug!(
-                "check_stateful_deps: checking {} changed signals against {} registered statefuls",
-                changed_signals.len(),
-                registry.len()
-            );
-        }
         registry
             .iter()
             .filter_map(|(key, (deps, refresh_fn))| {
@@ -2841,12 +2834,10 @@ impl<S: StateTransitions> Stateful<S> {
 
             if structure_changed {
                 // Full structural rebuild (children added/removed/reordered, or layout changed)
-                tracing::trace!("refresh_props_internal: structural change, full rebuild");
                 queue_subtree_rebuild(cached_node_id, temp_div);
             } else {
                 // Visual-only change (transform, opacity, bg, etc.) — skip expensive rebuild.
                 // Just update render props of existing children in-place.
-                tracing::trace!("refresh_props_internal: visual-only change, fast update");
                 queue_visual_subtree_rebuild(cached_node_id, temp_div);
             }
         }

@@ -5588,21 +5588,12 @@ impl RenderTree {
                 }
             }
 
-            // Eagerly save base_styles for nodes matching classes with state rules
-            let state_class_names: std::collections::HashSet<&str> = complex_rules
-                .iter()
-                .filter(|(sel, _)| sel.has_state())
-                .filter_map(|(sel, _)| sel.simple_class_name())
-                .collect();
-            for class_name in &state_class_names {
-                if let Some(node_ids) = class_to_nodes.get(*class_name) {
-                    for &node_id in node_ids {
-                        if let Some(render_node) = self.render_nodes.get(&node_id) {
-                            self.base_styles.insert(node_id, render_node.props.clone());
-                        }
-                    }
-                }
-            }
+            // NOTE: Do NOT eagerly save base_styles here. This function runs for
+            // the entire tree during layout recomputation, at which point hovered
+            // nodes may still carry hover styles. Saving contaminated props as
+            // "base" causes hover to stick (trailing artifacts, blinking).
+            // Eager base_styles saves belong in apply_stylesheet_base_styles() and
+            // apply_stylesheet_base_styles_for_subtree() which run when props are clean.
         }
 
         // =====================================================================
@@ -6451,7 +6442,6 @@ impl RenderTree {
             router.hovered_nodes().collect();
         let pressed_nodes: std::collections::HashSet<LayoutNodeId> =
             router.pressed_target().into_iter().collect();
-
         let focused_node: Option<LayoutNodeId> = {
             // Check all registered nodes for focus
             let mut focused = None;
@@ -6600,14 +6590,15 @@ impl RenderTree {
                         })
                     };
 
-                    // Snapshot for transition detection (visual + layout)
-                    // For prev_affected nodes, use the pre-reset snapshot so that
-                    // "still hovering after transition completed" sees before==after
-                    let before_kp = if transition_set.is_some() {
-                        pre_reset_snapshots
-                            .get(&node_id)
-                            .cloned()
-                            .or_else(|| self.snapshot_before_keyframe_properties(node_id))
+                    // For nodes already in prev_affected (sustaining a state from
+                    // last frame), skip transition detection — the existing transition
+                    // is already in progress or completed. Re-detecting every frame
+                    // can cause spurious restarts due to snapshot mismatches between
+                    // overlaid and non-overlaid properties.
+                    let is_sustaining = prev_affected.contains(&node_id);
+
+                    let before_kp = if !is_sustaining && transition_set.is_some() {
+                        self.snapshot_before_keyframe_properties(node_id)
                     } else {
                         None
                     };
@@ -6624,7 +6615,7 @@ impl RenderTree {
                         }
                     }
 
-                    // Detect transitions (visual + layout)
+                    // Detect transitions only for newly entering state (not sustaining)
                     if let (Some(before_kp), Some(transition_set)) = (before_kp, transition_set) {
                         if let Some(after_kp) = self.snapshot_keyframe_properties(node_id) {
                             self.detect_and_start_transitions(
@@ -8251,16 +8242,20 @@ impl RenderTree {
             // state rules (:hover, :active, :focus). This prevents the lazy save
             // in apply_complex_selector_styles() from capturing contaminated props
             // (e.g. inline hover backgrounds set by Stateful component rebuilds).
+            // Only save if not already present — this function runs for the entire
+            // tree and nodes outside a rebuild may still carry hover/active styles.
             let state_class_names: std::collections::HashSet<&str> = complex_rules
                 .iter()
                 .filter(|(sel, _)| sel.has_state())
-                .filter_map(|(sel, _)| sel.simple_class_name())
+                .filter_map(|(sel, _)| sel.class_name_with_state())
                 .collect();
             for class_name in &state_class_names {
                 if let Some(node_ids) = class_to_nodes.get(*class_name) {
                     for &node_id in node_ids {
-                        if let Some(render_node) = self.render_nodes.get(&node_id) {
-                            self.base_styles.insert(node_id, render_node.props.clone());
+                        if !self.base_styles.contains_key(&node_id) {
+                            if let Some(render_node) = self.render_nodes.get(&node_id) {
+                                self.base_styles.insert(node_id, render_node.props.clone());
+                            }
                         }
                     }
                 }
@@ -8568,7 +8563,7 @@ impl RenderTree {
             let state_class_names: std::collections::HashSet<&str> = complex_rules
                 .iter()
                 .filter(|(sel, _)| sel.has_state())
-                .filter_map(|(sel, _)| sel.simple_class_name())
+                .filter_map(|(sel, _)| sel.class_name_with_state())
                 .collect();
             for class_name in &state_class_names {
                 if let Some(node_ids) = class_to_nodes.get(*class_name) {
@@ -9295,6 +9290,10 @@ impl RenderTree {
                     new_props.node_id = render_node.props.node_id;
                     new_props.motion = render_node.props.motion.clone();
                     render_node.props = new_props;
+                    // Also update element_type (SVG tint, text content, image data, etc.)
+                    // Without this, visual-only rebuilds leave stale element data.
+                    render_node.element_type =
+                        Self::determine_element_type_boxed(new_child.as_ref());
                 }
 
                 // Re-register event handlers from the new element builder.
@@ -9309,11 +9308,19 @@ impl RenderTree {
                 // Without this, adding/removing classes (e.g. cn-sidebar-item--active)
                 // wouldn't take effect during visual-only rebuilds.
                 let new_classes = new_child.element_classes();
+                let old_classes = self.element_registry.get_classes(*child_id);
+                let classes_changed = new_classes != old_classes.as_deref().unwrap_or(&[]);
                 if !new_classes.is_empty() {
                     self.element_registry
                         .register_classes(*child_id, new_classes.to_vec());
                 } else {
                     self.element_registry.clear_classes(*child_id);
+                }
+                // Invalidate base_styles cache when classes change so that
+                // apply_complex_selector_styles resets to the correct base
+                // (e.g., node gaining --active needs its new base to include that)
+                if classes_changed {
+                    self.base_styles.remove(child_id);
                 }
 
                 // Recursively update grandchildren

@@ -622,8 +622,7 @@ fn show_menubar_dropdown(
 
     let motion_key_str = format!("menubar_{}", key);
 
-    let handle = mgr
-        .dropdown()
+    mgr.dropdown()
         .at(x, y)
         .animation(OverlayAnimation::none())
         .dismiss_on_escape(true)
@@ -650,9 +649,7 @@ fn show_menubar_dropdown(
                 padding,
             )
         })
-        .show();
-
-    handle
+        .show()
 }
 
 /// Show the menubar dropdown overlay using hover-based overlay (for Hover trigger mode)
@@ -689,8 +686,7 @@ fn show_menubar_hover_dropdown(
 
     let menu_key = key.clone();
 
-    let handle = mgr
-        .hover_card()
+    mgr.hover_card()
         .at(x, y)
         .anchor_direction(blinc_layout::widgets::overlay::AnchorDirection::Bottom)
         .animation(OverlayAnimation::none())
@@ -719,9 +715,7 @@ fn show_menubar_hover_dropdown(
                 padding,
             )
         })
-        .show();
-
-    handle
+        .show()
 }
 
 /// Build the dropdown menu content for a menubar menu (hover mode - with hover handlers)
@@ -970,8 +964,7 @@ fn show_menubar_submenu(
 
     let mgr = get_overlay_manager();
 
-    let handle = mgr
-        .hover_card()
+    mgr.hover_card()
         .at(x, y)
         .anchor_direction(blinc_layout::widgets::overlay::AnchorDirection::Right)
         .animation(OverlayAnimation::none())
@@ -997,9 +990,7 @@ fn show_menubar_submenu(
                 padding,
             )
         })
-        .show();
-
-    handle
+        .show()
 }
 
 /// Build submenu content for menubar (recursive for nested submenus)

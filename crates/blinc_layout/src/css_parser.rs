@@ -669,6 +669,23 @@ impl ComplexSelector {
         }
         None
     }
+
+    /// Extract the class name from a single-segment selector that may include state parts.
+    /// For `.cn-sidebar-item:hover`, returns `Some("cn-sidebar-item")`.
+    /// For `.class` (no state), also returns the class name.
+    /// Returns None for multi-segment selectors or selectors without a Class part.
+    pub fn class_name_with_state(&self) -> Option<&str> {
+        if self.segments.len() != 1 {
+            return None;
+        }
+        let parts = &self.segments[0].0.parts;
+        for part in parts {
+            if let SelectorPart::Class(name) = part {
+                return Some(name.as_str());
+            }
+        }
+        None
+    }
 }
 
 /// A CSS keyframe animation definition

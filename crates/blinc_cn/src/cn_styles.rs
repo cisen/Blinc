@@ -579,7 +579,6 @@ pub const CN_STYLES: &str = r#"
     padding: 8px 12px;
     cursor: pointer;
     color: var(--text-secondary);
-    transition: background 150ms, color 150ms;
 }
 .cn-nav-link:hover {
     background: var(--surface-elevated);
@@ -601,8 +600,8 @@ pub const CN_STYLES: &str = r#"
 .cn-sidebar-item {
     padding: 8px 12px;
     cursor: pointer;
+    background: transparent;
     color: var(--text-secondary);
-    transition: background 150ms, color 150ms;
 }
 .cn-sidebar-item:hover {
     background: var(--surface-elevated);
@@ -690,7 +689,6 @@ pub const CN_STYLES: &str = r#"
     color: var(--text-primary);
     font-size: 14px;
     background: transparent;
-    transition: background 100ms;
 }
 .cn-menubar-trigger:hover {
     background: var(--surface-elevated);
@@ -698,7 +696,6 @@ pub const CN_STYLES: &str = r#"
 .cn-menubar-item {
     border-radius: 4px;
     background: transparent;
-    transition: background 100ms;
 }
 .cn-menubar-item:hover {
     background: var(--surface-elevated);

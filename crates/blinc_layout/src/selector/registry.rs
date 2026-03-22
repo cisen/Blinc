@@ -162,6 +162,14 @@ impl ElementRegistry {
     }
 
     /// Check if a node has a specific CSS class
+    /// Get the CSS classes registered for a node
+    pub fn get_classes(&self, node_id: LayoutNodeId) -> Option<Vec<String>> {
+        self.classes
+            .read()
+            .ok()
+            .and_then(|map| map.get(&node_id).cloned())
+    }
+
     pub fn has_class(&self, node_id: LayoutNodeId, class: &str) -> bool {
         self.classes
             .read()

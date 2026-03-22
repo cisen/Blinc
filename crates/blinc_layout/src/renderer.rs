@@ -9198,6 +9198,17 @@ impl RenderTree {
                     new_props.motion = render_node.props.motion.clone();
                     render_node.props = new_props;
                 }
+                // Update parent node's CSS class registrations so that
+                // apply_stylesheet_base_styles_for_subtree matches the current
+                // classes (e.g., cn-checkbox--checked added/removed on toggle).
+                let parent_classes = rebuild.new_child.element_classes();
+                if !parent_classes.is_empty() {
+                    self.element_registry
+                        .register_classes(rebuild.parent_id, parent_classes.to_vec());
+                } else {
+                    self.element_registry.clear_classes(rebuild.parent_id);
+                }
+                self.base_styles.remove(&rebuild.parent_id);
                 // Also update the taffy layout style (width, height, padding, etc.)
                 if let Some(style) = rebuild.new_child.layout_style() {
                     self.layout_tree.set_style(rebuild.parent_id, style.clone());

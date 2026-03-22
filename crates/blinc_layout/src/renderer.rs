@@ -10620,7 +10620,9 @@ impl RenderTree {
                         bc,
                     );
                 } else {
-                    // Different colors per side — 4x fill_rect with clip
+                    // Different colors per side — group by color, one SDF primitive per group.
+                    // Each fill_rect_with_per_side_border call gets proper corner radius
+                    // from the shader instead of using rectangular strips with clip.
                     let sides = &render_node.props.border_sides;
                     let uniform_width = render_node.props.border_width;
                     let uniform_color =
@@ -10634,81 +10636,53 @@ impl RenderTree {
                         }
                     };
 
-                    let has_radius = radius.top_left > 0.0
-                        || radius.top_right > 0.0
-                        || radius.bottom_left > 0.0
-                        || radius.bottom_right > 0.0;
-                    if has_radius {
-                        ctx.push_clip(ClipShape::rounded_rect(rect, radius));
+                    // Resolve each side: (width, color)
+                    let side_data: [(f32, Color); 4] = [
+                        sides
+                            .top
+                            .as_ref()
+                            .map(|b| (b.width, b.color))
+                            .unwrap_or((uniform_width, uniform_color)),
+                        sides
+                            .right
+                            .as_ref()
+                            .map(|b| (b.width, b.color))
+                            .unwrap_or((uniform_width, uniform_color)),
+                        sides
+                            .bottom
+                            .as_ref()
+                            .map(|b| (b.width, b.color))
+                            .unwrap_or((uniform_width, uniform_color)),
+                        sides
+                            .left
+                            .as_ref()
+                            .map(|b| (b.width, b.color))
+                            .unwrap_or((uniform_width, uniform_color)),
+                    ];
+
+                    // Group sides by color: collect unique colors and their widths
+                    let mut color_groups: Vec<(Color, [f32; 4])> = Vec::with_capacity(4);
+                    for (i, &(w, c)) in side_data.iter().enumerate() {
+                        if w <= 0.0 {
+                            continue;
+                        }
+                        if let Some(group) = color_groups.iter_mut().find(|(gc, _)| *gc == c) {
+                            group.1[i] = w;
+                        } else {
+                            let mut widths = [0.0f32; 4];
+                            widths[i] = w;
+                            color_groups.push((c, widths));
+                        }
                     }
 
-                    let left_border = sides
-                        .left
-                        .as_ref()
-                        .map(|b| (b.width, b.color))
-                        .unwrap_or((uniform_width, uniform_color));
-                    let right_border = sides
-                        .right
-                        .as_ref()
-                        .map(|b| (b.width, b.color))
-                        .unwrap_or((uniform_width, uniform_color));
-                    let top_border = sides
-                        .top
-                        .as_ref()
-                        .map(|b| (b.width, b.color))
-                        .unwrap_or((uniform_width, uniform_color));
-                    let bottom_border = sides
-                        .bottom
-                        .as_ref()
-                        .map(|b| (b.width, b.color))
-                        .unwrap_or((uniform_width, uniform_color));
-
-                    // Draw vertical borders (left/right) full height first,
-                    // then horizontal borders (top/bottom) trimmed to avoid
-                    // overlapping at corners. This ensures the dominant side
-                    // border color fills corner areas cleanly.
-                    let lw = left_border.0;
-                    let rw = right_border.0;
-
-                    if lw > 0.0 {
-                        let border_rect = Rect::new(0.0, 0.0, lw, rect.height());
-                        ctx.fill_rect(
-                            border_rect,
-                            CornerRadius::default(),
-                            Brush::Solid(apply_motion(left_border.1)),
+                    for (color, widths) in color_groups {
+                        ctx.fill_rect_with_per_side_border(
+                            rect,
+                            radius,
+                            Brush::Solid(Color::TRANSPARENT),
+                            widths,
+                            apply_motion(color),
                         );
-                    }
-                    if rw > 0.0 {
-                        let border_rect = Rect::new(rect.width() - rw, 0.0, rw, rect.height());
-                        ctx.fill_rect(
-                            border_rect,
-                            CornerRadius::default(),
-                            Brush::Solid(apply_motion(right_border.1)),
-                        );
-                    }
-                    // Horizontal borders trimmed to fit between vertical borders
-                    let h_x = lw;
-                    let h_w = (rect.width() - lw - rw).max(0.0);
-                    if top_border.0 > 0.0 && h_w > 0.0 {
-                        let border_rect = Rect::new(h_x, 0.0, h_w, top_border.0);
-                        ctx.fill_rect(
-                            border_rect,
-                            CornerRadius::default(),
-                            Brush::Solid(apply_motion(top_border.1)),
-                        );
-                    }
-                    if bottom_border.0 > 0.0 && h_w > 0.0 {
-                        let border_rect =
-                            Rect::new(h_x, rect.height() - bottom_border.0, h_w, bottom_border.0);
-                        ctx.fill_rect(
-                            border_rect,
-                            CornerRadius::default(),
-                            Brush::Solid(apply_motion(bottom_border.1)),
-                        );
-                    }
-
-                    if has_radius {
-                        ctx.pop_clip();
                     }
                 }
             } else if render_node.props.border_width > 0.0 && border_in_foreground {

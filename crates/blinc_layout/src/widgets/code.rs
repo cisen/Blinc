@@ -988,6 +988,7 @@ impl CodeEditor {
 
                     let mut cursor_changed = true;
                     let mut text_changed = false;
+                    let mut needs_visual_refresh = false;
 
                     // Platform modifier: Cmd on macOS, Ctrl elsewhere
                     let mod_key = ctx.meta || ctx.ctrl;
@@ -1033,8 +1034,12 @@ impl CodeEditor {
                             // Check for Cmd+key combos
                             if mod_key {
                                 match ctx.key_code {
-                                    // A = Select All
-                                    65 => d.select_all(),
+                                    // A = Select All (visual refresh only, no scroll)
+                                    65 => {
+                                        d.select_all();
+                                        cursor_changed = false;
+                                        needs_visual_refresh = true;
+                                    }
                                     // C = Copy
                                     67 => {
                                         if let Some(selected) = d.selected_text() {
@@ -1085,7 +1090,7 @@ impl CodeEditor {
                             cb(&d.value());
                         }
                     }
-                    cursor_changed || text_changed
+                    cursor_changed || text_changed || needs_visual_refresh
                 };
                 if needs_refresh {
                     refresh_stateful(&shared_for_key);

@@ -2897,6 +2897,22 @@ fn build_search_bar(
         FOLD_COLLAPSED_SVG
     };
     let state_for_toggle = Arc::clone(shared_state);
+    // Helper: reopen search overlay after state change
+    let reopen = |state: &SharedCodeEditorState, key: &str| {
+        let s = Arc::clone(state);
+        let k = key.to_string();
+        move || {
+            // Close and reopen to rebuild content with new state
+            if let Ok(mut d) = s.lock() {
+                close_search_overlay(&mut d);
+                d.search_active = true;
+            }
+            open_search_overlay(&s, &k);
+        }
+    };
+
+    // --- Chevron toggle (expand/collapse replace) ---
+    let reopen_for_toggle = reopen(shared_state, instance_key);
     let chevron = search_icon_button(
         &format!("{}:stoggle", instance_key),
         chevron_svg,
@@ -2906,11 +2922,13 @@ fn build_search_bar(
             if let Ok(mut d) = state_for_toggle.lock() {
                 d.replace_active = !d.replace_active;
             }
+            reopen_for_toggle();
         },
     );
 
     // --- Toggle buttons (Aa, ab, .*) — absolutely positioned inside find input ---
     let state_for_case = Arc::clone(shared_state);
+    let reopen_for_case = reopen(shared_state, instance_key);
     let case_btn = search_toggle_button(
         &format!("{}:scase", instance_key),
         "Aa",
@@ -2923,9 +2941,11 @@ fn build_search_bar(
                 d.search_case_sensitive = !d.search_case_sensitive;
                 d.execute_search();
             }
+            reopen_for_case();
         },
     );
     let state_for_word = Arc::clone(shared_state);
+    let reopen_for_word = reopen(shared_state, instance_key);
     let word_btn = search_toggle_button(
         &format!("{}:sword", instance_key),
         "ab",
@@ -2938,9 +2958,11 @@ fn build_search_bar(
                 d.search_whole_word = !d.search_whole_word;
                 d.execute_search();
             }
+            reopen_for_word();
         },
     );
     let state_for_regex = Arc::clone(shared_state);
+    let reopen_for_regex = reopen(shared_state, instance_key);
     let regex_btn = search_toggle_button(
         &format!("{}:sregex", instance_key),
         ".*",
@@ -2953,6 +2975,7 @@ fn build_search_bar(
                 d.search_regex = !d.search_regex;
                 d.execute_search();
             }
+            reopen_for_regex();
         },
     );
 
@@ -3051,6 +3074,7 @@ fn build_search_bar(
         let replace_input = text_input(&replace_state).w(input_w).text_size(small_font);
 
         let state_for_r1 = Arc::clone(shared_state);
+        let reopen_for_r1 = reopen(shared_state, instance_key);
         let replace_btn = search_icon_button(
             &format!("{}:sr1", instance_key),
             ICON_REPLACE,
@@ -3060,9 +3084,11 @@ fn build_search_bar(
                 if let Ok(mut d) = state_for_r1.lock() {
                     d.replace_current();
                 }
+                reopen_for_r1();
             },
         );
         let state_for_ra = Arc::clone(shared_state);
+        let reopen_for_ra = reopen(shared_state, instance_key);
         let replace_all_btn = search_icon_button(
             &format!("{}:sra", instance_key),
             ICON_REPLACE_ALL,
@@ -3072,6 +3098,7 @@ fn build_search_bar(
                 if let Ok(mut d) = state_for_ra.lock() {
                     d.replace_all();
                 }
+                reopen_for_ra();
             },
         );
 

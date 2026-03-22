@@ -202,6 +202,8 @@ pub struct CodeEditorData {
     pub replace_active: bool,
     /// Overlay handle for the search bar (if open)
     pub search_overlay_handle: Option<crate::widgets::overlay::OverlayHandle>,
+    /// Editor bounds (updated on mouse events for overlay positioning)
+    pub editor_bounds: (f32, f32, f32, f32), // (x, y, width, height)
     /// All match positions: (line, start_col, end_col)
     pub search_matches: Vec<(usize, usize, usize)>,
     /// Index of the currently focused match
@@ -273,6 +275,7 @@ pub fn code_editor_state(content: impl Into<String>) -> SharedCodeEditorState {
         search_whole_word: false,
         replace_active: false,
         search_overlay_handle: None,
+        editor_bounds: (0.0, 0.0, 800.0, 300.0),
         search_matches: Vec::new(),
         search_match_idx: 0,
         scroll_physics: Arc::new(Mutex::new(ScrollPhysics::default())),
@@ -1459,6 +1462,14 @@ impl CodeEditor {
                         Ok(d) => d,
                         Err(_) => return,
                     };
+
+                    // Store editor bounds for overlay positioning
+                    d.editor_bounds = (
+                        ctx.bounds_x,
+                        ctx.bounds_y,
+                        ctx.bounds_width,
+                        ctx.bounds_height,
+                    );
 
                     // Focus via FSM
                     {
@@ -2746,9 +2757,15 @@ fn open_search_overlay(shared_state: &SharedCodeEditorState, instance_key: &str)
     let state_for_content = Arc::clone(shared_state);
     let key = instance_key.to_string();
 
+    // Position at top-right of editor bounds
+    let (ex, ey, ew, _eh) = shared_state.lock().unwrap().editor_bounds;
+    let bar_w = 400.0;
+    let overlay_x = (ex + ew - bar_w - 8.0).max(ex);
+    let overlay_y = ey + 4.0;
+
     let handle = mgr
         .dropdown()
-        .at(400.0, 40.0)
+        .at(overlay_x, overlay_y)
         .animation(OverlayAnimation::none())
         .dismiss_on_escape(true)
         .on_close({

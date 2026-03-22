@@ -2663,105 +2663,251 @@ fn build_editor_content(
             pad,
         ));
     }
-    // Search bar — absolutely positioned top-right overlay using text_input widget
+    // Search bar — absolutely positioned top-right overlay
     if data.search_active {
-        let match_count = data.search_matches.len();
-        let match_info = if match_count > 0 {
-            format!("{}/{}", data.search_match_idx + 1, match_count)
-        } else if !data.search_query.is_empty() {
-            "0/0".to_string()
-        } else {
-            String::new()
-        };
-
-        let small_font = config.font_size * 0.8;
-        let label_color = config.line_number_color;
-        let accent = config.cursor_color;
-
-        // Search row: [input] [match count] [regex toggle]
-        let search_state = Arc::clone(&data.search_input_state);
-        let search_row = div()
-            .flex_row()
-            .items_center()
-            .gap_px(4.0)
-            .child(text_input(&search_state).w(180.0).text_size(small_font))
-            .child(
-                text(&match_info)
-                    .size(small_font * 0.9)
-                    .color(label_color)
-                    .no_wrap(),
-            )
-            .child(
-                div()
-                    .p_px(2.0)
-                    .rounded(3.0)
-                    .bg(if data.search_regex {
-                        accent.with_alpha(0.3)
-                    } else {
-                        Color::TRANSPARENT
-                    })
-                    .child(
-                        text(".*")
-                            .size(small_font)
-                            .color(if data.search_regex {
-                                accent
-                            } else {
-                                label_color
-                            })
-                            .monospace(),
-                    ),
-            );
-
-        // Replace row (if active): [input] [Replace] [All]
-        let replace_row = if data.replace_active {
-            let replace_state = Arc::clone(&data.replace_input_state);
-            Some(
-                div()
-                    .flex_row()
-                    .items_center()
-                    .gap_px(4.0)
-                    .child(text_input(&replace_state).w(180.0).text_size(small_font))
-                    .child(
-                        text("Replace")
-                            .size(small_font * 0.9)
-                            .color(label_color)
-                            .no_wrap(),
-                    )
-                    .child(
-                        text("All")
-                            .size(small_font * 0.9)
-                            .color(label_color)
-                            .no_wrap(),
-                    ),
-            )
-        } else {
-            None
-        };
-
-        let mut search_bar = div()
-            .absolute()
-            .right(8.0)
-            .top(4.0)
-            .w(320.0)
-            .flex_col()
-            .gap_px(4.0)
-            .p_px(6.0)
-            .bg(config.bg_color)
-            .border(1.0, config.gutter_separator_color)
-            .rounded(6.0)
-            .shadow_sm()
-            .stack_layer()
-            .on_mouse_down(|_| {})
-            .child(search_row);
-
-        if let Some(rr) = replace_row {
-            search_bar = search_bar.child(rr);
+        if let Some(ref shared) = shared_state {
+            code_area = code_area.child(build_search_bar(data, config, shared));
         }
-
-        code_area = code_area.child(search_bar);
     }
     container = container.child(code_area);
     container
+}
+
+// SVG icons for search bar buttons
+const ICON_CHEVRON_UP: &str = r#"<svg viewBox="0 0 16 16"><path d="M4 10l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>"#;
+const ICON_CHEVRON_DOWN: &str = r#"<svg viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>"#;
+const ICON_CLOSE: &str = r#"<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>"#;
+const ICON_REPLACE: &str = r#"<svg viewBox="0 0 16 16"><path d="M3 8h7M7 5l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>"#;
+const ICON_REPLACE_ALL: &str = r#"<svg viewBox="0 0 16 16"><path d="M2 6h6M5 3l3 3-3 3M2 12h6M5 9l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"#;
+
+/// Build an icon button for the search bar
+fn search_icon_button(
+    key: &str,
+    icon_svg: &'static str,
+    icon_size: f32,
+    color: Color,
+    on_click: impl Fn() + Send + Sync + 'static,
+) -> crate::widgets::button::Button {
+    let btn_state = crate::stateful::use_shared_state::<crate::stateful::ButtonState>(key);
+    crate::widgets::button::Button::with_content(btn_state, move |_state| {
+        div().child(
+            crate::svg::svg(icon_svg)
+                .size(icon_size, icon_size)
+                .tint(color),
+        )
+    })
+    .bg_color(Color::TRANSPARENT)
+    .hover_color(Color::rgba(1.0, 1.0, 1.0, 0.1))
+    .pressed_color(Color::rgba(1.0, 1.0, 1.0, 0.15))
+    .rounded(4.0)
+    .px(3.0)
+    .py(3.0)
+    .on_click(move |_| on_click())
+}
+
+/// Build a toggle button for the search bar (Aa, ab, .*)
+fn search_toggle_button(
+    key: &str,
+    label: &'static str,
+    active: bool,
+    color: Color,
+    accent: Color,
+    font_size: f32,
+    on_click: impl Fn() + Send + Sync + 'static,
+) -> crate::widgets::button::Button {
+    let btn_state = crate::stateful::use_shared_state::<crate::stateful::ButtonState>(key);
+    let bg = if active {
+        accent.with_alpha(0.3)
+    } else {
+        Color::TRANSPARENT
+    };
+    let text_color = if active { accent } else { color };
+    crate::widgets::button::Button::with_content(btn_state, move |_state| {
+        div().child(
+            text(label)
+                .size(font_size)
+                .color(text_color)
+                .monospace()
+                .bold(),
+        )
+    })
+    .bg_color(bg)
+    .hover_color(if active {
+        accent.with_alpha(0.4)
+    } else {
+        Color::rgba(1.0, 1.0, 1.0, 0.1)
+    })
+    .pressed_color(accent.with_alpha(0.5))
+    .rounded(4.0)
+    .px(4.0)
+    .py(2.0)
+    .on_click(move |_| on_click())
+}
+
+/// Build the search bar overlay
+fn build_search_bar(
+    data: &CodeEditorData,
+    config: &CodeConfig,
+    shared_state: &SharedCodeEditorState,
+) -> Div {
+    let match_count = data.search_matches.len();
+    let match_info = if match_count > 0 {
+        format!("{}/{}", data.search_match_idx + 1, match_count)
+    } else if !data.search_query.is_empty() {
+        "No results".to_string()
+    } else {
+        String::new()
+    };
+
+    let small_font = config.font_size * 0.85;
+    let icon_size = config.font_size * 0.9;
+    let label_color = config.line_number_color;
+    let accent = config.cursor_color;
+    let text_col = config.text_color;
+
+    // --- Find row ---
+    let search_state = Arc::clone(&data.search_input_state);
+    let find_input = text_input(&search_state).w(160.0).text_size(small_font);
+
+    // Toggle buttons: [Aa] [ab] [.*]
+    let state_for_regex = Arc::clone(shared_state);
+    let regex_toggle = search_toggle_button(
+        "code_search_regex",
+        ".*",
+        data.search_regex,
+        label_color,
+        accent,
+        small_font,
+        move || {
+            if let Ok(mut d) = state_for_regex.lock() {
+                d.search_regex = !d.search_regex;
+                d.execute_search();
+            }
+        },
+    );
+
+    // Nav buttons: [↑] [↓]
+    let state_for_prev = Arc::clone(shared_state);
+    let prev_btn = search_icon_button(
+        "code_search_prev",
+        ICON_CHEVRON_UP,
+        icon_size,
+        text_col,
+        move || {
+            if let Ok(mut d) = state_for_prev.lock() {
+                d.search_prev();
+            }
+        },
+    );
+
+    let state_for_next = Arc::clone(shared_state);
+    let next_btn = search_icon_button(
+        "code_search_next",
+        ICON_CHEVRON_DOWN,
+        icon_size,
+        text_col,
+        move || {
+            if let Ok(mut d) = state_for_next.lock() {
+                d.search_next();
+            }
+        },
+    );
+
+    // Close button [×]
+    let state_for_close = Arc::clone(shared_state);
+    let close_btn = search_icon_button(
+        "code_search_close",
+        ICON_CLOSE,
+        icon_size,
+        text_col,
+        move || {
+            if let Ok(mut d) = state_for_close.lock() {
+                d.search_active = false;
+                d.replace_active = false;
+                d.search_query.clear();
+                d.search_matches.clear();
+                if let Ok(mut input) = d.search_input_state.lock() {
+                    input.value.clear();
+                    input.cursor = 0;
+                }
+            }
+        },
+    );
+
+    let find_row = div()
+        .flex_row()
+        .items_center()
+        .gap_px(2.0)
+        .child(find_input)
+        .child(regex_toggle)
+        .child(
+            text(&match_info)
+                .size(small_font * 0.85)
+                .color(label_color)
+                .no_wrap(),
+        )
+        .child(prev_btn)
+        .child(next_btn)
+        .child(close_btn);
+
+    // --- Replace row (if active) ---
+    let mut search_bar = div()
+        .absolute()
+        .right(8.0)
+        .top(4.0)
+        .flex_col()
+        .gap_px(4.0)
+        .p_px(6.0)
+        .bg(config.bg_color)
+        .border(1.0, config.gutter_separator_color)
+        .rounded(6.0)
+        .shadow_sm()
+        .stack_layer()
+        .on_mouse_down(|_| {})
+        .child(find_row);
+
+    if data.replace_active {
+        let replace_state = Arc::clone(&data.replace_input_state);
+        let replace_input = text_input(&replace_state).w(160.0).text_size(small_font);
+
+        let state_for_replace = Arc::clone(shared_state);
+        let replace_btn = search_icon_button(
+            "code_replace_one",
+            ICON_REPLACE,
+            icon_size,
+            text_col,
+            move || {
+                if let Ok(mut d) = state_for_replace.lock() {
+                    d.replace_current();
+                }
+            },
+        );
+
+        let state_for_replace_all = Arc::clone(shared_state);
+        let replace_all_btn = search_icon_button(
+            "code_replace_all",
+            ICON_REPLACE_ALL,
+            icon_size,
+            text_col,
+            move || {
+                if let Ok(mut d) = state_for_replace_all.lock() {
+                    d.replace_all();
+                }
+            },
+        );
+
+        let replace_row = div()
+            .flex_row()
+            .items_center()
+            .gap_px(2.0)
+            .child(replace_input)
+            .child(replace_btn)
+            .child(replace_all_btn);
+
+        search_bar = search_bar.child(replace_row);
+    }
+
+    search_bar
 }
 
 // ============================================================================

@@ -1559,6 +1559,7 @@ impl CodeEditor {
                 // Blur handled by FSM transition
             })
             .overflow_y_scroll()
+            .relative()
             .cursor_text();
 
         // Register the state callback that builds visual content
@@ -1570,11 +1571,24 @@ impl CodeEditor {
                     let mut data = data_for_callback.lock().unwrap();
                     let cw = data.char_width();
                     let content = build_editor_content(&mut data, visual.is_focused(), cw);
-                    container.set_child(content);
 
                     // Apply visual styling
                     container.set_bg(data.config.bg_color);
                     container.set_rounded(data.config.corner_radius);
+
+                    // Clear and rebuild children: scrollable content + fixed minimap
+                    container.clear_children();
+                    container.children.push(Box::new(content));
+
+                    if data.config.minimap {
+                        let line_height_px = data.config.font_size * data.config.line_height;
+                        let minimap = build_minimap(&data, line_height_px)
+                            .absolute()
+                            .right(0.0)
+                            .top(0.0)
+                            .h_full();
+                        container.children.push(Box::new(minimap));
+                    }
                 },
             ));
             shared.needs_visual_update = true;
@@ -1758,19 +1772,44 @@ fn build_gutter(
     pad: f32,
 ) -> Div {
     let has_fold = config.code_folding;
-    let fold_w: f32 = if has_fold { 14.0 } else { 0.0 };
+    let fold_w: f32 = if has_fold { 20.0 } else { 0.0 };
 
-    // Fold markers column
+    // Auto-size line number width based on digit count
+    let max_line_num = visible_lines.last().map(|&l| l + 1).unwrap_or(1);
+    let digit_count = format!("{}", max_line_num).len();
+    let num_w = (digit_count as f32 * config.font_size * 0.65 + 12.0).max(28.0);
+    let total_gutter_w = num_w + fold_w + 1.0; // +1 for separator
+
+    // Line numbers column (left side of gutter)
+    let mut num_col = div().flex_col().padding_y_px(pad);
+    for &line_idx in visible_lines {
+        num_col = num_col.child(
+            div()
+                .h(line_height_px)
+                .w(num_w)
+                .flex_row()
+                .justify_end()
+                .items_center()
+                .pr(4.0)
+                .child(
+                    text(format!("{}", line_idx + 1))
+                        .size(config.font_size)
+                        .color(config.line_number_color),
+                ),
+        );
+    }
+
+    // Fold markers column (right side, next to separator)
     let fold_col = if has_fold {
-        let mut col = div().flex_col().padding_y_px(pad);
+        let mut col = div().flex_col().padding_y_px(pad).w(fold_w);
         for &line_idx in visible_lines {
             let is_fold_point = fold_regions.iter().any(|r| r.start_line == line_idx);
             let is_folded = folded_starts.contains(&line_idx);
             if is_fold_point {
                 let (marker, color) = if is_folded {
-                    ("\u{25B8}", config.line_number_color)
+                    ("\u{25B8}", config.line_number_color) // ▸ collapsed
                 } else {
-                    ("\u{25BE}", config.line_number_color)
+                    ("\u{25BE}", config.line_number_color) // ▾ expanded
                 };
                 col = col.child(
                     div()
@@ -1778,12 +1817,8 @@ fn build_gutter(
                         .w(fold_w)
                         .items_center()
                         .justify_center()
-                        .child(
-                            text(marker)
-                                .size(config.font_size * 0.7)
-                                .color(color)
-                                .monospace(),
-                        ),
+                        .cursor_pointer()
+                        .child(text(marker).size(config.font_size).color(color).monospace()),
                 );
             } else {
                 col = col.child(div().h(line_height_px).w(fold_w));
@@ -1794,36 +1829,17 @@ fn build_gutter(
         None
     };
 
-    // Line numbers column
-    let num_w = config.gutter_width - fold_w - 1.0;
-    let mut num_col = div().flex_col().padding_y_px(pad);
-    for &line_idx in visible_lines {
-        num_col = num_col.child(
-            div()
-                .h(line_height_px)
-                .w(num_w)
-                .flex_row()
-                .justify_end()
-                .items_center()
-                .pr(6.0)
-                .child(
-                    text(format!("{}", line_idx + 1))
-                        .size(config.font_size)
-                        .color(config.line_number_color),
-                ),
-        );
-    }
-
+    // Assemble: [line_numbers | fold_markers | separator]
     let mut gutter = div()
         .flex_row()
         .bg(config.gutter_bg_color)
-        .w(config.gutter_width)
+        .w(total_gutter_w)
         .flex_shrink_0();
 
+    gutter = gutter.child(num_col);
     if let Some(fc) = fold_col {
         gutter = gutter.child(fc);
     }
-    gutter = gutter.child(num_col);
     gutter = gutter.child(div().w(1.0).h_full().bg(config.gutter_separator_color));
     gutter
 }
@@ -2205,20 +2221,7 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
         ));
     }
     container = container.child(code_area);
-
-    // Minimap — wrap in a relative container so minimap is absolutely positioned
-    // and doesn't scroll with the content
-    if config.minimap {
-        let wrapper = div().relative().w_full().child(container).child(
-            build_minimap(data, line_height_px)
-                .absolute()
-                .right(0.0)
-                .top(0.0),
-        );
-        wrapper
-    } else {
-        container
-    }
+    container
 }
 
 // ============================================================================

@@ -144,6 +144,10 @@ pub struct CodeEditorData {
     highlight_cache: Vec<Option<crate::styled_text::StyledLine>>,
     /// Drag selection anchor (mouse-down position, set to selection_start on drag)
     pub drag_anchor: Option<TextPosition>,
+    /// Last click time for double-click detection (ms since epoch)
+    last_click_time: f64,
+    /// Last click position for double-click detection
+    last_click_pos: TextPosition,
     /// Scroll physics for vertical scrolling
     pub scroll_physics: SharedScrollPhysics,
     /// Cached viewport height (content area minus padding)
@@ -186,6 +190,8 @@ pub fn code_editor_state(content: impl Into<String>) -> SharedCodeEditorState {
         mono_char_width_font_size: 0.0,
         highlight_cache: vec![None; num_lines],
         drag_anchor: None,
+        last_click_time: 0.0,
+        last_click_pos: TextPosition::default(),
         scroll_physics: Arc::new(Mutex::new(ScrollPhysics::default())),
         viewport_height: 0.0,
     }))
@@ -308,8 +314,9 @@ impl CodeEditorData {
                 self.insert_char(ch);
             }
         }
-        // Invalidate from start_line to current cursor line
-        for l in start_line..=self.cursor.line {
+        // Invalidate from start_line to end — inserting/removing lines shifts
+        // all subsequent cache entries, so they're all stale
+        for l in start_line..self.lines.len() {
             self.invalidate_highlight_line(l);
         }
         self.sync_highlight_cache();
@@ -327,12 +334,19 @@ impl CodeEditorData {
     fn insert_newline(&mut self) {
         if self.cursor.line < self.lines.len() {
             let current_line = &self.lines[self.cursor.line];
+            // Capture leading whitespace for auto-indent
+            let indent: String = current_line
+                .chars()
+                .take_while(|c| c.is_whitespace())
+                .collect();
             let byte_pos = char_to_byte_pos(current_line, self.cursor.column);
             let rest = current_line[byte_pos..].to_string();
             self.lines[self.cursor.line] = current_line[..byte_pos].to_string();
             self.cursor.line += 1;
-            self.cursor.column = 0;
-            self.lines.insert(self.cursor.line, rest);
+            // Auto-indent: preserve leading whitespace from previous line
+            let new_line = format!("{}{}", indent, rest);
+            self.cursor.column = indent.chars().count();
+            self.lines.insert(self.cursor.line, new_line);
         }
     }
 
@@ -342,7 +356,7 @@ impl CodeEditorData {
             return;
         }
         self.push_undo();
-        let affected_line = self.cursor.line;
+        let line_removed = self.cursor.column == 0 && self.cursor.line > 0;
         if self.cursor.column > 0 {
             let line = &mut self.lines[self.cursor.line];
             let byte_pos = char_to_byte_pos(line, self.cursor.column - 1);
@@ -355,8 +369,13 @@ impl CodeEditorData {
             self.cursor.column = self.lines[self.cursor.line].chars().count();
             self.lines[self.cursor.line].push_str(&current_line);
         }
-        self.invalidate_highlight_line(self.cursor.line);
-        self.sync_highlight_cache();
+        if line_removed {
+            // Line removal shifts all subsequent entries
+            self.invalidate_all_highlights();
+        } else {
+            self.invalidate_highlight_line(self.cursor.line);
+            self.sync_highlight_cache();
+        }
     }
 
     /// Delete forward (delete key)
@@ -365,6 +384,7 @@ impl CodeEditorData {
             return;
         }
         self.push_undo();
+        let mut line_removed = false;
         if self.cursor.line < self.lines.len() {
             let line_len = self.lines[self.cursor.line].chars().count();
             if self.cursor.column < line_len {
@@ -375,10 +395,15 @@ impl CodeEditorData {
             } else if self.cursor.line + 1 < self.lines.len() {
                 let next_line = self.lines.remove(self.cursor.line + 1);
                 self.lines[self.cursor.line].push_str(&next_line);
+                line_removed = true;
             }
         }
-        self.invalidate_highlight_line(self.cursor.line);
-        self.sync_highlight_cache();
+        if line_removed {
+            self.invalidate_all_highlights();
+        } else {
+            self.invalidate_highlight_line(self.cursor.line);
+            self.sync_highlight_cache();
+        }
     }
 
     /// Delete selection. Returns true if a selection was deleted.
@@ -967,9 +992,29 @@ impl CodeEditor {
                     let scroll_offset = d.scroll_physics.lock().map(|p| -p.offset_y).unwrap_or(0.0);
                     let adjusted_y = (click_y - d.config.padding + scroll_offset).max(0.0);
                     d.cursor_from_click(adjusted_x, adjusted_y);
-                    // Save click position as drag selection anchor
-                    // Will be cleared by shift-arrow if no drag occurs
-                    d.drag_anchor = Some(d.cursor);
+
+                    // Double-click detection: select word
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|t| t.as_secs_f64() * 1000.0)
+                        .unwrap_or(0.0);
+                    let is_double_click =
+                        (now - d.last_click_time) < 350.0 && d.last_click_pos == d.cursor;
+                    d.last_click_time = now;
+                    d.last_click_pos = d.cursor;
+
+                    if is_double_click && d.cursor.line < d.lines.len() {
+                        let line = &d.lines[d.cursor.line];
+                        let (start, end) = text_edit::word_at_position(
+                            line,
+                            d.cursor.column.min(line.chars().count().saturating_sub(1)),
+                        );
+                        d.selection_start = Some(TextPosition::new(d.cursor.line, start));
+                        d.cursor.column = end;
+                        d.drag_anchor = None;
+                    } else {
+                        d.drag_anchor = Some(d.cursor);
+                    }
                     d.reset_cursor_blink();
                 }
 
@@ -1117,6 +1162,15 @@ impl CodeEditor {
                         9 => {
                             d.insert("    ");
                             text_changed = true;
+                        }
+                        27 => {
+                            // Escape — blur editor
+                            d.focused = false;
+                            d.selection_start = None;
+                            if let Ok(mut cs) = d.cursor_state.lock() {
+                                cs.visible = false;
+                            }
+                            decrement_focus_count();
                         }
                         _ => {
                             // Check for Cmd+key combos
@@ -1410,6 +1464,20 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
 
     let pad = config.padding;
     let mut code_area = div().flex_col().flex_grow().relative();
+
+    // Current line highlight (subtle background behind active line)
+    if is_focused && data.selection_start.is_none() {
+        let line_top = data.cursor.line as f32 * line_height_px + pad;
+        code_area = code_area.child(
+            div()
+                .absolute()
+                .left(0.0)
+                .top(line_top)
+                .w_full()
+                .h(line_height_px)
+                .bg(Color::rgba(1.0, 1.0, 1.0, 0.04)),
+        );
+    }
 
     // Selection highlights (behind text)
     if let Some(sel_start) = data.selection_start {

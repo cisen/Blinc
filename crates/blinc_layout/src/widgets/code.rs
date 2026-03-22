@@ -194,6 +194,10 @@ pub struct CodeEditorData {
     pub replace_text: String,
     /// Whether regex mode is enabled
     pub search_regex: bool,
+    /// Case sensitive search
+    pub search_case_sensitive: bool,
+    /// Whole word match
+    pub search_whole_word: bool,
     /// Whether replace row is visible
     pub replace_active: bool,
     /// All match positions: (line, start_col, end_col)
@@ -263,6 +267,8 @@ pub fn code_editor_state(content: impl Into<String>) -> SharedCodeEditorState {
         replace_input_state: text_input_state_with_placeholder("Replace..."),
         replace_text: String::new(),
         search_regex: false,
+        search_case_sensitive: false,
+        search_whole_word: false,
         replace_active: false,
         search_matches: Vec::new(),
         search_match_idx: 0,
@@ -910,8 +916,13 @@ impl CodeEditorData {
         }
 
         if self.search_regex {
-            let pattern = &self.search_query;
-            if let Ok(re) = regex::Regex::new(pattern) {
+            let case_flag = if self.search_case_sensitive {
+                ""
+            } else {
+                "(?i)"
+            };
+            let pattern = format!("{}{}", case_flag, self.search_query);
+            if let Ok(re) = regex::Regex::new(&pattern) {
                 for (line_idx, line) in self.lines.iter().enumerate() {
                     for m in re.find_iter(line) {
                         let start_col = line[..m.start()].chars().count();
@@ -921,17 +932,47 @@ impl CodeEditorData {
                 }
             }
         } else {
-            // Case-insensitive plain text search
-            let query_lower = self.search_query.to_lowercase();
+            let (query_cmp, make_line_cmp): (String, Box<dyn Fn(&str) -> String>) =
+                if self.search_case_sensitive {
+                    (self.search_query.clone(), Box::new(|s: &str| s.to_string()))
+                } else {
+                    (
+                        self.search_query.to_lowercase(),
+                        Box::new(|s: &str| s.to_lowercase()),
+                    )
+                };
+
             for (line_idx, line) in self.lines.iter().enumerate() {
-                let line_lower = line.to_lowercase();
+                let line_cmp = make_line_cmp(line);
                 let mut search_from = 0;
-                while let Some(byte_pos) = line_lower[search_from..].find(&query_lower) {
+                while let Some(byte_pos) = line_cmp[search_from..].find(&query_cmp) {
                     let abs_byte = search_from + byte_pos;
                     let start_col = line[..abs_byte].chars().count();
                     let end_col = start_col + self.search_query.chars().count();
-                    self.search_matches.push((line_idx, start_col, end_col));
-                    search_from = abs_byte + query_lower.len();
+
+                    // Whole word check
+                    let is_match = if self.search_whole_word {
+                        let before_ok = start_col == 0
+                            || !line
+                                .chars()
+                                .nth(start_col - 1)
+                                .map(|c| c.is_alphanumeric() || c == '_')
+                                .unwrap_or(false);
+                        let after_ok = end_col >= line.chars().count()
+                            || !line
+                                .chars()
+                                .nth(end_col)
+                                .map(|c| c.is_alphanumeric() || c == '_')
+                                .unwrap_or(false);
+                        before_ok && after_ok
+                    } else {
+                        true
+                    };
+
+                    if is_match {
+                        self.search_matches.push((line_idx, start_col, end_col));
+                    }
+                    search_from = abs_byte + query_cmp.len();
                 }
             }
         }
@@ -2759,28 +2800,85 @@ fn build_search_bar(
     shared_state: &SharedCodeEditorState,
     instance_key: &str,
 ) -> Div {
-    let match_count = data.search_matches.len();
-    let match_info = if match_count > 0 {
-        format!("{}/{}", data.search_match_idx + 1, match_count)
-    } else if !data.search_query.is_empty() {
-        "No results".to_string()
-    } else {
-        String::new()
-    };
-
+    let theme = ThemeState::get();
     let small_font = config.font_size * 0.85;
-    let icon_size = config.font_size * 0.9;
+    let icon_size = config.font_size * 0.85;
     let label_color = config.line_number_color;
     let accent = config.cursor_color;
     let text_col = config.text_color;
+    let border_color = config.gutter_separator_color;
 
-    // --- Find row ---
+    // Match info text
+    let match_info = if data.search_query.is_empty() {
+        String::new()
+    } else if data.search_matches.is_empty() {
+        "No results".to_string()
+    } else {
+        format!(
+            "{}/{}",
+            data.search_match_idx + 1,
+            data.search_matches.len()
+        )
+    };
+
+    // --- Chevron toggle (expand/collapse replace) ---
+    let chevron_svg = if data.replace_active {
+        FOLD_EXPANDED_SVG
+    } else {
+        FOLD_COLLAPSED_SVG
+    };
+    let state_for_toggle = Arc::clone(shared_state);
+    let chevron_btn = search_icon_button(
+        &format!("{}:search_toggle_replace", instance_key),
+        chevron_svg,
+        icon_size,
+        text_col,
+        move || {
+            if let Ok(mut d) = state_for_toggle.lock() {
+                d.replace_active = !d.replace_active;
+            }
+        },
+    );
+
+    // --- Find input (flex_grow) ---
     let search_state = Arc::clone(&data.search_input_state);
     let find_input = text_input(&search_state).flex_grow().text_size(small_font);
 
-    // Toggle buttons: [Aa] [ab] [.*]
+    // --- Toggle buttons: [Aa] [ab] [.*] ---
+    let state_for_case = Arc::clone(shared_state);
+    let case_btn = search_toggle_button(
+        &format!("{}:search_case", instance_key),
+        "Aa",
+        data.search_case_sensitive,
+        label_color,
+        accent,
+        small_font,
+        move || {
+            if let Ok(mut d) = state_for_case.lock() {
+                d.search_case_sensitive = !d.search_case_sensitive;
+                d.execute_search();
+            }
+        },
+    );
+
+    let state_for_word = Arc::clone(shared_state);
+    let word_btn = search_toggle_button(
+        &format!("{}:search_word", instance_key),
+        "ab",
+        data.search_whole_word,
+        label_color,
+        accent,
+        small_font,
+        move || {
+            if let Ok(mut d) = state_for_word.lock() {
+                d.search_whole_word = !d.search_whole_word;
+                d.execute_search();
+            }
+        },
+    );
+
     let state_for_regex = Arc::clone(shared_state);
-    let regex_toggle = search_toggle_button(
+    let regex_btn = search_toggle_button(
         &format!("{}:search_regex", instance_key),
         ".*",
         data.search_regex,
@@ -2795,7 +2893,7 @@ fn build_search_bar(
         },
     );
 
-    // Nav buttons: [↑] [↓]
+    // --- Navigation: [↑] [↓] [×] ---
     let state_for_prev = Arc::clone(shared_state);
     let prev_btn = search_icon_button(
         &format!("{}:search_prev", instance_key),
@@ -2822,7 +2920,6 @@ fn build_search_bar(
         },
     );
 
-    // Close button [×]
     let state_for_close = Arc::clone(shared_state);
     let close_btn = search_icon_button(
         &format!("{}:search_close", instance_key),
@@ -2839,51 +2936,57 @@ fn build_search_bar(
                     input.value.clear();
                     input.cursor = 0;
                 }
+                if let Ok(mut input) = d.replace_input_state.lock() {
+                    input.value.clear();
+                    input.cursor = 0;
+                }
             }
         },
     );
 
-    // Row 1: [input] [.*]  [↑] [↓] [×]
-    let find_row = div()
+    // === FIND ROW ===
+    // [>] [Find input___________] [Aa] [ab] [.*] [count] [↑] [↓] [×]
+    let mut find_row = div()
         .flex_row()
         .items_center()
         .gap_px(2.0)
+        .child(chevron_btn)
         .child(find_input)
-        .child(regex_toggle)
-        .child(div().flex_grow()) // spacer
-        .child(prev_btn)
-        .child(next_btn)
-        .child(close_btn);
+        .child(case_btn)
+        .child(word_btn)
+        .child(regex_btn);
 
-    // --- Search bar container ---
+    if !match_info.is_empty() {
+        find_row = find_row.child(
+            text(&match_info)
+                .size(small_font * 0.85)
+                .color(label_color)
+                .no_wrap(),
+        );
+    }
+
+    find_row = find_row.child(prev_btn).child(next_btn).child(close_btn);
+
+    // === CONTAINER ===
     let mut search_bar = div()
         .absolute()
         .right(4.0)
-        .top(4.0)
-        .w(340.0)
+        .top(0.0)
+        .w(420.0)
         .flex_col()
         .gap_px(2.0)
         .p_px(4.0)
         .bg(config.bg_color)
-        .border(1.0, config.gutter_separator_color)
-        .rounded(4.0)
+        .border_bottom(1.0, border_color)
+        .border_left(1.0, border_color)
+        .rounded(0.0) // VS Code uses no rounding on top
         .shadow_sm()
         .stack_layer()
         .on_mouse_down(|_| {})
         .child(find_row);
 
-    // Match info row (below find row)
-    if !match_info.is_empty() {
-        search_bar = search_bar.child(
-            div().flex_row().justify_end().child(
-                text(&match_info)
-                    .size(small_font * 0.85)
-                    .color(label_color)
-                    .no_wrap(),
-            ),
-        );
-    }
-
+    // === REPLACE ROW (if expanded) ===
+    // [spacer] [Replace input_______] [⇄] [⇄⇄]
     if data.replace_active {
         let replace_state = Arc::clone(&data.replace_input_state);
         let replace_input = text_input(&replace_state).flex_grow().text_size(small_font);
@@ -2914,10 +3017,13 @@ fn build_search_bar(
             },
         );
 
+        // Indent replace row to align with find input (skip chevron width)
+        let chevron_spacer_w = icon_size + 8.0;
         let replace_row = div()
             .flex_row()
             .items_center()
             .gap_px(2.0)
+            .child(div().w(chevron_spacer_w))
             .child(replace_input)
             .child(replace_btn)
             .child(replace_all_btn);

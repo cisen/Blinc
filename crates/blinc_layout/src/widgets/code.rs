@@ -41,7 +41,7 @@ use crate::syntax::{SyntaxConfig, SyntaxHighlighter, TokenHit};
 use crate::text::text;
 use crate::tree::{LayoutNodeId, LayoutTree};
 use crate::widgets::cursor::{cursor_state, CursorAnimation, SharedCursorState};
-use crate::widgets::scroll::{Scroll, ScrollDirection, ScrollPhysics, SharedScrollPhysics};
+use crate::widgets::scroll::{ScrollPhysics, SharedScrollPhysics};
 use crate::widgets::text_area::TextPosition;
 use crate::widgets::text_edit;
 use crate::widgets::text_input::{
@@ -1241,7 +1241,7 @@ impl CodeEditor {
             .on_blur(move |_ctx| {
                 // Blur handled by FSM transition
             })
-            .overflow_clip()
+            .overflow_y_scroll()
             .cursor_text();
 
         // Register the state callback that builds visual content
@@ -1258,13 +1258,18 @@ impl CodeEditor {
                     // Apply visual styling
                     container.set_bg(data.config.bg_color);
                     container.set_rounded(data.config.corner_radius);
-                    container.set_overflow_clip(true);
                 },
             ));
             shared.needs_visual_update = true;
         }
 
         inner.ensure_state_handlers_registered();
+
+        // Store the Stateful's scroll physics in CodeEditorData so
+        // ensure_cursor_visible can programmatically scroll
+        if let Some(ref physics) = inner.inner_scroll_physics() {
+            state.lock().unwrap().scroll_physics = Arc::clone(physics);
+        }
 
         Self {
             inner,
@@ -1460,7 +1465,7 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
     let line_height_px = config.font_size * config.line_height;
     let num_lines = styled.line_count().max(1);
 
-    let container = div().w_full().h_full().overflow_clip();
+    let container = div().flex_col().w_full();
 
     let pad = config.padding;
     let mut code_area = div().flex_col().flex_grow().relative();
@@ -1604,20 +1609,15 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
         code_area = code_area.child(cursor_canvas);
     }
 
-    // Build inner row with gutter + code_area, both inside the scroll
+    // Build inner row with gutter + code_area
+    // Scrolling is handled by the Stateful container's overflow_y_scroll
     let mut inner_row = div().flex_row();
     if config.line_numbers {
         inner_row = inner_row.child(build_gutter(num_lines, line_height_px, config));
     }
     inner_row = inner_row.child(code_area);
 
-    let scrollable = Scroll::with_physics(Arc::clone(&data.scroll_physics))
-        .direction(ScrollDirection::Vertical)
-        .no_bounce()
-        .flex_grow()
-        .child(inner_row);
-
-    container.child(scrollable)
+    container.child(inner_row)
 }
 
 // ============================================================================

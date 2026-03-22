@@ -2461,6 +2461,11 @@ impl<S: StateTransitions> Stateful<S> {
         self.inner.borrow().layout_style().cloned()
     }
 
+    /// Get the inner Div's scroll physics (if overflow scroll is set)
+    pub fn inner_scroll_physics(&self) -> Option<crate::scroll::SharedScrollPhysics> {
+        self.inner.borrow().scroll_physics.clone()
+    }
+
     /// Apply the state callback to update the inner div
     ///
     /// This is useful when you need to manually trigger a callback application,
@@ -3248,6 +3253,12 @@ impl<S: StateTransitions> Stateful<S> {
         self
     }
 
+    /// Set overflow to scroll on Y-axis (builder pattern)
+    pub fn overflow_y_scroll(self) -> Self {
+        self.merge_into_inner(Div::new().overflow_y_scroll());
+        self
+    }
+
     /// Set cursor style (builder pattern)
     pub fn cursor(self, cursor: crate::element::CursorStyle) -> Self {
         self.merge_into_inner(Div::new().cursor(cursor));
@@ -3773,6 +3784,11 @@ impl<S: StateTransitions> BoundStateful<S> {
     /// Set overflow to clip (clips children to container bounds)
     pub fn overflow_clip(self) -> Self {
         self.transform_inner(|s| s.overflow_clip())
+    }
+
+    /// Set overflow to scroll on Y-axis
+    pub fn overflow_y_scroll(self) -> Self {
+        self.transform_inner(|s| s.overflow_y_scroll())
     }
 
     /// Set cursor style (builder pattern)

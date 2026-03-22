@@ -1118,6 +1118,7 @@ impl Code {
                 &self.config,
                 &[],
                 &[],
+                self.config.padding,
             ));
         }
 
@@ -1754,63 +1755,77 @@ fn build_gutter(
     config: &CodeConfig,
     fold_regions: &[FoldRegion],
     folded_starts: &[usize],
+    pad: f32,
 ) -> Div {
-    let mut gutter_col = div()
-        .flex_col()
-        .padding_y_px(config.padding)
-        .padding_x_px(4.0);
+    let has_fold = config.code_folding;
+    let fold_w: f32 = if has_fold { 14.0 } else { 0.0 };
 
-    for &line_idx in visible_lines {
-        let line_num = line_idx + 1;
-        let mut row = div().h(line_height_px).flex_row().items_center().gap(4.0);
-
-        // Line number (right-aligned in its space)
-        row = row.child(
-            div()
-                .w(config.gutter_width - 24.0)
-                .flex_row()
-                .justify_end()
-                .child(
-                    text(format!("{}", line_num))
-                        .size(config.font_size)
-                        .color(config.line_number_color)
-                        .text_right(),
-                ),
-        );
-
-        // Fold marker column (fixed width, after line number)
-        if config.code_folding {
+    // Fold markers column
+    let fold_col = if has_fold {
+        let mut col = div().flex_col().padding_y_px(pad);
+        for &line_idx in visible_lines {
             let is_fold_point = fold_regions.iter().any(|r| r.start_line == line_idx);
             let is_folded = folded_starts.contains(&line_idx);
             if is_fold_point {
-                // Small triangles that stay as text glyphs (not emoji)
-                let (marker, marker_color) = if is_folded {
-                    ("\u{25B8}", config.line_number_color) // ▸ small right triangle
+                let (marker, color) = if is_folded {
+                    ("\u{25B8}", config.line_number_color)
                 } else {
-                    ("\u{25BE}", config.indent_guide_color) // ▾ small down triangle
+                    ("\u{25BE}", config.line_number_color)
                 };
-                row = row.child(
-                    div().w(12.0).items_center().justify_center().child(
-                        text(marker)
-                            .size(config.font_size * 0.7)
-                            .color(marker_color)
-                            .monospace(),
-                    ),
+                col = col.child(
+                    div()
+                        .h(line_height_px)
+                        .w(fold_w)
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            text(marker)
+                                .size(config.font_size * 0.7)
+                                .color(color)
+                                .monospace(),
+                        ),
                 );
             } else {
-                row = row.child(div().w(12.0));
+                col = col.child(div().h(line_height_px).w(fold_w));
             }
         }
+        Some(col)
+    } else {
+        None
+    };
 
-        gutter_col = gutter_col.child(row);
+    // Line numbers column
+    let num_w = config.gutter_width - fold_w - 1.0;
+    let mut num_col = div().flex_col().padding_y_px(pad);
+    for &line_idx in visible_lines {
+        num_col = num_col.child(
+            div()
+                .h(line_height_px)
+                .w(num_w)
+                .flex_row()
+                .justify_end()
+                .items_center()
+                .pr(6.0)
+                .child(
+                    text(format!("{}", line_idx + 1))
+                        .size(config.font_size)
+                        .color(config.line_number_color),
+                ),
+        );
     }
 
-    div()
+    let mut gutter = div()
         .flex_row()
         .bg(config.gutter_bg_color)
         .w(config.gutter_width)
-        .child(gutter_col.flex_grow())
-        .child(div().w(1.0).h_full().bg(config.gutter_separator_color))
+        .flex_shrink_0();
+
+    if let Some(fc) = fold_col {
+        gutter = gutter.child(fc);
+    }
+    gutter = gutter.child(num_col);
+    gutter = gutter.child(div().w(1.0).h_full().bg(config.gutter_separator_color));
+    gutter
 }
 
 fn build_styled_line(
@@ -2175,8 +2190,8 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
         code_area = code_area.child(cursor_canvas);
     }
 
-    // Build layout: [gutter | code_area | minimap]
-    // All in a single flex_row — overflow_y_scroll on the Stateful parent handles scrolling
+    // Build layout: [gutter | code_area] (scrollable) + minimap (fixed overlay)
+    // overflow_y_scroll on the Stateful parent handles scrolling
     if config.line_numbers || config.code_folding {
         let fold_regions = data.detect_fold_regions();
         let folded_starts: Vec<usize> = data.folded_regions.iter().map(|&(s, _)| s).collect();
@@ -2186,16 +2201,24 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
             config,
             &fold_regions,
             &folded_starts,
+            pad,
         ));
     }
     container = container.child(code_area);
 
-    // Minimap on the right
+    // Minimap — wrap in a relative container so minimap is absolutely positioned
+    // and doesn't scroll with the content
     if config.minimap {
-        container = container.child(build_minimap(data, line_height_px));
+        let wrapper = div().relative().w_full().child(container).child(
+            build_minimap(data, line_height_px)
+                .absolute()
+                .right(0.0)
+                .top(0.0),
+        );
+        wrapper
+    } else {
+        container
     }
-
-    container
 }
 
 // ============================================================================

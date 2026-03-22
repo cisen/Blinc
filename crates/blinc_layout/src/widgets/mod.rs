@@ -44,6 +44,7 @@ pub mod radio;
 pub mod scroll;
 pub mod table;
 pub mod text_area;
+pub mod text_edit;
 pub mod text_input;
 
 // Re-export button widget

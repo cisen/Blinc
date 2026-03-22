@@ -1951,6 +1951,74 @@ impl TextArea {
             .relative()
             .overflow_visible();
 
+        // Render selection highlights (behind text, absolutely positioned)
+        if is_focused {
+            if let Some(sel_start) = data.selection_start {
+                let (start, end) = data.order_positions(sel_start, data.cursor);
+                if start != end {
+                    let sel_color = config.selection_color;
+                    for line_idx in start.line..=end.line {
+                        if line_idx >= data.lines.len() {
+                            break;
+                        }
+                        let line_text = &data.lines[line_idx];
+                        let line_char_count = line_text.chars().count();
+
+                        let col_start = if line_idx == start.line {
+                            start.column
+                        } else {
+                            0
+                        };
+                        let col_end = if line_idx == end.line {
+                            end.column
+                        } else {
+                            line_char_count
+                        };
+
+                        let x_start = if col_start > 0 {
+                            let before: String =
+                                line_text.chars().take(col_start).collect();
+                            crate::text_measure::measure_text(&before, config.font_size)
+                                .width
+                        } else {
+                            0.0
+                        };
+
+                        let x_end = if col_end > 0 {
+                            let before: String =
+                                line_text.chars().take(col_end).collect();
+                            crate::text_measure::measure_text(&before, config.font_size)
+                                .width
+                        } else {
+                            0.0
+                        };
+
+                        let width = if col_end == line_char_count
+                            && line_idx != end.line
+                        {
+                            (x_end - x_start) + config.font_size * 0.5
+                        } else {
+                            x_end - x_start
+                        };
+
+                        if width > 0.0 {
+                            let sel_top = line_idx as f32 * line_height;
+                            text_content = text_content.child(
+                                crate::div::div()
+                                    .absolute()
+                                    .left(x_start)
+                                    .top(sel_top)
+                                    .w(width)
+                                    .h(line_height)
+                                    .bg(sel_color)
+                                    .rounded(2.0),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         if data.is_empty() {
             // Use state's placeholder if available, otherwise fall back to config
             let placeholder = if !data.placeholder.is_empty() {

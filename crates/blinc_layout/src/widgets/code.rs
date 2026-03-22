@@ -624,6 +624,88 @@ impl Code {
             .padding_y_px(self.config.padding)
             .relative();
 
+        // Render selection highlights (behind text)
+        if self.config.editable {
+            let state = self.state.lock().unwrap();
+            if let Some(sel_start) = state.selection_start {
+                let (start, end) = order_positions(sel_start, state.cursor);
+                if start != end {
+                    let sel_color = self.config.selection_color;
+                    for line_idx in start.line..=end.line {
+                        if line_idx >= state.lines.len() {
+                            break;
+                        }
+                        let line_text = &state.lines[line_idx];
+                        let line_char_count = line_text.chars().count();
+
+                        let col_start = if line_idx == start.line {
+                            start.column
+                        } else {
+                            0
+                        };
+                        let col_end = if line_idx == end.line {
+                            end.column
+                        } else {
+                            line_char_count
+                        };
+
+                        if col_start == col_end && line_idx != end.line {
+                            // Full-line selection on empty or start-of-line: show thin marker
+                        }
+
+                        let x_start = if col_start > 0 {
+                            let text_before: String =
+                                line_text.chars().take(col_start).collect();
+                            crate::text_measure::measure_text(
+                                &text_before,
+                                self.config.font_size,
+                            )
+                            .width
+                        } else {
+                            0.0
+                        };
+
+                        let x_end = if col_end > 0 {
+                            let text_before: String =
+                                line_text.chars().take(col_end).collect();
+                            crate::text_measure::measure_text(
+                                &text_before,
+                                self.config.font_size,
+                            )
+                            .width
+                        } else {
+                            0.0
+                        };
+
+                        // For lines where selection goes to end, add a small
+                        // extension to make the newline character visible
+                        let width = if col_end == line_char_count
+                            && line_idx != end.line
+                        {
+                            (x_end - x_start)
+                                + self.config.font_size * 0.5
+                        } else {
+                            x_end - x_start
+                        };
+
+                        if width > 0.0 {
+                            let sel_top = line_idx as f32 * line_height_px;
+                            code_area = code_area.child(
+                                div()
+                                    .absolute()
+                                    .left(x_start)
+                                    .top(sel_top)
+                                    .w(width)
+                                    .h(line_height_px)
+                                    .bg(sel_color)
+                                    .rounded(2.0),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         // Render each line with styled spans
         for styled_line in &styled.lines {
             // Don't use overflow_clip on line divs - rely on outer container's clip

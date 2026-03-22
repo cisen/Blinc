@@ -1584,6 +1584,9 @@ impl ElementBuilder for CodeEditor {
     fn event_handlers(&self) -> Option<&crate::event_handler::EventHandlers> {
         ElementBuilder::event_handlers(&self.inner)
     }
+    fn scroll_physics(&self) -> Option<crate::widgets::scroll::SharedScrollPhysics> {
+        self.inner.scroll_physics()
+    }
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.inner.layout_style()
     }

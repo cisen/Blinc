@@ -188,6 +188,14 @@ pub struct CodeEditorData {
     pub search_query: String,
     /// Shared text input state for the search bar
     pub search_input_state: SharedTextInputData,
+    /// Shared text input state for the replace bar
+    pub replace_input_state: SharedTextInputData,
+    /// Current replace text
+    pub replace_text: String,
+    /// Whether regex mode is enabled
+    pub search_regex: bool,
+    /// Whether replace row is visible
+    pub replace_active: bool,
     /// All match positions: (line, start_col, end_col)
     pub search_matches: Vec<(usize, usize, usize)>,
     /// Index of the currently focused match
@@ -252,6 +260,10 @@ pub fn code_editor_state(content: impl Into<String>) -> SharedCodeEditorState {
         search_active: false,
         search_query: String::new(),
         search_input_state: text_input_state_with_placeholder("Find..."),
+        replace_input_state: text_input_state_with_placeholder("Replace..."),
+        replace_text: String::new(),
+        search_regex: false,
+        replace_active: false,
         search_matches: Vec::new(),
         search_match_idx: 0,
         scroll_physics: Arc::new(Mutex::new(ScrollPhysics::default())),
@@ -897,13 +909,8 @@ impl CodeEditorData {
             return;
         }
 
-        // Check if regex mode (query starts and ends with /)
-        let is_regex = self.search_query.starts_with('/')
-            && self.search_query.len() > 2
-            && self.search_query.ends_with('/');
-
-        if is_regex {
-            let pattern = &self.search_query[1..self.search_query.len() - 1];
+        if self.search_regex {
+            let pattern = &self.search_query;
             if let Ok(re) = regex::Regex::new(pattern) {
                 for (line_idx, line) in self.lines.iter().enumerate() {
                     for m in re.find_iter(line) {
@@ -981,6 +988,49 @@ impl CodeEditorData {
     pub fn search_backspace(&mut self) {
         self.search_query.pop();
         self.execute_search();
+    }
+
+    /// Replace the current search match with replacement text
+    pub fn replace_current(&mut self) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        let (line, col_start, col_end) = self.search_matches[self.search_match_idx];
+        self.push_undo();
+
+        let line_text = &mut self.lines[line];
+        let start_byte = char_to_byte_pos(line_text, col_start);
+        let end_byte = char_to_byte_pos(line_text, col_end);
+        line_text.replace_range(start_byte..end_byte, &self.replace_text);
+
+        self.invalidate_all_highlights();
+        self.execute_search();
+        if !self.search_matches.is_empty() {
+            self.search_match_idx = self.search_match_idx.min(self.search_matches.len() - 1);
+            let (l, c, _) = self.search_matches[self.search_match_idx];
+            self.cursor = TextPosition::new(l, c);
+            self.ensure_cursor_visible();
+        }
+    }
+
+    /// Replace all search matches with replacement text
+    pub fn replace_all(&mut self) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        self.push_undo();
+
+        // Replace from last to first to preserve earlier positions
+        for &(line, col_start, col_end) in self.search_matches.iter().rev() {
+            let line_text = &mut self.lines[line];
+            let start_byte = char_to_byte_pos(line_text, col_start);
+            let end_byte = char_to_byte_pos(line_text, col_end);
+            line_text.replace_range(start_byte..end_byte, &self.replace_text);
+        }
+
+        self.invalidate_all_highlights();
+        self.search_matches.clear();
+        self.search_match_idx = 0;
     }
 
     /// Position cursor from click coordinates
@@ -1383,6 +1433,12 @@ impl CodeEditor {
                         request_continuous_redraw_pub();
                     }
 
+                    // Close search bar when clicking on code area
+                    if d.search_active {
+                        d.search_active = false;
+                        d.replace_active = false;
+                    }
+
                     // Account for gutter, padding, and scroll in click coordinates
                     let gutter_w = if d.config.line_numbers || d.config.code_folding {
                         d.config.gutter_width
@@ -1541,28 +1597,32 @@ impl CodeEditor {
                         return;
                     }
 
-                    // When search bar is active, intercept Escape and Enter
-                    if d.search_active && !(ctx.meta || ctx.ctrl) {
-                        let handled = match ctx.key_code {
-                            27 => {
-                                // Escape — close search
+                    // When search bar is active, block all keys except
+                    // Cmd+key shortcuts (Cmd+F to close, Cmd+G for next match)
+                    if d.search_active {
+                        let mod_key = ctx.meta || ctx.ctrl;
+                        if !mod_key {
+                            // Only handle Escape; everything else goes to text_input
+                            if ctx.key_code == 27 {
                                 d.search_active = false;
+                                d.replace_active = false;
                                 d.search_query.clear();
                                 d.search_matches.clear();
-                                // Clear the text_input
                                 if let Ok(mut input) = d.search_input_state.lock() {
                                     input.value.clear();
                                     input.cursor = 0;
                                 }
-                                true
+                                if let Ok(mut input) = d.replace_input_state.lock() {
+                                    input.value.clear();
+                                    input.cursor = 0;
+                                }
+                                drop(d);
+                                refresh_stateful(&shared_for_key);
                             }
-                            _ => false,
-                        };
-                        if handled {
-                            drop(d);
-                            refresh_stateful(&shared_for_key);
+                            // Block all other non-modifier keys from reaching code editor
                             return;
                         }
+                        // Cmd+key combos still fall through (Cmd+F, Cmd+G, etc.)
                     }
 
                     let mut cursor_changed = true;
@@ -1702,6 +1762,24 @@ impl CodeEditor {
                                             }
                                         }
                                     }
+                                    // H = Toggle replace bar
+                                    72 => {
+                                        if !d.search_active {
+                                            d.search_active = true;
+                                        }
+                                        d.replace_active = !d.replace_active;
+                                        needs_visual_refresh = true;
+                                        cursor_changed = false;
+                                    }
+                                    // R = Toggle regex mode (when search active)
+                                    82 => {
+                                        if d.search_active {
+                                            d.search_regex = !d.search_regex;
+                                            d.execute_search();
+                                            needs_visual_refresh = true;
+                                            cursor_changed = false;
+                                        }
+                                    }
                                     // Z = Undo / Shift+Z = Redo
                                     90 => {
                                         if ctx.shift {
@@ -1761,6 +1839,29 @@ impl CodeEditor {
                         if new_query != data.search_query {
                             data.search_query = new_query;
                             data.execute_search();
+                            // Jump to nearest match from cursor
+                            if !data.search_matches.is_empty() {
+                                data.search_match_idx = data
+                                    .search_matches
+                                    .iter()
+                                    .position(|&(l, c, _)| {
+                                        l > data.cursor.line
+                                            || (l == data.cursor.line && c >= data.cursor.column)
+                                    })
+                                    .unwrap_or(0);
+                                let (line, col, _) = data.search_matches[data.search_match_idx];
+                                data.cursor = TextPosition::new(line, col);
+                                data.selection_start = None;
+                                data.ensure_cursor_visible();
+                            }
+                        }
+                        // Sync replace text from text_input
+                        if data.replace_active {
+                            data.replace_text = data
+                                .replace_input_state
+                                .lock()
+                                .map(|d| d.value.clone())
+                                .unwrap_or_default();
                         }
                     }
                     let content = build_editor_content(
@@ -2573,50 +2674,88 @@ fn build_editor_content(
             String::new()
         };
 
-        let is_regex = data.search_query.starts_with('/')
-            && data.search_query.len() > 2
-            && data.search_query.ends_with('/');
+        let small_font = config.font_size * 0.8;
+        let label_color = config.line_number_color;
+        let accent = config.cursor_color;
 
+        // Search row: [input] [match count] [regex toggle]
         let search_state = Arc::clone(&data.search_input_state);
-        let search_input = text_input(&search_state)
-            .w(220.0)
-            .text_size(config.font_size * 0.9);
+        let search_row = div()
+            .flex_row()
+            .items_center()
+            .gap_px(4.0)
+            .child(text_input(&search_state).w(180.0).text_size(small_font))
+            .child(
+                text(&match_info)
+                    .size(small_font * 0.9)
+                    .color(label_color)
+                    .no_wrap(),
+            )
+            .child(
+                div()
+                    .p_px(2.0)
+                    .rounded(3.0)
+                    .bg(if data.search_regex {
+                        accent.with_alpha(0.3)
+                    } else {
+                        Color::TRANSPARENT
+                    })
+                    .child(
+                        text(".*")
+                            .size(small_font)
+                            .color(if data.search_regex {
+                                accent
+                            } else {
+                                label_color
+                            })
+                            .monospace(),
+                    ),
+            );
+
+        // Replace row (if active): [input] [Replace] [All]
+        let replace_row = if data.replace_active {
+            let replace_state = Arc::clone(&data.replace_input_state);
+            Some(
+                div()
+                    .flex_row()
+                    .items_center()
+                    .gap_px(4.0)
+                    .child(text_input(&replace_state).w(180.0).text_size(small_font))
+                    .child(
+                        text("Replace")
+                            .size(small_font * 0.9)
+                            .color(label_color)
+                            .no_wrap(),
+                    )
+                    .child(
+                        text("All")
+                            .size(small_font * 0.9)
+                            .color(label_color)
+                            .no_wrap(),
+                    ),
+            )
+        } else {
+            None
+        };
 
         let mut search_bar = div()
             .absolute()
             .right(8.0)
             .top(4.0)
-            .w(300.0)
-            .flex_row()
-            .items_center()
-            .gap_px(6.0)
+            .w(320.0)
+            .flex_col()
+            .gap_px(4.0)
             .p_px(6.0)
             .bg(config.bg_color)
             .border(1.0, config.gutter_separator_color)
             .rounded(6.0)
             .shadow_sm()
             .stack_layer()
-            .on_mouse_down(|_| {
-                // Absorb click — don't let it fall through to code editor
-            })
-            .child(search_input);
+            .on_mouse_down(|_| {})
+            .child(search_row);
 
-        if !match_info.is_empty() {
-            search_bar = search_bar.child(
-                text(&match_info)
-                    .size(config.font_size * 0.75)
-                    .color(config.line_number_color)
-                    .no_wrap(),
-            );
-        }
-
-        if is_regex {
-            search_bar = search_bar.child(
-                text(".*")
-                    .size(config.font_size * 0.7)
-                    .color(config.cursor_color)
-                    .monospace(),
-            );
+        if let Some(rr) = replace_row {
+            search_bar = search_bar.child(rr);
         }
 
         code_area = code_area.child(search_bar);

@@ -41,6 +41,7 @@ use crate::syntax::{SyntaxConfig, SyntaxHighlighter, TokenHit};
 use crate::text::text;
 use crate::tree::{LayoutNodeId, LayoutTree};
 use crate::widgets::cursor::{cursor_state, CursorAnimation, SharedCursorState};
+use crate::widgets::scroll::{Scroll, ScrollDirection, ScrollPhysics, SharedScrollPhysics};
 use crate::widgets::text_area::TextPosition;
 use crate::widgets::text_edit;
 use crate::widgets::text_input::{
@@ -141,6 +142,10 @@ pub struct CodeEditorData {
     /// Cached per-line syntax highlight results. Indexed by line number.
     /// Cleared when content changes on that line.
     highlight_cache: Vec<Option<crate::styled_text::StyledLine>>,
+    /// Scroll physics for vertical scrolling
+    pub scroll_physics: SharedScrollPhysics,
+    /// Cached viewport height (content area minus padding)
+    pub viewport_height: f32,
 }
 
 /// Undo/redo entry
@@ -178,6 +183,8 @@ pub fn code_editor_state(content: impl Into<String>) -> SharedCodeEditorState {
         mono_char_width: 0.0,
         mono_char_width_font_size: 0.0,
         highlight_cache: vec![None; num_lines],
+        scroll_physics: Arc::new(Mutex::new(ScrollPhysics::default())),
+        viewport_height: 0.0,
     }))
 }
 
@@ -575,6 +582,38 @@ impl CodeEditorData {
         self.selection_start = None;
     }
 
+    /// Total content height in pixels
+    pub fn content_height(&self) -> f32 {
+        let line_height = self.config.font_size * self.config.line_height;
+        self.lines.len() as f32 * line_height
+    }
+
+    /// Ensure cursor is within the visible scroll viewport
+    pub fn ensure_cursor_visible(&mut self) {
+        let line_height = self.config.font_size * self.config.line_height;
+        if self.viewport_height <= 0.0 {
+            return;
+        }
+
+        let cursor_y = self.cursor.line as f32 * line_height;
+        let cursor_bottom = cursor_y + line_height;
+
+        let mut physics = self.scroll_physics.lock().unwrap();
+        let current_offset = -physics.offset_y;
+
+        let mut new_offset = current_offset;
+        if cursor_y < current_offset {
+            new_offset = cursor_y;
+        }
+        if cursor_bottom > current_offset + self.viewport_height {
+            new_offset = cursor_bottom - self.viewport_height;
+        }
+
+        let max_scroll = (self.content_height() - self.viewport_height).max(0.0);
+        new_offset = new_offset.clamp(0.0, max_scroll);
+        physics.offset_y = -new_offset;
+    }
+
     /// Reset cursor blink
     pub fn reset_cursor_blink(&self) {
         if let Ok(mut cs) = self.cursor_state.lock() {
@@ -877,9 +916,11 @@ impl CodeEditor {
                         request_continuous_redraw_pub();
                     }
 
-                    // Account for padding offset in click coordinates
+                    // Account for padding offset and scroll position in click coordinates
                     let adjusted_x = (click_x - d.config.padding).max(0.0);
-                    let adjusted_y = (click_y - d.config.padding).max(0.0);
+                    // Add scroll offset: local_y is viewport-relative, we need content-relative
+                    let scroll_offset = d.scroll_physics.lock().map(|p| -p.offset_y).unwrap_or(0.0);
+                    let adjusted_y = (click_y - d.config.padding + scroll_offset).max(0.0);
                     d.cursor_from_click(adjusted_x, adjusted_y);
                     d.reset_cursor_blink();
                 }
@@ -898,6 +939,7 @@ impl CodeEditor {
                     if let Some(c) = ctx.key_char {
                         d.insert(&c.to_string());
                         d.reset_cursor_blink();
+                        d.ensure_cursor_visible();
                         if let Some(ref cb) = d.on_change {
                             cb(&d.value());
                         }
@@ -1012,6 +1054,7 @@ impl CodeEditor {
 
                     if cursor_changed {
                         d.reset_cursor_blink();
+                        d.ensure_cursor_visible();
                     }
                     if text_changed {
                         if let Some(ref cb) = d.on_change {
@@ -1114,6 +1157,16 @@ impl CodeEditor {
     }
     pub fn h(mut self, px: f32) -> Self {
         self.inner = self.inner.h(px);
+        // Update viewport height for scroll calculations
+        let (vh, physics) = {
+            let mut d = self.state.lock().unwrap();
+            let vh = (px - d.config.padding * 2.0).max(0.0);
+            d.viewport_height = vh;
+            (vh, Arc::clone(&d.scroll_physics))
+        };
+        if let Ok(mut p) = physics.lock() {
+            p.viewport_height = vh;
+        }
         self
     }
     pub fn w_full(mut self) -> Self {
@@ -1355,7 +1408,14 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
         code_area = code_area.child(cursor_canvas);
     }
 
-    container.child(code_area)
+    // Wrap code_area in a Scroll container for vertical scrolling
+    let scrollable = Scroll::with_physics(Arc::clone(&data.scroll_physics))
+        .direction(ScrollDirection::Vertical)
+        .no_bounce()
+        .flex_grow()
+        .child(code_area);
+
+    container.child(scrollable)
 }
 
 // ============================================================================

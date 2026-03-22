@@ -63,6 +63,9 @@ use crate::widgets::text_edit;
 use crate::widgets::text_input::{
     decrement_focus_count, increment_focus_count, request_continuous_redraw_pub,
 };
+use crate::widgets::text_input::{
+    text_input, text_input_state_with_placeholder, SharedTextInputData,
+};
 
 // ============================================================================
 // Configuration
@@ -183,6 +186,8 @@ pub struct CodeEditorData {
     pub search_active: bool,
     /// Current search query
     pub search_query: String,
+    /// Shared text input state for the search bar
+    pub search_input_state: SharedTextInputData,
     /// All match positions: (line, start_col, end_col)
     pub search_matches: Vec<(usize, usize, usize)>,
     /// Index of the currently focused match
@@ -246,6 +251,7 @@ pub fn code_editor_state(content: impl Into<String>) -> SharedCodeEditorState {
         last_click_pos: TextPosition::default(),
         search_active: false,
         search_query: String::new(),
+        search_input_state: text_input_state_with_placeholder("Find..."),
         search_matches: Vec::new(),
         search_match_idx: 0,
         scroll_physics: Arc::new(Mutex::new(ScrollPhysics::default())),
@@ -1506,7 +1512,8 @@ impl CodeEditor {
                             return;
                         }
                         if d.search_active {
-                            d.search_insert(c);
+                            // text_input widget handles search input;
+                            // don't insert into code while searching
                         } else {
                             d.insert(&c.to_string());
                             d.reset_cursor_blink();
@@ -1534,25 +1541,19 @@ impl CodeEditor {
                         return;
                     }
 
-                    // When search bar is active, intercept keys for search
+                    // When search bar is active, intercept Escape and Enter
                     if d.search_active && !(ctx.meta || ctx.ctrl) {
                         let handled = match ctx.key_code {
-                            13 => {
-                                if ctx.shift {
-                                    d.search_prev();
-                                } else {
-                                    d.search_next();
-                                }
-                                true
-                            }
                             27 => {
+                                // Escape — close search
                                 d.search_active = false;
                                 d.search_query.clear();
                                 d.search_matches.clear();
-                                true
-                            }
-                            8 => {
-                                d.search_backspace();
+                                // Clear the text_input
+                                if let Ok(mut input) = d.search_input_state.lock() {
+                                    input.value.clear();
+                                    input.cursor = 0;
+                                }
                                 true
                             }
                             _ => false,
@@ -1750,7 +1751,24 @@ impl CodeEditor {
                 move |visual: &crate::stateful::TextFieldState, container: &mut Div| {
                     let mut data = data_for_callback.lock().unwrap();
                     let cw = data.char_width();
-                    let content = build_editor_content(&mut data, visual.is_focused(), cw);
+                    // Sync search query from text_input state
+                    if data.search_active {
+                        let new_query = data
+                            .search_input_state
+                            .lock()
+                            .map(|d| d.value.clone())
+                            .unwrap_or_default();
+                        if new_query != data.search_query {
+                            data.search_query = new_query;
+                            data.execute_search();
+                        }
+                    }
+                    let content = build_editor_content(
+                        &mut data,
+                        visual.is_focused(),
+                        cw,
+                        Some(&data_for_callback),
+                    );
 
                     // Apply visual styling
                     container.set_bg(data.config.bg_color);
@@ -2269,7 +2287,12 @@ fn build_indent_guides(
 }
 
 /// Build the visual content for the editable code editor
-fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width: f32) -> Div {
+fn build_editor_content(
+    data: &mut CodeEditorData,
+    is_focused: bool,
+    char_width: f32,
+    shared_state: Option<&SharedCodeEditorState>,
+) -> Div {
     let styled = data.get_styled_content();
     let config = &data.config;
     let line_height_px = config.font_size * config.line_height;
@@ -2539,78 +2562,62 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
             pad,
         ));
     }
-    container = container.child(code_area);
-
-    // Wrap in a flex_col if search bar is active
+    // Search bar — absolutely positioned top-right overlay using text_input widget
     if data.search_active {
         let match_count = data.search_matches.len();
         let match_info = if match_count > 0 {
-            format!("{} of {} matches", data.search_match_idx + 1, match_count)
-        } else if data.search_query.is_empty() {
-            String::new()
+            format!("{}/{}", data.search_match_idx + 1, match_count)
+        } else if !data.search_query.is_empty() {
+            "0/0".to_string()
         } else {
-            "No matches".to_string()
+            String::new()
         };
 
         let is_regex = data.search_query.starts_with('/')
             && data.search_query.len() > 2
             && data.search_query.ends_with('/');
 
-        let search_bar = div()
+        let search_state = Arc::clone(&data.search_input_state);
+        let search_input = text_input(&search_state)
+            .w(220.0)
+            .text_size(config.font_size * 0.9);
+
+        let mut search_bar = div()
+            .absolute()
+            .right(8.0)
+            .top(4.0)
             .flex_row()
             .items_center()
-            .gap_px(8.0)
-            .p_px(6.0)
+            .gap_px(6.0)
+            .p_px(4.0)
             .bg(config.bg_color)
-            .border_bottom(1.0, config.gutter_separator_color)
-            .child(
-                div()
-                    .flex_row()
-                    .items_center()
-                    .flex_grow()
-                    .bg(Color::rgba(1.0, 1.0, 1.0, 0.06))
-                    .rounded(4.0)
-                    .p_px(4.0)
-                    .child(
-                        text(if data.search_query.is_empty() {
-                            "Find..."
-                        } else {
-                            &data.search_query
-                        })
-                        .size(config.font_size * 0.9)
-                        .color(if data.search_query.is_empty() {
-                            config.line_number_color
-                        } else {
-                            config.text_color
-                        })
-                        .monospace(),
-                    ),
-            )
-            .child(
+            .border(1.0, config.gutter_separator_color)
+            .rounded(6.0)
+            .shadow_sm()
+            .child(search_input);
+
+        if !match_info.is_empty() {
+            search_bar = search_bar.child(
                 text(&match_info)
-                    .size(config.font_size * 0.8)
-                    .color(config.line_number_color),
+                    .size(config.font_size * 0.75)
+                    .color(config.line_number_color)
+                    .no_wrap(),
             );
-
-        let regex_label = if is_regex {
-            Some(
-                text("regex")
-                    .size(config.font_size * 0.7)
-                    .color(config.cursor_color),
-            )
-        } else {
-            None
-        };
-
-        let mut bar = search_bar;
-        if let Some(label) = regex_label {
-            bar = bar.child(label);
         }
 
-        div().flex_col().w_full().child(bar).child(container)
-    } else {
-        container
+        if is_regex {
+            search_bar = search_bar.child(
+                text(".*")
+                    .size(config.font_size * 0.7)
+                    .color(config.cursor_color)
+                    .monospace(),
+            );
+        }
+
+        code_area = code_area.child(search_bar);
     }
+    container = container.child(code_area);
+    container
 }
 
 // ============================================================================

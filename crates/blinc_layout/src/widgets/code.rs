@@ -2586,14 +2586,19 @@ fn build_editor_content(
             .absolute()
             .right(8.0)
             .top(4.0)
+            .w(300.0)
             .flex_row()
             .items_center()
             .gap_px(6.0)
-            .p_px(4.0)
+            .p_px(6.0)
             .bg(config.bg_color)
             .border(1.0, config.gutter_separator_color)
             .rounded(6.0)
             .shadow_sm()
+            .stack_layer()
+            .on_mouse_down(|_| {
+                // Absorb click — don't let it fall through to code editor
+            })
             .child(search_input);
 
         if !match_info.is_empty() {

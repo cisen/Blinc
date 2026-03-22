@@ -2,30 +2,46 @@
 //!
 //! Two modes of operation:
 //!
-//! - **Read-only** via `code("content")` — lightweight display widget
+//! - **Read-only** via `code("content")` — lightweight display widget, no Stateful overhead
 //! - **Editable** via `code_editor(&state)` — full editor with Stateful incremental updates
 //!
-//! # Example
+//! # Read-only Example
 //!
 //! ```ignore
 //! use blinc_layout::prelude::*;
 //! use blinc_layout::syntax::{SyntaxConfig, RustHighlighter};
 //!
-//! // Read-only code block
 //! code(r#"fn main() { println!("Hello"); }"#)
 //!     .syntax(SyntaxConfig::new(RustHighlighter::new()))
 //!     .line_numbers(true)
 //!     .font_size(14.0)
+//! ```
 //!
-//! // Editable code block
+//! # Editable Example
+//!
+//! ```ignore
 //! let state = code_editor_state("let x = 42;");
 //! code_editor(&state)
 //!     .syntax(SyntaxConfig::new(RustHighlighter::new()))
 //!     .line_numbers(true)
+//!     .h(400.0)
 //!     .on_change(|new_content| {
 //!         println!("Content changed: {}", new_content);
 //!     })
 //! ```
+//!
+//! # Editor Features
+//!
+//! **Editing:** Type, Enter (auto-indent), Backspace, Delete, Tab/Shift+Tab (indent/dedent),
+//! Cmd+Backspace/Delete (delete word), Cmd+Z/Shift+Z (undo/redo)
+//!
+//! **Navigation:** Arrow keys, Cmd+Left/Right (word jump), Home (smart: first non-whitespace
+//! then col 0), End, Page Up/Down, mouse click, mouse drag selection, double-click word select
+//!
+//! **Clipboard:** Cmd+A (select all), Cmd+C (copy), Cmd+X (cut), Cmd+V (paste)
+//!
+//! **Visual:** Syntax highlighting (cached per-line), line numbers, selection highlight,
+//! current line highlight, cursor with blink animation, vertical scroll (overflow_y_scroll)
 
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};

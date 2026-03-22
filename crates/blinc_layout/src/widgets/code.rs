@@ -1736,7 +1736,50 @@ impl ElementBuilder for CodeEditor {
             shared.base_render_props = Some(self.inner.inner_render_props());
             shared.base_style = self.inner.inner_layout_style();
         }
-        self.inner.build(tree)
+
+        let data = self.state.lock().unwrap();
+        if data.config.minimap {
+            let line_height_px = data.config.font_size * data.config.line_height;
+            let minimap_w = data.config.minimap_width;
+            let minimap = build_minimap(&data, line_height_px);
+            drop(data);
+
+            // Build wrapper: flex_row with [stateful (flex_grow) | minimap (fixed)]
+            // The Stateful scrolls, the minimap doesn't
+            let stateful_node = self.inner.build(tree);
+            let minimap_node = minimap.build(tree);
+
+            // Create wrapper node
+            let wrapper_style = taffy::Style {
+                display: taffy::Display::Flex,
+                flex_direction: taffy::FlexDirection::Row,
+                size: taffy::Size {
+                    width: taffy::Dimension::Percent(1.0),
+                    height: taffy::Dimension::Percent(1.0),
+                },
+                ..Default::default()
+            };
+            let wrapper_node = tree.create_node(wrapper_style);
+            tree.add_child(wrapper_node, stateful_node);
+            tree.add_child(wrapper_node, minimap_node);
+
+            // Set flex_grow on stateful so it takes remaining space
+            let mut stateful_style = tree.get_style(stateful_node).unwrap_or_default();
+            stateful_style.flex_grow = 1.0;
+            stateful_style.size.width = taffy::Dimension::Auto;
+            tree.set_style(stateful_node, stateful_style);
+
+            // Set fixed width on minimap
+            let mut minimap_style = tree.get_style(minimap_node).unwrap_or_default();
+            minimap_style.size.width = taffy::Dimension::Length(minimap_w);
+            minimap_style.flex_shrink = 0.0;
+            tree.set_style(minimap_node, minimap_style);
+
+            wrapper_node
+        } else {
+            drop(data);
+            self.inner.build(tree)
+        }
     }
     fn render_props(&self) -> RenderProps {
         self.inner.render_props()
@@ -1831,8 +1874,6 @@ fn build_gutter(
 
     div()
         .flex_row()
-        .items_start()
-        .bg(config.gutter_bg_color)
         .w(config.gutter_width)
         .flex_shrink_0()
         .child(col.flex_grow())
@@ -2220,11 +2261,6 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
         ));
     }
     container = container.child(code_area);
-
-    if config.minimap {
-        container = container.child(build_minimap(data, line_height_px));
-    }
-
     container
 }
 

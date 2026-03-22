@@ -756,6 +756,12 @@ impl CodeEditorData {
         if let Some(region) = regions.iter().find(|r| r.start_line == line) {
             self.folded_regions
                 .push((region.start_line, region.end_line));
+            // Move cursor to end of fold start line if it's inside the folded region
+            if self.cursor.line > region.start_line && self.cursor.line <= region.end_line {
+                self.cursor.line = region.start_line;
+                self.cursor.column = self.lines[region.start_line].chars().count();
+            }
+            self.selection_start = None;
         }
     }
 
@@ -866,7 +872,13 @@ impl CodeEditorData {
     /// Position cursor from click coordinates
     pub fn cursor_from_click(&mut self, x: f32, y: f32) {
         let line_height = self.config.font_size * self.config.line_height;
-        let line_idx = ((y / line_height).floor() as usize).min(self.lines.len().saturating_sub(1));
+        let visible_row = (y / line_height).floor() as usize;
+        // Map visible row to actual line index (accounts for folded lines)
+        let visible = self.visible_lines();
+        let line_idx = visible
+            .get(visible_row)
+            .copied()
+            .unwrap_or(visible.last().copied().unwrap_or(0));
 
         let line = &self.lines[line_idx];
         let char_count = line.chars().count();
@@ -1266,41 +1278,47 @@ impl CodeEditor {
                     let scroll_offset = d.scroll_physics.lock().map(|p| -p.offset_y).unwrap_or(0.0);
                     let adjusted_y = (click_y - d.config.padding + scroll_offset).max(0.0);
 
-                    // Check if click is in the gutter fold column → toggle fold
+                    // Check if click is in the gutter → toggle fold only, skip cursor logic
                     if d.config.code_folding && click_x < gutter_w {
                         let line_height = d.config.font_size * d.config.line_height;
-                        let line_idx = (adjusted_y / line_height).floor() as usize;
-                        let line_idx = line_idx.min(d.lines.len().saturating_sub(1));
+                        let visible_row = (adjusted_y / line_height).floor() as usize;
+                        let visible = d.visible_lines();
+                        let line_idx = visible
+                            .get(visible_row)
+                            .copied()
+                            .unwrap_or(visible.last().copied().unwrap_or(0));
                         d.toggle_fold(line_idx);
                         d.invalidate_all_highlights();
+                        // Don't touch cursor, selection, or drag state
                     } else {
+                        // Code area click — position cursor
                         let adjusted_x = (click_x - gutter_w - d.config.padding).max(0.0);
                         d.cursor_from_click(adjusted_x, adjusted_y);
-                    }
 
-                    // Double-click detection: select word
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|t| t.as_secs_f64() * 1000.0)
-                        .unwrap_or(0.0);
-                    let is_double_click =
-                        (now - d.last_click_time) < 350.0 && d.last_click_pos == d.cursor;
-                    d.last_click_time = now;
-                    d.last_click_pos = d.cursor;
+                        // Double-click detection: select word
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|t| t.as_secs_f64() * 1000.0)
+                            .unwrap_or(0.0);
+                        let is_double_click =
+                            (now - d.last_click_time) < 350.0 && d.last_click_pos == d.cursor;
+                        d.last_click_time = now;
+                        d.last_click_pos = d.cursor;
 
-                    if is_double_click && d.cursor.line < d.lines.len() {
-                        let line = &d.lines[d.cursor.line];
-                        let (start, end) = text_edit::word_at_position(
-                            line,
-                            d.cursor.column.min(line.chars().count().saturating_sub(1)),
-                        );
-                        d.selection_start = Some(TextPosition::new(d.cursor.line, start));
-                        d.cursor.column = end;
-                        d.drag_anchor = None;
-                    } else {
-                        d.drag_anchor = Some(d.cursor);
+                        if is_double_click && d.cursor.line < d.lines.len() {
+                            let line = &d.lines[d.cursor.line];
+                            let (start, end) = text_edit::word_at_position(
+                                line,
+                                d.cursor.column.min(line.chars().count().saturating_sub(1)),
+                            );
+                            d.selection_start = Some(TextPosition::new(d.cursor.line, start));
+                            d.cursor.column = end;
+                            d.drag_anchor = None;
+                        } else {
+                            d.drag_anchor = Some(d.cursor);
+                        }
+                        d.reset_cursor_blink();
                     }
-                    d.reset_cursor_blink();
                 }
 
                 refresh_stateful(&shared_for_click);
@@ -1576,19 +1594,7 @@ impl CodeEditor {
                     container.set_bg(data.config.bg_color);
                     container.set_rounded(data.config.corner_radius);
 
-                    // Clear and rebuild children: scrollable content + fixed minimap
-                    container.clear_children();
-                    container.children.push(Box::new(content));
-
-                    if data.config.minimap {
-                        let line_height_px = data.config.font_size * data.config.line_height;
-                        let minimap = build_minimap(&data, line_height_px)
-                            .absolute()
-                            .right(0.0)
-                            .top(0.0)
-                            .h_full();
-                        container.children.push(Box::new(minimap));
-                    }
+                    container.set_child(content);
                 },
             ));
             shared.needs_visual_update = true;
@@ -1724,10 +1730,6 @@ impl CodeEditor {
 
 impl ElementBuilder for CodeEditor {
     fn build(&self, tree: &mut LayoutTree) -> LayoutNodeId {
-        // Set base render props and layout style so the Stateful system
-        // preserves container dimensions (h, overflow, bg, rounded) across rebuilds.
-        // This must happen here because builder methods (.w(), .h()) are called
-        // AFTER new() but BEFORE build().
         {
             let shared_state = self.inner.shared_state();
             let mut shared = shared_state.lock().unwrap();
@@ -1763,6 +1765,11 @@ impl ElementBuilder for CodeEditor {
 // Shared Visual Building Helpers
 // ============================================================================
 
+/// SVG for fold chevron (right-pointing = collapsed)
+const FOLD_COLLAPSED_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M6 3l5 5-5 5z" fill="currentColor"/></svg>"#;
+/// SVG for fold chevron (down-pointing = expanded)
+const FOLD_EXPANDED_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M3 6l5 5 5-5z" fill="currentColor"/></svg>"#;
+
 fn build_gutter(
     visible_lines: &[usize],
     line_height_px: f32,
@@ -1772,76 +1779,64 @@ fn build_gutter(
     pad: f32,
 ) -> Div {
     let has_fold = config.code_folding;
-    let fold_w: f32 = if has_fold { 20.0 } else { 0.0 };
 
-    // Auto-size line number width based on digit count
-    let max_line_num = visible_lines.last().map(|&l| l + 1).unwrap_or(1);
-    let digit_count = format!("{}", max_line_num).len();
-    let num_w = (digit_count as f32 * config.font_size * 0.65 + 12.0).max(28.0);
-    let total_gutter_w = num_w + fold_w + 1.0; // +1 for separator
+    let mut col = div().flex_col().justify_start().padding_y_px(pad);
 
-    // Line numbers column (left side of gutter)
-    let mut num_col = div().flex_col().padding_y_px(pad);
     for &line_idx in visible_lines {
-        num_col = num_col.child(
-            div()
-                .h(line_height_px)
-                .w(num_w)
-                .flex_row()
-                .justify_end()
-                .items_center()
-                .pr(4.0)
-                .child(
-                    text(format!("{}", line_idx + 1))
-                        .size(config.font_size)
-                        .color(config.line_number_color),
-                ),
-        );
-    }
+        let mut row = div().h(line_height_px).flex_row().items_center();
 
-    // Fold markers column (right side, next to separator)
-    let fold_col = if has_fold {
-        let mut col = div().flex_col().padding_y_px(pad).w(fold_w);
-        for &line_idx in visible_lines {
+        // Line number — monospace, right-aligned, flex_grow to fill available space
+        row = row.child(
+            div().flex_grow().flex_row().justify_end().pr(1.0).child(
+                text(format!("{}", line_idx + 1))
+                    .size(config.font_size)
+                    .color(config.line_number_color)
+                    .monospace()
+                    .no_wrap(),
+            ),
+        );
+
+        // Fold icon (SVG element)
+        if has_fold {
             let is_fold_point = fold_regions.iter().any(|r| r.start_line == line_idx);
             let is_folded = folded_starts.contains(&line_idx);
             if is_fold_point {
-                let (marker, color) = if is_folded {
-                    ("\u{25B8}", config.line_number_color) // ▸ collapsed
+                let svg_src = if is_folded {
+                    FOLD_COLLAPSED_SVG
                 } else {
-                    ("\u{25BE}", config.line_number_color) // ▾ expanded
+                    FOLD_EXPANDED_SVG
                 };
-                col = col.child(
+                let icon_size = config.font_size;
+                let icon_w = config.font_size;
+                row = row.child(
                     div()
+                        .w(icon_w)
                         .h(line_height_px)
-                        .w(fold_w)
+                        .flex_row()
                         .items_center()
                         .justify_center()
-                        .cursor_pointer()
-                        .child(text(marker).size(config.font_size).color(color).monospace()),
+                        .child(
+                            crate::svg::svg(svg_src)
+                                .size(icon_size, icon_size)
+                                .tint(config.line_number_color),
+                        ),
                 );
             } else {
-                col = col.child(div().h(line_height_px).w(fold_w));
+                row = row.child(div().w(config.font_size));
             }
         }
-        Some(col)
-    } else {
-        None
-    };
 
-    // Assemble: [line_numbers | fold_markers | separator]
-    let mut gutter = div()
-        .flex_row()
-        .bg(config.gutter_bg_color)
-        .w(total_gutter_w)
-        .flex_shrink_0();
-
-    gutter = gutter.child(num_col);
-    if let Some(fc) = fold_col {
-        gutter = gutter.child(fc);
+        col = col.child(row);
     }
-    gutter = gutter.child(div().w(1.0).h_full().bg(config.gutter_separator_color));
-    gutter
+
+    div()
+        .flex_row()
+        .items_start()
+        .bg(config.gutter_bg_color)
+        .w(config.gutter_width)
+        .flex_shrink_0()
+        .child(col.flex_grow())
+        .child(div().w(1.0).h_full().bg(config.gutter_separator_color))
 }
 
 fn build_styled_line(
@@ -2119,7 +2114,11 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
     }
 
     // Text lines in a padded wrapper (only visible lines)
-    let mut text_wrapper = div().flex_col().padding_x_px(pad).padding_y_px(pad);
+    let mut text_wrapper = div()
+        .flex_col()
+        .justify_start()
+        .padding_x_px(pad)
+        .padding_y_px(pad);
     for &line_idx in &visible_lines {
         let line_div = if line_idx < styled.lines.len() {
             let mut ld = build_styled_line(&styled.lines[line_idx], config, line_height_px);
@@ -2221,6 +2220,11 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
         ));
     }
     container = container.child(code_area);
+
+    if config.minimap {
+        container = container.child(build_minimap(data, line_height_px));
+    }
+
     container
 }
 

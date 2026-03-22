@@ -148,9 +148,7 @@ pub fn word_at_position(text: &str, char_pos: usize) -> (usize, usize) {
 pub fn clipboard_read() -> Option<String> {
     #[cfg(target_os = "macos")]
     {
-        let output = std::process::Command::new("pbpaste")
-            .output()
-            .ok()?;
+        let output = std::process::Command::new("pbpaste").output().ok()?;
         if output.status.success() {
             let text = String::from_utf8(output.stdout).ok()?;
             if text.is_empty() {
@@ -170,7 +168,11 @@ pub fn clipboard_read() -> Option<String> {
             .ok()?;
         if output.status.success() {
             let text = String::from_utf8(output.stdout).ok()?;
-            if text.is_empty() { None } else { Some(text) }
+            if text.is_empty() {
+                None
+            } else {
+                Some(text)
+            }
         } else {
             None
         }

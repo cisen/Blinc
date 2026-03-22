@@ -1,10 +1,9 @@
 //! Code block widget with syntax highlighting
 //!
-//! A code display/editing widget that supports:
-//! - Syntax highlighting via regex-based token matching
-//! - Optional line numbers in the gutter
-//! - Read-only by default, editable with `.edit(true)`
-//! - All Div layout methods via Deref
+//! Two modes of operation:
+//!
+//! - **Read-only** via `code("content")` — lightweight display widget
+//! - **Editable** via `code_editor(&state)` — full editor with Stateful incremental updates
 //!
 //! # Example
 //!
@@ -17,11 +16,12 @@
 //!     .syntax(SyntaxConfig::new(RustHighlighter::new()))
 //!     .line_numbers(true)
 //!     .font_size(14.0)
-//!     .rounded(8.0)
 //!
-//! // Editable code block with change callback
-//! code("let x = 42;")
-//!     .edit(true)
+//! // Editable code block
+//! let state = code_editor_state("let x = 42;");
+//! code_editor(&state)
+//!     .syntax(SyntaxConfig::new(RustHighlighter::new()))
+//!     .line_numbers(true)
 //!     .on_change(|new_content| {
 //!         println!("Content changed: {}", new_content);
 //!     })
@@ -42,8 +42,9 @@ use crate::text::text;
 use crate::tree::{LayoutNodeId, LayoutTree};
 use crate::widgets::cursor::{cursor_state, CursorAnimation, SharedCursorState};
 use crate::widgets::text_area::TextPosition;
+use crate::widgets::text_edit;
 use crate::widgets::text_input::{
-    decrement_focus_count, increment_focus_count, request_continuous_redraw_pub, request_rebuild,
+    decrement_focus_count, increment_focus_count, request_continuous_redraw_pub,
 };
 
 // ============================================================================
@@ -65,8 +66,6 @@ pub struct CodeConfig {
     pub padding: f32,
     /// Corner radius
     pub corner_radius: f32,
-    /// Whether editing is enabled
-    pub editable: bool,
     /// Background color
     pub bg_color: Color,
     /// Text color (default, when no syntax highlighting)
@@ -93,7 +92,6 @@ impl Default for CodeConfig {
             gutter_width: 48.0,
             padding: 16.0,
             corner_radius: 8.0,
-            editable: false,
             bg_color: theme.color(ColorToken::Surface),
             text_color: theme.color(ColorToken::TextPrimary),
             line_number_color: theme.color(ColorToken::TextTertiary),
@@ -106,68 +104,184 @@ impl Default for CodeConfig {
 }
 
 // ============================================================================
-// Internal State (not exposed to users)
+// Shared Editor State
 // ============================================================================
 
-/// Internal state for editable code blocks
-#[derive(Debug, Clone)]
-struct CodeState {
+/// Callback type for content changes
+type OnChangeCallback = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// Internal state for code editing
+#[derive(Clone)]
+pub struct CodeEditorData {
     /// Lines of text
-    lines: Vec<String>,
+    pub lines: Vec<String>,
     /// Cursor position
-    cursor: TextPosition,
+    pub cursor: TextPosition,
     /// Selection start (if selecting)
-    selection_start: Option<TextPosition>,
+    pub selection_start: Option<TextPosition>,
     /// Whether currently focused
-    focused: bool,
+    pub focused: bool,
     /// Canvas-based cursor state
-    cursor_state: SharedCursorState,
+    pub cursor_state: SharedCursorState,
+    /// On-change callback
+    pub on_change: Option<OnChangeCallback>,
+    /// Syntax highlighter
+    pub highlighter: Option<Arc<dyn SyntaxHighlighter>>,
+    /// Configuration snapshot (updated from builder)
+    pub config: CodeConfig,
+    /// Undo stack
+    pub undo_stack: Vec<UndoEntry>,
+    /// Redo stack
+    pub redo_stack: Vec<UndoEntry>,
+    /// Cached monospace character width for current font_size.
+    /// Avoids calling measure_text() for every cursor/selection calculation.
+    mono_char_width: f32,
+    /// Font size that mono_char_width was computed for
+    mono_char_width_font_size: f32,
+    /// Cached per-line syntax highlight results. Indexed by line number.
+    /// Cleared when content changes on that line.
+    highlight_cache: Vec<Option<crate::styled_text::StyledLine>>,
 }
 
-impl Default for CodeState {
-    fn default() -> Self {
-        Self {
-            lines: vec![String::new()],
-            cursor: TextPosition::default(),
-            selection_start: None,
-            focused: false,
-            cursor_state: cursor_state(),
-        }
-    }
+/// Undo/redo entry
+#[derive(Debug, Clone)]
+pub struct UndoEntry {
+    pub lines: Vec<String>,
+    pub cursor: TextPosition,
+    pub selection_start: Option<TextPosition>,
 }
 
-impl CodeState {
-    fn new(content: &str) -> Self {
-        let lines: Vec<String> = if content.is_empty() {
-            vec![String::new()]
-        } else {
-            content.lines().map(|s| s.to_string()).collect()
-        };
+/// Shared code editor state (thread-safe, persists across rebuilds)
+pub type SharedCodeEditorState = Arc<Mutex<CodeEditorData>>;
 
-        Self {
-            lines,
-            cursor: TextPosition::default(),
-            selection_start: None,
-            focused: false,
-            cursor_state: cursor_state(),
-        }
-    }
+/// Create a new shared code editor state
+pub fn code_editor_state(content: impl Into<String>) -> SharedCodeEditorState {
+    let content = content.into();
+    let lines: Vec<String> = if content.is_empty() {
+        vec![String::new()]
+    } else {
+        content.lines().map(|s| s.to_string()).collect()
+    };
 
+    let num_lines = lines.len();
+    Arc::new(Mutex::new(CodeEditorData {
+        lines,
+        cursor: TextPosition::default(),
+        selection_start: None,
+        focused: false,
+        cursor_state: cursor_state(),
+        on_change: None,
+        highlighter: None,
+        config: CodeConfig::default(),
+        undo_stack: Vec::new(),
+        redo_stack: Vec::new(),
+        mono_char_width: 0.0,
+        mono_char_width_font_size: 0.0,
+        highlight_cache: vec![None; num_lines],
+    }))
+}
+
+impl CodeEditorData {
     /// Get full text content
-    fn value(&self) -> String {
+    pub fn value(&self) -> String {
         self.lines.join("\n")
     }
 
     /// Check if empty
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.lines.len() == 1 && self.lines[0].is_empty()
     }
 
-    /// Insert text at cursor position
-    fn insert(&mut self, text: &str) {
-        // Delete selection first if any
-        self.delete_selection();
+    /// Get the cached monospace character width, recomputing if font size changed.
+    pub fn char_width(&mut self) -> f32 {
+        let fs = self.config.font_size;
+        if (self.mono_char_width_font_size - fs).abs() > 0.01 || self.mono_char_width <= 0.0 {
+            self.mono_char_width = crate::text_measure::measure_text("M", fs).width;
+            self.mono_char_width_font_size = fs;
+        }
+        self.mono_char_width
+    }
 
+    /// Measure the pixel width of `char_count` monospace characters.
+    pub fn measure_chars(&mut self, char_count: usize) -> f32 {
+        self.char_width() * char_count as f32
+    }
+
+    /// Invalidate highlight cache for a specific line
+    fn invalidate_highlight_line(&mut self, line: usize) {
+        if line < self.highlight_cache.len() {
+            self.highlight_cache[line] = None;
+        }
+    }
+
+    /// Resize highlight cache to match line count
+    fn sync_highlight_cache(&mut self) {
+        self.highlight_cache.resize(self.lines.len(), None);
+    }
+
+    /// Invalidate entire highlight cache
+    fn invalidate_all_highlights(&mut self) {
+        for slot in &mut self.highlight_cache {
+            *slot = None;
+        }
+        self.sync_highlight_cache();
+    }
+
+    /// Save current state to undo stack
+    pub fn push_undo(&mut self) {
+        self.undo_stack.push(UndoEntry {
+            lines: self.lines.clone(),
+            cursor: self.cursor,
+            selection_start: self.selection_start,
+        });
+        self.redo_stack.clear();
+        // Cap undo history
+        if self.undo_stack.len() > 200 {
+            self.undo_stack.remove(0);
+        }
+    }
+
+    /// Undo last change
+    pub fn undo(&mut self) -> bool {
+        if let Some(entry) = self.undo_stack.pop() {
+            self.redo_stack.push(UndoEntry {
+                lines: self.lines.clone(),
+                cursor: self.cursor,
+                selection_start: self.selection_start,
+            });
+            self.lines = entry.lines;
+            self.cursor = entry.cursor;
+            self.selection_start = entry.selection_start;
+            self.invalidate_all_highlights();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Redo last undone change
+    pub fn redo(&mut self) -> bool {
+        if let Some(entry) = self.redo_stack.pop() {
+            self.undo_stack.push(UndoEntry {
+                lines: self.lines.clone(),
+                cursor: self.cursor,
+                selection_start: self.selection_start,
+            });
+            self.lines = entry.lines;
+            self.cursor = entry.cursor;
+            self.selection_start = entry.selection_start;
+            self.invalidate_all_highlights();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Insert text at cursor position
+    pub fn insert(&mut self, text: &str) {
+        self.push_undo();
+        self.delete_selection();
+        let start_line = self.cursor.line;
         for ch in text.chars() {
             if ch == '\n' {
                 self.insert_newline();
@@ -175,6 +289,11 @@ impl CodeState {
                 self.insert_char(ch);
             }
         }
+        // Invalidate from start_line to current cursor line
+        for l in start_line..=self.cursor.line {
+            self.invalidate_highlight_line(l);
+        }
+        self.sync_highlight_cache();
     }
 
     fn insert_char(&mut self, ch: char) {
@@ -190,95 +309,147 @@ impl CodeState {
         if self.cursor.line < self.lines.len() {
             let current_line = &self.lines[self.cursor.line];
             let byte_pos = char_to_byte_pos(current_line, self.cursor.column);
-
-            let new_line = current_line[byte_pos..].to_string();
+            let rest = current_line[byte_pos..].to_string();
             self.lines[self.cursor.line] = current_line[..byte_pos].to_string();
-            self.lines.insert(self.cursor.line + 1, new_line);
-
             self.cursor.line += 1;
             self.cursor.column = 0;
+            self.lines.insert(self.cursor.line, rest);
         }
     }
 
-    fn delete_backward(&mut self) {
-        if self.selection_start.is_some() {
-            self.delete_selection();
+    /// Delete backward (backspace)
+    pub fn delete_backward(&mut self) {
+        if self.delete_selection() {
             return;
         }
-
+        self.push_undo();
+        let affected_line = self.cursor.line;
         if self.cursor.column > 0 {
             let line = &mut self.lines[self.cursor.line];
             let byte_pos = char_to_byte_pos(line, self.cursor.column - 1);
-            let end_byte = char_to_byte_pos(line, self.cursor.column);
-            line.replace_range(byte_pos..end_byte, "");
+            let next_byte = char_to_byte_pos(line, self.cursor.column);
+            line.replace_range(byte_pos..next_byte, "");
             self.cursor.column -= 1;
         } else if self.cursor.line > 0 {
-            // Merge with previous line
-            let current = self.lines.remove(self.cursor.line);
+            let current_line = self.lines.remove(self.cursor.line);
             self.cursor.line -= 1;
             self.cursor.column = self.lines[self.cursor.line].chars().count();
-            self.lines[self.cursor.line].push_str(&current);
+            self.lines[self.cursor.line].push_str(&current_line);
         }
+        self.invalidate_highlight_line(self.cursor.line);
+        self.sync_highlight_cache();
     }
 
-    fn delete_forward(&mut self) {
-        if self.selection_start.is_some() {
-            self.delete_selection();
+    /// Delete forward (delete key)
+    pub fn delete_forward(&mut self) {
+        if self.delete_selection() {
             return;
         }
-
+        self.push_undo();
         if self.cursor.line < self.lines.len() {
             let line_len = self.lines[self.cursor.line].chars().count();
             if self.cursor.column < line_len {
                 let line = &mut self.lines[self.cursor.line];
                 let byte_pos = char_to_byte_pos(line, self.cursor.column);
-                let end_byte = char_to_byte_pos(line, self.cursor.column + 1);
-                line.replace_range(byte_pos..end_byte, "");
+                let next_byte = char_to_byte_pos(line, self.cursor.column + 1);
+                line.replace_range(byte_pos..next_byte, "");
             } else if self.cursor.line + 1 < self.lines.len() {
-                // Merge with next line
-                let next = self.lines.remove(self.cursor.line + 1);
-                self.lines[self.cursor.line].push_str(&next);
+                let next_line = self.lines.remove(self.cursor.line + 1);
+                self.lines[self.cursor.line].push_str(&next_line);
             }
+        }
+        self.invalidate_highlight_line(self.cursor.line);
+        self.sync_highlight_cache();
+    }
+
+    /// Delete selection. Returns true if a selection was deleted.
+    pub fn delete_selection(&mut self) -> bool {
+        if let Some(sel_start) = self.selection_start.take() {
+            let (start, end) = order_positions(sel_start, self.cursor);
+            if start == end {
+                return false;
+            }
+            self.push_undo();
+
+            if start.line == end.line {
+                let line = &mut self.lines[start.line];
+                let start_byte = char_to_byte_pos(line, start.column);
+                let end_byte = char_to_byte_pos(line, end.column);
+                line.replace_range(start_byte..end_byte, "");
+            } else {
+                let start_byte = char_to_byte_pos(&self.lines[start.line], start.column);
+                let end_byte = char_to_byte_pos(&self.lines[end.line], end.column);
+                let end_remainder = self.lines[end.line][end_byte..].to_string();
+                self.lines[start.line] = self.lines[start.line][..start_byte].to_string();
+                self.lines[start.line].push_str(&end_remainder);
+                self.lines.drain((start.line + 1)..=end.line);
+            }
+
+            self.cursor = start;
+            self.selection_start = None;
+            self.invalidate_all_highlights();
+            true
+        } else {
+            false
         }
     }
 
-    fn delete_selection(&mut self) {
-        let Some(sel_start) = self.selection_start.take() else {
-            return;
-        };
-
+    /// Get selected text
+    pub fn selected_text(&self) -> Option<String> {
+        let sel_start = self.selection_start?;
         let (start, end) = order_positions(sel_start, self.cursor);
+        if start == end {
+            return None;
+        }
 
         if start.line == end.line {
-            let line = &mut self.lines[start.line];
-            let start_byte = char_to_byte_pos(line, start.column);
-            let end_byte = char_to_byte_pos(line, end.column);
-            line.replace_range(start_byte..end_byte, "");
+            let line = &self.lines[start.line];
+            let s = char_to_byte_pos(line, start.column);
+            let e = char_to_byte_pos(line, end.column);
+            Some(line[s..e].to_string())
         } else {
-            // Multi-line selection
-            let start_byte = char_to_byte_pos(&self.lines[start.line], start.column);
-            let end_byte = char_to_byte_pos(&self.lines[end.line], end.column);
-
-            let new_line = self.lines[start.line][..start_byte].to_string()
-                + &self.lines[end.line][end_byte..];
-
-            // Remove lines in between
-            for _ in start.line..=end.line {
-                self.lines.remove(start.line);
+            let mut result = String::new();
+            for line_idx in start.line..=end.line {
+                let line = &self.lines[line_idx];
+                if line_idx == start.line {
+                    let s = char_to_byte_pos(line, start.column);
+                    result.push_str(&line[s..]);
+                } else if line_idx == end.line {
+                    result.push('\n');
+                    let e = char_to_byte_pos(line, end.column);
+                    result.push_str(&line[..e]);
+                } else {
+                    result.push('\n');
+                    result.push_str(line);
+                }
             }
-            self.lines.insert(start.line, new_line);
+            Some(result)
         }
-
-        self.cursor = start;
     }
 
-    fn move_left(&mut self, select: bool) {
+    /// Select all text
+    pub fn select_all(&mut self) {
+        self.selection_start = Some(TextPosition::new(0, 0));
+        let last_line = self.lines.len().saturating_sub(1);
+        let last_col = self.lines.last().map(|l| l.chars().count()).unwrap_or(0);
+        self.cursor = TextPosition::new(last_line, last_col);
+    }
+
+    // ========================================================================
+    // Cursor movement
+    // ========================================================================
+
+    pub fn move_left(&mut self, select: bool) {
         if select && self.selection_start.is_none() {
             self.selection_start = Some(self.cursor);
         } else if !select {
-            self.selection_start = None;
+            // Collapse selection to start
+            if let Some(sel) = self.selection_start.take() {
+                let (start, _) = order_positions(sel, self.cursor);
+                self.cursor = start;
+                return;
+            }
         }
-
         if self.cursor.column > 0 {
             self.cursor.column -= 1;
         } else if self.cursor.line > 0 {
@@ -287,13 +458,16 @@ impl CodeState {
         }
     }
 
-    fn move_right(&mut self, select: bool) {
+    pub fn move_right(&mut self, select: bool) {
         if select && self.selection_start.is_none() {
             self.selection_start = Some(self.cursor);
         } else if !select {
-            self.selection_start = None;
+            if let Some(sel) = self.selection_start.take() {
+                let (_, end) = order_positions(sel, self.cursor);
+                self.cursor = end;
+                return;
+            }
         }
-
         if self.cursor.line < self.lines.len() {
             let line_len = self.lines[self.cursor.line].chars().count();
             if self.cursor.column < line_len {
@@ -305,13 +479,12 @@ impl CodeState {
         }
     }
 
-    fn move_up(&mut self, select: bool) {
+    pub fn move_up(&mut self, select: bool) {
         if select && self.selection_start.is_none() {
             self.selection_start = Some(self.cursor);
         } else if !select {
             self.selection_start = None;
         }
-
         if self.cursor.line > 0 {
             self.cursor.line -= 1;
             let line_len = self.lines[self.cursor.line].chars().count();
@@ -319,13 +492,12 @@ impl CodeState {
         }
     }
 
-    fn move_down(&mut self, select: bool) {
+    pub fn move_down(&mut self, select: bool) {
         if select && self.selection_start.is_none() {
             self.selection_start = Some(self.cursor);
         } else if !select {
             self.selection_start = None;
         }
-
         if self.cursor.line + 1 < self.lines.len() {
             self.cursor.line += 1;
             let line_len = self.lines[self.cursor.line].chars().count();
@@ -333,7 +505,7 @@ impl CodeState {
         }
     }
 
-    fn move_to_line_start(&mut self, select: bool) {
+    pub fn move_to_line_start(&mut self, select: bool) {
         if select && self.selection_start.is_none() {
             self.selection_start = Some(self.cursor);
         } else if !select {
@@ -342,7 +514,7 @@ impl CodeState {
         self.cursor.column = 0;
     }
 
-    fn move_to_line_end(&mut self, select: bool) {
+    pub fn move_to_line_end(&mut self, select: bool) {
         if select && self.selection_start.is_none() {
             self.selection_start = Some(self.cursor);
         } else if !select {
@@ -350,6 +522,93 @@ impl CodeState {
         }
         if self.cursor.line < self.lines.len() {
             self.cursor.column = self.lines[self.cursor.line].chars().count();
+        }
+    }
+
+    pub fn move_word_left(&mut self, select: bool) {
+        if select && self.selection_start.is_none() {
+            self.selection_start = Some(self.cursor);
+        } else if !select {
+            self.selection_start = None;
+        }
+        if self.cursor.column == 0 && self.cursor.line > 0 {
+            self.cursor.line -= 1;
+            self.cursor.column = self.lines[self.cursor.line].chars().count();
+        } else if self.cursor.line < self.lines.len() {
+            self.cursor.column =
+                text_edit::word_boundary_left(&self.lines[self.cursor.line], self.cursor.column);
+        }
+    }
+
+    pub fn move_word_right(&mut self, select: bool) {
+        if select && self.selection_start.is_none() {
+            self.selection_start = Some(self.cursor);
+        } else if !select {
+            self.selection_start = None;
+        }
+        if self.cursor.line < self.lines.len() {
+            let line_len = self.lines[self.cursor.line].chars().count();
+            if self.cursor.column >= line_len && self.cursor.line + 1 < self.lines.len() {
+                self.cursor.line += 1;
+                self.cursor.column = 0;
+            } else {
+                self.cursor.column = text_edit::word_boundary_right(
+                    &self.lines[self.cursor.line],
+                    self.cursor.column,
+                );
+            }
+        }
+    }
+
+    /// Position cursor from click coordinates
+    pub fn cursor_from_click(&mut self, x: f32, y: f32) {
+        let line_height = self.config.font_size * self.config.line_height;
+        let line_idx = ((y / line_height).floor() as usize).min(self.lines.len().saturating_sub(1));
+
+        let char_count = self.lines[line_idx].chars().count();
+        let cw = self.char_width();
+        // For monospace: column = round(x / char_width), clamped to line length
+        let col = ((x / cw) + 0.5).floor() as usize;
+        let best_col = col.min(char_count);
+
+        self.cursor = TextPosition::new(line_idx, best_col);
+        self.selection_start = None;
+    }
+
+    /// Reset cursor blink
+    pub fn reset_cursor_blink(&self) {
+        if let Ok(mut cs) = self.cursor_state.lock() {
+            cs.reset_blink();
+        }
+    }
+
+    /// Get styled content with syntax highlighting (uses per-line cache)
+    fn get_styled_content(&mut self) -> StyledText {
+        self.sync_highlight_cache();
+
+        if let Some(ref highlighter) = self.highlighter {
+            let mut styled_lines = Vec::with_capacity(self.lines.len());
+            for (i, line) in self.lines.iter().enumerate() {
+                if let Some(ref cached) = self.highlight_cache[i] {
+                    styled_lines.push(cached.clone());
+                } else {
+                    // Highlight single line
+                    let line_styled = highlighter.highlight(line);
+                    let styled_line = line_styled.lines.into_iter().next().unwrap_or_else(|| {
+                        crate::styled_text::StyledLine {
+                            text: line.clone(),
+                            spans: Vec::new(),
+                        }
+                    });
+                    self.highlight_cache[i] = Some(styled_line.clone());
+                    styled_lines.push(styled_line);
+                }
+            }
+            StyledText {
+                lines: styled_lines,
+            }
+        } else {
+            StyledText::plain(&self.value(), self.config.text_color)
         }
     }
 }
@@ -371,40 +630,18 @@ fn order_positions(a: TextPosition, b: TextPosition) -> (TextPosition, TextPosit
     }
 }
 
-type SharedCodeState = Arc<Mutex<CodeState>>;
-
 // ============================================================================
-// Code Widget
+// Read-only Code Widget
 // ============================================================================
 
-/// Type alias for the on_change callback
-type OnChangeCallback = Arc<dyn Fn(&str) + Send + Sync + 'static>;
-
-/// Type alias for the on_token_click callback (for intellisense)
-type OnTokenClickCallback = Arc<dyn Fn(&TokenHit) + Send + Sync + 'static>;
-
-/// Code block widget
+/// Read-only code block widget
 ///
-/// Displays code with optional syntax highlighting and line numbers.
-/// By default read-only; use `.edit(true)` to enable editing.
+/// For editable code, use `code_editor()` instead.
 pub struct Code {
-    /// The actual visual structure (Div with all children)
-    /// This is rebuilt whenever config changes
     inner: Div,
-    /// Static content (for read-only mode)
     content: String,
-    /// Internal state (for edit mode)
-    state: SharedCodeState,
-    /// Configuration
     config: CodeConfig,
-    /// Syntax highlighter
     highlighter: Option<Arc<dyn SyntaxHighlighter>>,
-    /// Change callback
-    on_change: Option<OnChangeCallback>,
-    /// Token click callback (for intellisense)
-    on_token_click: Option<OnTokenClickCallback>,
-    /// Whether inner needs rebuilding
-    needs_rebuild: bool,
 }
 
 impl Deref for Code {
@@ -421,62 +658,33 @@ impl DerefMut for Code {
 }
 
 impl Code {
-    /// Create a new code block with the given content
     pub fn new(content: impl Into<String>) -> Self {
         let content = content.into();
-        let state = Arc::new(Mutex::new(CodeState::new(&content)));
         let config = CodeConfig::default();
-
         let mut code = Self {
             inner: Div::new(),
             content,
-            state,
             config,
             highlighter: None,
-            on_change: None,
-            on_token_click: None,
-            needs_rebuild: true,
         };
         code.rebuild_inner();
         code
     }
 
-    /// Rebuild the visual structure after config changes
     fn rebuild_inner(&mut self) {
         self.inner = self.create_visual_structure();
-        self.needs_rebuild = false;
     }
 
-    /// Mark that inner needs rebuilding (called by builder methods)
-    fn mark_needs_rebuild(&mut self) {
-        self.needs_rebuild = true;
-    }
-
-    // ========================================================================
-    // Builder Methods
-    // ========================================================================
-
-    /// Enable or disable line numbers
     pub fn line_numbers(mut self, enabled: bool) -> Self {
         self.config.line_numbers = enabled;
         self.rebuild_inner();
         self
     }
 
-    /// Enable or disable editing
-    pub fn edit(mut self, enabled: bool) -> Self {
-        self.config.editable = enabled;
-        self.rebuild_inner();
-        self
-    }
-
-    /// Set syntax highlighting configuration
     pub fn syntax(mut self, config: SyntaxConfig) -> Self {
-        // Store colors before consuming config
         let bg_color = config.highlighter().background_color();
         let text_color = config.highlighter().default_color();
         let line_number_color = config.highlighter().line_number_color();
-
         self.highlighter = Some(config.into_arc());
         self.config.bg_color = bg_color;
         self.config.text_color = text_color;
@@ -485,527 +693,100 @@ impl Code {
         self
     }
 
-    /// Set the font size
     pub fn font_size(mut self, size: f32) -> Self {
         self.config.font_size = size;
         self.rebuild_inner();
         self
     }
 
-    /// Set the line height multiplier
     pub fn line_height(mut self, multiplier: f32) -> Self {
         self.config.line_height = multiplier;
         self.rebuild_inner();
         self
     }
 
-    /// Set the padding
     pub fn padding(mut self, padding: f32) -> Self {
         self.config.padding = padding;
         self.rebuild_inner();
         self
     }
 
-    /// Set callback for content changes (when editable)
-    pub fn on_change<F>(mut self, callback: F) -> Self
-    where
-        F: Fn(&str) + Send + Sync + 'static,
-    {
-        self.on_change = Some(Arc::new(callback));
-        self
-    }
-
-    /// Set callback for token clicks (for intellisense features)
-    ///
-    /// The callback receives a `TokenHit` with information about the clicked token,
-    /// including the token text, type, and position.
-    ///
-    /// # Example
-    /// ```ignore
-    /// code("fn main() {}")
-    ///     .syntax(SyntaxConfig::new(RustHighlighter::new()))
-    ///     .on_token_click(|hit| {
-    ///         println!("Clicked on {:?}: {}", hit.token_type, hit.text);
-    ///         // Show documentation, go to definition, etc.
-    ///     })
-    /// ```
-    pub fn on_token_click<F>(mut self, callback: F) -> Self
-    where
-        F: Fn(&TokenHit) + Send + Sync + 'static,
-    {
-        self.on_token_click = Some(Arc::new(callback));
-        self
-    }
-
-    /// Set background color
     pub fn code_bg(mut self, color: Color) -> Self {
         self.config.bg_color = color;
         self
     }
 
-    /// Set text color
     pub fn text_color(mut self, color: Color) -> Self {
         self.config.text_color = color;
         self
     }
 
-    // ========================================================================
-    // Internal Methods
-    // ========================================================================
-
-    /// Get the styled content with syntax highlighting applied
     fn get_styled_content(&self) -> StyledText {
-        let content = if self.config.editable {
-            self.state.lock().unwrap().value()
-        } else {
-            self.content.clone()
-        };
-
         if let Some(ref highlighter) = self.highlighter {
-            highlighter.highlight(&content)
+            highlighter.highlight(&self.content)
         } else {
-            StyledText::plain(&content, self.config.text_color)
+            StyledText::plain(&self.content, self.config.text_color)
         }
     }
 
-    /// Create the visual structure (the actual code display)
     fn create_visual_structure(&self) -> Div {
         let styled = self.get_styled_content();
         let line_height_px = self.config.font_size * self.config.line_height;
         let num_lines = styled.line_count().max(1);
 
-        // Main container
         let mut container = div()
             .flex_row()
             .bg(self.config.bg_color)
             .rounded(self.config.corner_radius)
             .overflow_clip();
 
-        // Line numbers gutter (if enabled)
         if self.config.line_numbers {
-            let mut line_numbers_col = div()
-                .flex_col()
-                .padding_y_px(self.config.padding)
-                .padding_x_px(8.0);
-
-            for line_num in 1..=num_lines {
-                line_numbers_col = line_numbers_col.child(
-                    div()
-                        .h(line_height_px)
-                        .flex_row()
-                        .justify_end()
-                        .items_center()
-                        .child(
-                            text(format!("{}", line_num))
-                                .size(self.config.font_size)
-                                .color(self.config.line_number_color)
-                                .text_right(),
-                        ),
-                );
-            }
-
-            // Gutter with separator (separator as a 1px wide div)
-            let gutter = div()
-                .flex_row()
-                .bg(self.config.gutter_bg_color)
-                .w(self.config.gutter_width)
-                .child(line_numbers_col.flex_grow())
-                .child(div().w(1.0).h_full().bg(self.config.gutter_separator_color));
-
-            container = container.child(gutter);
+            container = container.child(build_gutter(num_lines, line_height_px, &self.config));
         }
 
-        // Code content area
-        // Don't use overflow_clip here - rely on outer container's clip
         let mut code_area = div()
             .flex_col()
             .flex_grow()
             .padding_x_px(self.config.padding)
-            .padding_y_px(self.config.padding)
-            .relative();
+            .padding_y_px(self.config.padding);
 
-        // Render selection highlights (behind text)
-        if self.config.editable {
-            let state = self.state.lock().unwrap();
-            if let Some(sel_start) = state.selection_start {
-                let (start, end) = order_positions(sel_start, state.cursor);
-                if start != end {
-                    let sel_color = self.config.selection_color;
-                    for line_idx in start.line..=end.line {
-                        if line_idx >= state.lines.len() {
-                            break;
-                        }
-                        let line_text = &state.lines[line_idx];
-                        let line_char_count = line_text.chars().count();
-
-                        let col_start = if line_idx == start.line {
-                            start.column
-                        } else {
-                            0
-                        };
-                        let col_end = if line_idx == end.line {
-                            end.column
-                        } else {
-                            line_char_count
-                        };
-
-                        if col_start == col_end && line_idx != end.line {
-                            // Full-line selection on empty or start-of-line: show thin marker
-                        }
-
-                        let x_start = if col_start > 0 {
-                            let text_before: String =
-                                line_text.chars().take(col_start).collect();
-                            crate::text_measure::measure_text(
-                                &text_before,
-                                self.config.font_size,
-                            )
-                            .width
-                        } else {
-                            0.0
-                        };
-
-                        let x_end = if col_end > 0 {
-                            let text_before: String =
-                                line_text.chars().take(col_end).collect();
-                            crate::text_measure::measure_text(
-                                &text_before,
-                                self.config.font_size,
-                            )
-                            .width
-                        } else {
-                            0.0
-                        };
-
-                        // For lines where selection goes to end, add a small
-                        // extension to make the newline character visible
-                        let width = if col_end == line_char_count
-                            && line_idx != end.line
-                        {
-                            (x_end - x_start)
-                                + self.config.font_size * 0.5
-                        } else {
-                            x_end - x_start
-                        };
-
-                        if width > 0.0 {
-                            let sel_top = line_idx as f32 * line_height_px;
-                            code_area = code_area.child(
-                                div()
-                                    .absolute()
-                                    .left(x_start)
-                                    .top(sel_top)
-                                    .w(width)
-                                    .h(line_height_px)
-                                    .bg(sel_color)
-                                    .rounded(2.0),
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        // Render each line with styled spans
         for styled_line in &styled.lines {
-            // Don't use overflow_clip on line divs - rely on outer container's clip
-            let mut line_div = div().h(line_height_px).flex_row().items_center();
-
-            if styled_line.spans.is_empty() {
-                // Empty line - add a space to maintain height
-                line_div = line_div.child(
-                    text(" ")
-                        .size(self.config.font_size)
-                        .color(self.config.text_color),
-                );
-            } else {
-                // Render each span with its color
-                for span in &styled_line.spans {
-                    let span_text = &styled_line.text[span.start..span.end];
-                    let mut txt = text(span_text)
-                        .size(self.config.font_size)
-                        .color(span.color)
-                        .no_wrap(); // Don't wrap individual spans
-
-                    if span.bold {
-                        txt = txt.bold();
-                    }
-
-                    txt = txt.monospace();
-
-                    line_div = line_div.child(txt);
-                }
-            }
-
-            code_area = code_area.child(line_div);
+            code_area =
+                code_area.child(build_styled_line(styled_line, &self.config, line_height_px));
         }
 
-        // Add cursor if editable and focused
-        if self.config.editable {
-            let state = self.state.lock().unwrap();
-            if state.focused {
-                let cursor_height = self.config.font_size * 1.2;
-                let cursor_line = state.cursor.line;
-                let cursor_col = state.cursor.column;
-
-                // Calculate cursor x position
-                let cursor_x = if cursor_col > 0 && cursor_line < state.lines.len() {
-                    let line_text = &state.lines[cursor_line];
-                    let text_before: String = line_text.chars().take(cursor_col).collect();
-                    crate::text_measure::measure_text(&text_before, self.config.font_size).width
-                } else {
-                    0.0
-                };
-
-                let cursor_top =
-                    (cursor_line as f32 * line_height_px) + (line_height_px - cursor_height) / 2.0;
-
-                let cursor_state_clone = Arc::clone(&state.cursor_state);
-
-                // Update cursor state
-                {
-                    if let Ok(mut cs) = cursor_state_clone.lock() {
-                        cs.visible = true;
-                        cs.color = self.config.cursor_color;
-                        cs.x = cursor_x;
-                        cs.animation = CursorAnimation::SmoothFade;
-                    }
-                }
-
-                drop(state);
-
-                // Add cursor canvas
-                let cursor_color = self.config.cursor_color;
-                let cursor_canvas = canvas(
-                    move |ctx: &mut dyn blinc_core::DrawContext,
-                          bounds: crate::canvas::CanvasBounds| {
-                        let cs = cursor_state_clone.lock().unwrap();
-                        if !cs.visible {
-                            return;
-                        }
-
-                        let opacity = cs.current_opacity();
-                        if opacity < 0.01 {
-                            return;
-                        }
-
-                        let color = Color::rgba(
-                            cursor_color.r,
-                            cursor_color.g,
-                            cursor_color.b,
-                            cursor_color.a * opacity,
-                        );
-
-                        // bounds only has width/height; canvas is positioned at (0,0) in local coords
-                        ctx.fill_rect(
-                            Rect::new(0.0, 0.0, bounds.width, bounds.height),
-                            CornerRadius::default(),
-                            Brush::Solid(color),
-                        );
-                    },
-                )
-                .absolute()
-                .top(cursor_top)
-                .left(cursor_x)
-                .w(2.0)
-                .h(cursor_height);
-
-                code_area = code_area.child(cursor_canvas);
-            }
-        }
-
-        container = container.child(code_area);
-
-        // Add event handlers if editable
-        if self.config.editable {
-            let state_for_click = Arc::clone(&self.state);
-            let state_for_key = Arc::clone(&self.state);
-            let state_for_text = Arc::clone(&self.state);
-            let state_for_blur = Arc::clone(&self.state);
-            let on_change_for_key = self.on_change.clone();
-            let on_change_for_text = self.on_change.clone();
-
-            container = container
-                .on_mouse_down(move |_ctx| {
-                    let mut s = state_for_click.lock().unwrap();
-                    if !s.focused {
-                        s.focused = true;
-                        increment_focus_count();
-                        request_continuous_redraw_pub();
-                    }
-                    request_rebuild();
-                })
-                .on_blur(move |_ctx| {
-                    let mut s = state_for_blur.lock().unwrap();
-                    s.focused = false;
-                    s.selection_start = None;
-                    if let Ok(mut cs) = s.cursor_state.lock() {
-                        cs.visible = false;
-                    }
-                    decrement_focus_count();
-                    request_rebuild();
-                })
-                .on_key_down(move |ctx| {
-                    let mut s = state_for_key.lock().unwrap();
-                    if !s.focused {
-                        return;
-                    }
-
-                    let mut changed = false;
-                    let mut cursor_changed = true;
-
-                    match ctx.key_code {
-                        8 => {
-                            // Backspace
-                            s.delete_backward();
-                            changed = true;
-                        }
-                        127 => {
-                            // Delete
-                            s.delete_forward();
-                            changed = true;
-                        }
-                        13 => {
-                            // Enter
-                            s.insert("\n");
-                            changed = true;
-                        }
-                        37 => {
-                            // Left arrow
-                            s.move_left(ctx.shift);
-                        }
-                        39 => {
-                            // Right arrow
-                            s.move_right(ctx.shift);
-                        }
-                        38 => {
-                            // Up arrow
-                            s.move_up(ctx.shift);
-                        }
-                        40 => {
-                            // Down arrow
-                            s.move_down(ctx.shift);
-                        }
-                        36 => {
-                            // Home
-                            s.move_to_line_start(ctx.shift);
-                        }
-                        35 => {
-                            // End
-                            s.move_to_line_end(ctx.shift);
-                        }
-                        9 => {
-                            // Tab - insert spaces
-                            s.insert("    ");
-                            changed = true;
-                        }
-                        _ => {
-                            cursor_changed = false;
-                        }
-                    }
-
-                    // Reset cursor blink on keystroke
-                    if cursor_changed {
-                        if let Ok(mut cs) = s.cursor_state.lock() {
-                            cs.reset_blink();
-                        }
-                    }
-
-                    if changed {
-                        if let Some(ref callback) = on_change_for_key {
-                            callback(&s.value());
-                        }
-                    }
-
-                    if cursor_changed {
-                        request_rebuild();
-                    }
-                })
-                .on_text_input(move |ctx| {
-                    let mut s = state_for_text.lock().unwrap();
-                    if !s.focused {
-                        return;
-                    }
-
-                    if let Some(c) = ctx.key_char {
-                        s.insert(&c.to_string());
-
-                        // Reset cursor blink
-                        if let Ok(mut cs) = s.cursor_state.lock() {
-                            cs.reset_blink();
-                        }
-
-                        if let Some(ref callback) = on_change_for_text {
-                            callback(&s.value());
-                        }
-
-                        request_rebuild();
-                    }
-                });
-        }
-
-        container
+        container.child(code_area)
     }
 
-    // ========================================================================
-    // Shadowed Div Methods (return Self instead of Div)
-    // ========================================================================
-
-    /// Set width
+    // Shadowed Div methods
     pub fn w(mut self, px: f32) -> Self {
         self.inner = std::mem::take(&mut self.inner).w(px);
         self
     }
-
-    /// Set height
     pub fn h(mut self, px: f32) -> Self {
         self.inner = std::mem::take(&mut self.inner).h(px);
         self
     }
-
-    /// Set width to 100%
     pub fn w_full(mut self) -> Self {
         self.inner = std::mem::take(&mut self.inner).w_full();
         self
     }
-
-    /// Set corner radius
     pub fn rounded(mut self, radius: f32) -> Self {
         self.config.corner_radius = radius;
         self
     }
-
-    /// Set border with color and width
-    pub fn border(mut self, width: f32, color: blinc_core::Color) -> Self {
+    pub fn border(mut self, width: f32, color: Color) -> Self {
         self.inner = std::mem::take(&mut self.inner).border(width, color);
         self
     }
-
-    /// Set border color only
-    pub fn border_color(mut self, color: blinc_core::Color) -> Self {
-        self.inner = std::mem::take(&mut self.inner).border_color(color);
-        self
-    }
-
-    /// Set border width only
-    pub fn border_width(mut self, width: f32) -> Self {
-        self.inner = std::mem::take(&mut self.inner).border_width(width);
-        self
-    }
-
-    /// Set margin
     pub fn m(mut self, value: f32) -> Self {
         self.inner = std::mem::take(&mut self.inner).m(value);
         self
     }
-
-    /// Set margin top
     pub fn mt(mut self, value: f32) -> Self {
         self.inner = std::mem::take(&mut self.inner).mt(value);
         self
     }
-
-    /// Set margin bottom
     pub fn mb(mut self, value: f32) -> Self {
         self.inner = std::mem::take(&mut self.inner).mb(value);
         self
@@ -1014,57 +795,586 @@ impl Code {
 
 impl ElementBuilder for Code {
     fn build(&self, tree: &mut LayoutTree) -> LayoutNodeId {
-        // Delegate to the inner Div which has all children
         self.inner.build(tree)
     }
-
     fn render_props(&self) -> RenderProps {
         self.inner.render_props()
     }
-
     fn children_builders(&self) -> &[Box<dyn ElementBuilder>] {
-        // Delegate to inner - it has all the children
         self.inner.children_builders()
     }
-
     fn element_type_id(&self) -> ElementTypeId {
         ElementTypeId::Div
     }
-
     fn semantic_type_name(&self) -> Option<&'static str> {
         Some("code")
     }
-
     fn event_handlers(&self) -> Option<&crate::event_handler::EventHandlers> {
         ElementBuilder::event_handlers(&self.inner)
     }
-
     fn layout_style(&self) -> Option<&taffy::Style> {
         self.inner.layout_style()
     }
 }
 
 // ============================================================================
+// Editable Code Editor Widget (Stateful, incremental updates)
+// ============================================================================
+
+/// Editable code editor widget using Stateful for incremental updates
+pub struct CodeEditor {
+    inner: crate::stateful::Stateful<crate::stateful::TextFieldState>,
+    state: SharedCodeEditorState,
+}
+
+impl CodeEditor {
+    pub fn new(state: &SharedCodeEditorState) -> Self {
+        use crate::stateful::{
+            refresh_stateful, SharedState, StateTransitions, Stateful, StatefulInner,
+            TextFieldState,
+        };
+        use blinc_core::events::event_types;
+
+        let shared_state: SharedState<TextFieldState> =
+            Arc::new(Mutex::new(StatefulInner::new(TextFieldState::Idle)));
+
+        let data_for_click = Arc::clone(state);
+        let data_for_key = Arc::clone(state);
+        let data_for_text = Arc::clone(state);
+        let shared_for_click = Arc::clone(&shared_state);
+        let shared_for_key = Arc::clone(&shared_state);
+        let shared_for_text = Arc::clone(&shared_state);
+
+        let mut inner = Stateful::with_shared_state(Arc::clone(&shared_state))
+            .on_mouse_down(move |ctx| {
+                let click_x = ctx.local_x;
+                let click_y = ctx.local_y;
+
+                {
+                    let mut d = match data_for_click.lock() {
+                        Ok(d) => d,
+                        Err(_) => return,
+                    };
+
+                    // Focus via FSM
+                    {
+                        let mut shared = shared_for_click.lock().unwrap();
+                        if !shared.state.is_focused() {
+                            if let Some(new_state) = shared
+                                .state
+                                .on_event(event_types::POINTER_DOWN)
+                                .or_else(|| shared.state.on_event(event_types::FOCUS))
+                            {
+                                shared.state = new_state;
+                                shared.needs_visual_update = true;
+                            }
+                        }
+                    }
+
+                    if !d.focused {
+                        d.focused = true;
+                        increment_focus_count();
+                        request_continuous_redraw_pub();
+                    }
+
+                    // Account for padding offset in click coordinates
+                    let adjusted_x = (click_x - d.config.padding).max(0.0);
+                    let adjusted_y = (click_y - d.config.padding).max(0.0);
+                    d.cursor_from_click(adjusted_x, adjusted_y);
+                    d.reset_cursor_blink();
+                }
+
+                refresh_stateful(&shared_for_click);
+            })
+            .on_event(event_types::TEXT_INPUT, move |ctx| {
+                let needs_refresh = {
+                    let mut d = match data_for_text.lock() {
+                        Ok(d) => d,
+                        Err(_) => return,
+                    };
+                    if !d.focused {
+                        return;
+                    }
+                    if let Some(c) = ctx.key_char {
+                        d.insert(&c.to_string());
+                        d.reset_cursor_blink();
+                        if let Some(ref cb) = d.on_change {
+                            cb(&d.value());
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if needs_refresh {
+                    refresh_stateful(&shared_for_text);
+                }
+            })
+            .on_key_down(move |ctx| {
+                let needs_refresh = {
+                    let mut d = match data_for_key.lock() {
+                        Ok(d) => d,
+                        Err(_) => return,
+                    };
+                    if !d.focused {
+                        return;
+                    }
+
+                    let mut cursor_changed = true;
+                    let mut text_changed = false;
+
+                    // Platform modifier: Cmd on macOS, Ctrl elsewhere
+                    let mod_key = ctx.meta || ctx.ctrl;
+
+                    match ctx.key_code {
+                        8 => {
+                            d.delete_backward();
+                            text_changed = true;
+                        }
+                        127 => {
+                            d.delete_forward();
+                            text_changed = true;
+                        }
+                        13 => {
+                            d.insert("\n");
+                            text_changed = true;
+                        }
+                        37 => {
+                            // Left
+                            if mod_key {
+                                d.move_word_left(ctx.shift);
+                            } else {
+                                d.move_left(ctx.shift);
+                            }
+                        }
+                        39 => {
+                            // Right
+                            if mod_key {
+                                d.move_word_right(ctx.shift);
+                            } else {
+                                d.move_right(ctx.shift);
+                            }
+                        }
+                        38 => d.move_up(ctx.shift),
+                        40 => d.move_down(ctx.shift),
+                        36 => d.move_to_line_start(ctx.shift),
+                        35 => d.move_to_line_end(ctx.shift),
+                        9 => {
+                            d.insert("    ");
+                            text_changed = true;
+                        }
+                        _ => {
+                            // Check for Cmd+key combos
+                            if mod_key {
+                                match ctx.key_code {
+                                    // A = Select All
+                                    65 => d.select_all(),
+                                    // C = Copy
+                                    67 => {
+                                        if let Some(selected) = d.selected_text() {
+                                            text_edit::clipboard_write(&selected);
+                                        }
+                                        cursor_changed = false;
+                                    }
+                                    // X = Cut
+                                    88 => {
+                                        if let Some(selected) = d.selected_text() {
+                                            text_edit::clipboard_write(&selected);
+                                            d.delete_selection();
+                                            text_changed = true;
+                                        }
+                                    }
+                                    // V = Paste
+                                    86 => {
+                                        if let Some(clip) = text_edit::clipboard_read() {
+                                            d.insert(&clip);
+                                            text_changed = true;
+                                        }
+                                    }
+                                    // Z = Undo / Shift+Z = Redo
+                                    90 => {
+                                        if ctx.shift {
+                                            d.redo();
+                                        } else {
+                                            d.undo();
+                                        }
+                                        text_changed = true;
+                                    }
+                                    _ => {
+                                        cursor_changed = false;
+                                    }
+                                }
+                            } else {
+                                cursor_changed = false;
+                            }
+                        }
+                    }
+
+                    if cursor_changed {
+                        d.reset_cursor_blink();
+                    }
+                    if text_changed {
+                        if let Some(ref cb) = d.on_change {
+                            cb(&d.value());
+                        }
+                    }
+                    cursor_changed || text_changed
+                };
+                if needs_refresh {
+                    refresh_stateful(&shared_for_key);
+                }
+            })
+            .on_blur(move |_ctx| {
+                // Blur handled by FSM transition
+            })
+            .cursor_text();
+
+        // Register the state callback that builds visual content
+        {
+            let data_for_callback = Arc::clone(state);
+            let mut shared = shared_state.lock().unwrap();
+            shared.state_callback = Some(Arc::new(
+                move |visual: &crate::stateful::TextFieldState, container: &mut Div| {
+                    let mut data = data_for_callback.lock().unwrap();
+                    let cw = data.char_width();
+                    let content = build_editor_content(&mut data, visual.is_focused(), cw);
+                    container.set_child(content);
+
+                    // Apply visual styling
+                    container.set_bg(data.config.bg_color);
+                    container.set_rounded(data.config.corner_radius);
+                },
+            ));
+            shared.needs_visual_update = true;
+        }
+
+        inner.ensure_state_handlers_registered();
+
+        Self {
+            inner,
+            state: Arc::clone(state),
+        }
+    }
+
+    // Builder methods that update shared state config
+    pub fn line_numbers(self, enabled: bool) -> Self {
+        self.state.lock().unwrap().config.line_numbers = enabled;
+        self
+    }
+
+    pub fn syntax(self, syntax_config: SyntaxConfig) -> Self {
+        let bg = syntax_config.highlighter().background_color();
+        let text_col = syntax_config.highlighter().default_color();
+        let ln = syntax_config.highlighter().line_number_color();
+        let hl = syntax_config.into_arc();
+        {
+            let mut d = self.state.lock().unwrap();
+            d.highlighter = Some(hl);
+            d.config.bg_color = bg;
+            d.config.text_color = text_col;
+            d.config.line_number_color = ln;
+        }
+        self
+    }
+
+    pub fn font_size(self, size: f32) -> Self {
+        self.state.lock().unwrap().config.font_size = size;
+        self
+    }
+
+    pub fn line_height(self, multiplier: f32) -> Self {
+        self.state.lock().unwrap().config.line_height = multiplier;
+        self
+    }
+
+    pub fn padding(self, padding: f32) -> Self {
+        self.state.lock().unwrap().config.padding = padding;
+        self
+    }
+
+    pub fn on_change<F: Fn(&str) + Send + Sync + 'static>(self, callback: F) -> Self {
+        self.state.lock().unwrap().on_change = Some(Arc::new(callback));
+        self
+    }
+
+    pub fn code_bg(self, color: Color) -> Self {
+        self.state.lock().unwrap().config.bg_color = color;
+        self
+    }
+
+    pub fn text_color(self, color: Color) -> Self {
+        self.state.lock().unwrap().config.text_color = color;
+        self
+    }
+
+    // Shadowed Div methods
+    pub fn w(mut self, px: f32) -> Self {
+        self.inner = self.inner.w(px);
+        self
+    }
+    pub fn h(mut self, px: f32) -> Self {
+        self.inner = self.inner.h(px);
+        self
+    }
+    pub fn w_full(mut self) -> Self {
+        self.inner = self.inner.w_full();
+        self
+    }
+    pub fn border(mut self, width: f32, color: Color) -> Self {
+        self.inner = self.inner.border(width, color);
+        self
+    }
+    pub fn rounded(self, radius: f32) -> Self {
+        self.state.lock().unwrap().config.corner_radius = radius;
+        self
+    }
+    pub fn m(mut self, value: f32) -> Self {
+        self.inner = self.inner.m(value);
+        self
+    }
+    pub fn mt(mut self, value: f32) -> Self {
+        self.inner = self.inner.mt(value);
+        self
+    }
+    pub fn mb(mut self, value: f32) -> Self {
+        self.inner = self.inner.mb(value);
+        self
+    }
+}
+
+impl ElementBuilder for CodeEditor {
+    fn build(&self, tree: &mut LayoutTree) -> LayoutNodeId {
+        self.inner.build(tree)
+    }
+    fn render_props(&self) -> RenderProps {
+        self.inner.render_props()
+    }
+    fn children_builders(&self) -> &[Box<dyn ElementBuilder>] {
+        self.inner.children_builders()
+    }
+    fn element_type_id(&self) -> ElementTypeId {
+        ElementTypeId::Div
+    }
+    fn semantic_type_name(&self) -> Option<&'static str> {
+        Some("code-editor")
+    }
+    fn event_handlers(&self) -> Option<&crate::event_handler::EventHandlers> {
+        ElementBuilder::event_handlers(&self.inner)
+    }
+    fn layout_style(&self) -> Option<&taffy::Style> {
+        self.inner.layout_style()
+    }
+}
+
+// ============================================================================
+// Shared Visual Building Helpers
+// ============================================================================
+
+fn build_gutter(num_lines: usize, line_height_px: f32, config: &CodeConfig) -> Div {
+    let mut line_numbers_col = div()
+        .flex_col()
+        .padding_y_px(config.padding)
+        .padding_x_px(8.0);
+
+    for line_num in 1..=num_lines {
+        line_numbers_col = line_numbers_col.child(
+            div()
+                .h(line_height_px)
+                .flex_row()
+                .justify_end()
+                .items_center()
+                .child(
+                    text(format!("{}", line_num))
+                        .size(config.font_size)
+                        .color(config.line_number_color)
+                        .text_right(),
+                ),
+        );
+    }
+
+    div()
+        .flex_row()
+        .bg(config.gutter_bg_color)
+        .w(config.gutter_width)
+        .child(line_numbers_col.flex_grow())
+        .child(div().w(1.0).h_full().bg(config.gutter_separator_color))
+}
+
+fn build_styled_line(
+    styled_line: &crate::styled_text::StyledLine,
+    config: &CodeConfig,
+    line_height_px: f32,
+) -> Div {
+    let mut line_div = div().h(line_height_px).flex_row().items_center();
+
+    if styled_line.spans.is_empty() {
+        line_div = line_div.child(text(" ").size(config.font_size).color(config.text_color));
+    } else {
+        for span in &styled_line.spans {
+            let span_text = &styled_line.text[span.start..span.end];
+            let mut txt = text(span_text)
+                .size(config.font_size)
+                .color(span.color)
+                .no_wrap();
+            if span.bold {
+                txt = txt.bold();
+            }
+            txt = txt.monospace();
+            line_div = line_div.child(txt);
+        }
+    }
+
+    line_div
+}
+
+/// Build the visual content for the editable code editor
+fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width: f32) -> Div {
+    let styled = data.get_styled_content();
+    let config = &data.config;
+    let line_height_px = config.font_size * config.line_height;
+    let num_lines = styled.line_count().max(1);
+
+    let mut container = div().flex_row().overflow_clip();
+
+    if config.line_numbers {
+        container = container.child(build_gutter(num_lines, line_height_px, config));
+    }
+
+    let mut code_area = div()
+        .flex_col()
+        .flex_grow()
+        .padding_x_px(config.padding)
+        .padding_y_px(config.padding)
+        .relative();
+
+    // Selection highlights (behind text)
+    if let Some(sel_start) = data.selection_start {
+        let (start, end) = order_positions(sel_start, data.cursor);
+        if start != end {
+            let sel_color = config.selection_color;
+            for line_idx in start.line..=end.line {
+                if line_idx >= data.lines.len() {
+                    break;
+                }
+                let line_text = &data.lines[line_idx];
+                let line_char_count = line_text.chars().count();
+                let col_start = if line_idx == start.line {
+                    start.column
+                } else {
+                    0
+                };
+                let col_end = if line_idx == end.line {
+                    end.column
+                } else {
+                    line_char_count
+                };
+
+                let x_start = col_start as f32 * char_width;
+                let x_end = col_end as f32 * char_width;
+                let width = if col_end == line_char_count && line_idx != end.line {
+                    (x_end - x_start) + config.font_size * 0.5
+                } else {
+                    x_end - x_start
+                };
+
+                if width > 0.0 {
+                    let sel_top = line_idx as f32 * line_height_px;
+                    code_area = code_area.child(
+                        div()
+                            .absolute()
+                            .left(x_start)
+                            .top(sel_top)
+                            .w(width)
+                            .h(line_height_px)
+                            .bg(sel_color)
+                            .rounded(2.0),
+                    );
+                }
+            }
+        }
+    }
+
+    // Text lines
+    for styled_line in &styled.lines {
+        code_area = code_area.child(build_styled_line(styled_line, config, line_height_px));
+    }
+
+    // Cursor
+    if is_focused {
+        let cursor_height = config.font_size * 1.2;
+        let cursor_line = data.cursor.line;
+        let cursor_col = data.cursor.column;
+
+        let cursor_x = cursor_col as f32 * char_width;
+
+        let cursor_top =
+            (cursor_line as f32 * line_height_px) + (line_height_px - cursor_height) / 2.0;
+
+        let cursor_state_clone = Arc::clone(&data.cursor_state);
+        let cursor_color = config.cursor_color;
+
+        {
+            if let Ok(mut cs) = cursor_state_clone.lock() {
+                cs.visible = true;
+                cs.color = cursor_color;
+                cs.x = cursor_x;
+                cs.animation = CursorAnimation::SmoothFade;
+            }
+        }
+
+        let cursor_state_for_canvas = Arc::clone(&data.cursor_state);
+        let cursor_canvas = canvas(
+            move |ctx: &mut dyn blinc_core::DrawContext, bounds: crate::canvas::CanvasBounds| {
+                let cs = cursor_state_for_canvas.lock().unwrap();
+                if !cs.visible {
+                    return;
+                }
+                let opacity = cs.current_opacity();
+                if opacity < 0.01 {
+                    return;
+                }
+                let color = Color::rgba(
+                    cursor_color.r,
+                    cursor_color.g,
+                    cursor_color.b,
+                    cursor_color.a * opacity,
+                );
+                ctx.fill_rect(
+                    Rect::new(0.0, 0.0, bounds.width, bounds.height),
+                    CornerRadius::default(),
+                    Brush::Solid(color),
+                );
+            },
+        )
+        .absolute()
+        .top(cursor_top)
+        .left(cursor_x)
+        .w(2.0)
+        .h(cursor_height);
+
+        code_area = code_area.child(cursor_canvas);
+    }
+
+    container.child(code_area)
+}
+
+// ============================================================================
 // Convenience Constructors
 // ============================================================================
 
-/// Create a code block with the given content
-///
-/// # Example
-/// ```ignore
-/// code("fn main() {}")
-///     .line_numbers(true)
-///     .syntax(SyntaxConfig::new(RustHighlighter::new()))
-/// ```
+/// Create a read-only code block
 pub fn code(content: impl Into<String>) -> Code {
     Code::new(content)
 }
 
 /// Create a preformatted text block (alias for code)
-///
-/// Same as `code()` but semantically for preformatted text.
 pub fn pre(content: impl Into<String>) -> Code {
     Code::new(content)
+}
+
+/// Create an editable code editor widget
+pub fn code_editor(state: &SharedCodeEditorState) -> CodeEditor {
+    CodeEditor::new(state)
 }
 
 #[cfg(test)]
@@ -1082,7 +1392,6 @@ mod tests {
     fn test_code_creation() {
         ensure_theme_initialized();
         let c = code("fn main() {}");
-        assert!(!c.config.editable);
         assert!(!c.config.line_numbers);
     }
 
@@ -1091,39 +1400,78 @@ mod tests {
         ensure_theme_initialized();
         let c = code("let x = 42;")
             .line_numbers(true)
-            .edit(true)
             .font_size(14.0)
             .rounded(12.0);
 
         assert!(c.config.line_numbers);
-        assert!(c.config.editable);
         assert_eq!(c.config.font_size, 14.0);
         assert_eq!(c.config.corner_radius, 12.0);
     }
 
     #[test]
-    fn test_code_state_insert() {
-        let mut state = CodeState::new("hello");
-        state.cursor = TextPosition::new(0, 5);
-        state.insert(" world");
-        assert_eq!(state.value(), "hello world");
+    fn test_editor_state_insert() {
+        ensure_theme_initialized();
+        let state = code_editor_state("hello");
+        {
+            let mut d = state.lock().unwrap();
+            d.cursor = TextPosition::new(0, 5);
+            d.insert(" world");
+            assert_eq!(d.value(), "hello world");
+        }
     }
 
     #[test]
-    fn test_code_state_newline() {
-        let mut state = CodeState::new("hello world");
-        state.cursor = TextPosition::new(0, 5);
-        state.insert_newline();
-        assert_eq!(state.lines.len(), 2);
-        assert_eq!(state.lines[0], "hello");
-        assert_eq!(state.lines[1], " world");
+    fn test_editor_state_newline() {
+        ensure_theme_initialized();
+        let state = code_editor_state("hello world");
+        {
+            let mut d = state.lock().unwrap();
+            d.cursor = TextPosition::new(0, 5);
+            d.insert("\n");
+            assert_eq!(d.lines.len(), 2);
+            assert_eq!(d.lines[0], "hello");
+            assert_eq!(d.lines[1], " world");
+        }
     }
 
     #[test]
-    fn test_code_state_delete() {
-        let mut state = CodeState::new("hello");
-        state.cursor = TextPosition::new(0, 5);
-        state.delete_backward();
-        assert_eq!(state.value(), "hell");
+    fn test_editor_state_undo_redo() {
+        ensure_theme_initialized();
+        let state = code_editor_state("hello");
+        {
+            let mut d = state.lock().unwrap();
+            d.cursor = TextPosition::new(0, 5);
+            d.insert(" world");
+            assert_eq!(d.value(), "hello world");
+            d.undo();
+            assert_eq!(d.value(), "hello");
+            d.redo();
+            assert_eq!(d.value(), "hello world");
+        }
+    }
+
+    #[test]
+    fn test_editor_state_select_all() {
+        ensure_theme_initialized();
+        let state = code_editor_state("line1\nline2");
+        {
+            let mut d = state.lock().unwrap();
+            d.select_all();
+            assert_eq!(d.selected_text(), Some("line1\nline2".to_string()));
+        }
+    }
+
+    #[test]
+    fn test_editor_state_word_nav() {
+        ensure_theme_initialized();
+        let state = code_editor_state("hello world");
+        {
+            let mut d = state.lock().unwrap();
+            d.cursor = TextPosition::new(0, 0);
+            d.move_word_right(false);
+            assert_eq!(d.cursor.column, 6); // after "hello "
+            d.move_word_left(false);
+            assert_eq!(d.cursor.column, 0);
+        }
     }
 }

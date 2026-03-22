@@ -1744,9 +1744,10 @@ impl OverlayManagerInner {
     ) -> Div {
         let margin = 16.0;
 
-        // Create container with proper corner alignment
-        // pointer_events_none allows scroll events to pass through to UI below
+        // Use absolute positioning so the toast container is independent of
+        // other overlay siblings in the parent's Row layout.
         let mut container = div()
+            .absolute()
             .w(vp_width)
             .h(vp_height)
             .pointer_events_none()

@@ -309,8 +309,7 @@ impl ToastBuilder {
 
 /// Get enter animation based on corner
 fn get_enter_animation(corner: Corner) -> blinc_animation::MultiKeyframeAnimation {
-    // Distance must exceed toast width (360px) + margin (16px) to start fully off-screen
-    const SLIDE_DISTANCE: f32 = 400.0;
+    const SLIDE_DISTANCE: f32 = 200.0;
     match corner {
         Corner::TopLeft | Corner::BottomLeft => AnimationPreset::slide_in_left(200, SLIDE_DISTANCE),
         Corner::TopRight | Corner::BottomRight => {
@@ -321,7 +320,7 @@ fn get_enter_animation(corner: Corner) -> blinc_animation::MultiKeyframeAnimatio
 
 /// Get exit animation based on corner
 fn get_exit_animation(corner: Corner) -> blinc_animation::MultiKeyframeAnimation {
-    const SLIDE_DISTANCE: f32 = 400.0;
+    const SLIDE_DISTANCE: f32 = 200.0;
     match corner {
         Corner::TopLeft | Corner::BottomLeft => {
             AnimationPreset::slide_out_left(150, SLIDE_DISTANCE)

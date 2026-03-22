@@ -1950,6 +1950,107 @@ fn build_minimap(data: &CodeEditorData, line_height_px: f32) -> Div {
 
 /// Build indentation guides as absolutely-positioned vertical lines.
 /// Each guide spans only the block of consecutive lines at that indent level.
+/// Find the matching bracket pair when cursor is adjacent to a bracket.
+/// Returns Some((open_pos, close_pos)) if cursor is beside a bracket.
+fn find_matching_brackets(data: &CodeEditorData) -> Option<(TextPosition, TextPosition)> {
+    let line = data.cursor.line;
+    let col = data.cursor.column;
+    if line >= data.lines.len() {
+        return None;
+    }
+    let line_text = &data.lines[line];
+    let chars: Vec<char> = line_text.chars().collect();
+
+    // Check char at cursor and char before cursor
+    let at_cursor = if col < chars.len() {
+        Some(chars[col])
+    } else {
+        None
+    };
+    let before_cursor = if col > 0 { Some(chars[col - 1]) } else { None };
+
+    // Determine which bracket to match and its position
+    let (bracket_char, bracket_col) = if let Some(c) = at_cursor {
+        if matches!(c, '{' | '}' | '(' | ')' | '[' | ']') {
+            (c, col)
+        } else if let Some(c2) = before_cursor {
+            if matches!(c2, '{' | '}' | '(' | ')' | '[' | ']') {
+                (c2, col - 1)
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    } else if let Some(c) = before_cursor {
+        if matches!(c, '{' | '}' | '(' | ')' | '[' | ']') {
+            (c, col - 1)
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+
+    let (open, close) = match bracket_char {
+        '{' | '}' => ('{', '}'),
+        '(' | ')' => ('(', ')'),
+        '[' | ']' => ('[', ']'),
+        _ => return None,
+    };
+
+    let is_open = bracket_char == open;
+    let bracket_pos = TextPosition::new(line, bracket_col);
+
+    if is_open {
+        // Search forward for matching close
+        let mut depth = 0i32;
+        for l in line..data.lines.len() {
+            let start_col = if l == line { bracket_col } else { 0 };
+            for (ci, ch) in data.lines[l].chars().enumerate() {
+                if ci < start_col {
+                    continue;
+                }
+                if ch == open {
+                    depth += 1;
+                } else if ch == close {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some((bracket_pos, TextPosition::new(l, ci)));
+                    }
+                }
+            }
+        }
+    } else {
+        // Search backward for matching open
+        let mut depth = 0i32;
+        for l in (0..=line).rev() {
+            let line_chars: Vec<char> = data.lines[l].chars().collect();
+            let end_col = if l == line {
+                bracket_col
+            } else {
+                line_chars.len().saturating_sub(1)
+            };
+            for ci in (0..=end_col).rev() {
+                if ci >= line_chars.len() {
+                    continue;
+                }
+                let ch = line_chars[ci];
+                if ch == close {
+                    depth += 1;
+                } else if ch == open {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some((TextPosition::new(l, ci), bracket_pos));
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// Build indent guides based on fold regions (bracket-matched blocks only).
 /// Each guide runs vertically from the line after `{` to the line with `}`.
 fn build_indent_guides(
@@ -2086,6 +2187,42 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
                             .bg(sel_color)
                             .rounded(2.0),
                     );
+                }
+            }
+        }
+    }
+
+    // Bracket matching highlights
+    if is_focused {
+        let bracket_positions = find_matching_brackets(data);
+        if let Some((open, close)) = bracket_positions {
+            let bracket_bg = Color::rgba(1.0, 1.0, 0.3, 0.15);
+            for pos in [open, close] {
+                // Find visible row for this line
+                if let Some(vis_row) = visible_lines.iter().position(|&l| l == pos.line) {
+                    if pos.line < data.lines.len() {
+                        let before: String =
+                            data.lines[pos.line].chars().take(pos.column).collect();
+                        let x = data.measure_mono(&before) + pad;
+                        let char_w = data.measure_mono(
+                            &data.lines[pos.line]
+                                .chars()
+                                .skip(pos.column)
+                                .take(1)
+                                .collect::<String>(),
+                        );
+                        let y = vis_row as f32 * line_height_px + pad;
+                        code_area = code_area.child(
+                            div()
+                                .absolute()
+                                .left(x)
+                                .top(y)
+                                .w(char_w.max(2.0))
+                                .h(line_height_px)
+                                .bg(bracket_bg)
+                                .rounded(2.0),
+                        );
+                    }
                 }
             }
         }

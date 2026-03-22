@@ -142,6 +142,8 @@ pub struct CodeEditorData {
     /// Cached per-line syntax highlight results. Indexed by line number.
     /// Cleared when content changes on that line.
     highlight_cache: Vec<Option<crate::styled_text::StyledLine>>,
+    /// Drag selection anchor (mouse-down position, set to selection_start on drag)
+    pub drag_anchor: Option<TextPosition>,
     /// Scroll physics for vertical scrolling
     pub scroll_physics: SharedScrollPhysics,
     /// Cached viewport height (content area minus padding)
@@ -183,6 +185,7 @@ pub fn code_editor_state(content: impl Into<String>) -> SharedCodeEditorState {
         mono_char_width: 0.0,
         mono_char_width_font_size: 0.0,
         highlight_cache: vec![None; num_lines],
+        drag_anchor: None,
         scroll_physics: Arc::new(Mutex::new(ScrollPhysics::default())),
         viewport_height: 0.0,
     }))
@@ -199,11 +202,20 @@ impl CodeEditorData {
         self.lines.len() == 1 && self.lines[0].is_empty()
     }
 
+    /// Measure text width using monospace font options (matches rendered text).
+    pub fn measure_mono(&self, text: &str) -> f32 {
+        let opts = crate::text_measure::TextLayoutOptions {
+            generic_font: crate::div::GenericFont::Monospace,
+            ..crate::text_measure::TextLayoutOptions::new()
+        };
+        crate::text_measure::measure_text_with_options(text, self.config.font_size, &opts).width
+    }
+
     /// Get the cached monospace character width, recomputing if font size changed.
     pub fn char_width(&mut self) -> f32 {
         let fs = self.config.font_size;
         if (self.mono_char_width_font_size - fs).abs() > 0.01 || self.mono_char_width <= 0.0 {
-            self.mono_char_width = crate::text_measure::measure_text("M", fs).width;
+            self.mono_char_width = self.measure_mono("M");
             self.mono_char_width_font_size = fs;
         }
         self.mono_char_width
@@ -574,15 +586,14 @@ impl CodeEditorData {
 
         let line = &self.lines[line_idx];
         let char_count = line.chars().count();
-        let font_size = self.config.font_size;
         let mut best_col = char_count;
         for col in 0..=char_count {
             let text_before: String = line.chars().take(col).collect();
-            let w = crate::text_measure::measure_text(&text_before, font_size).width;
+            let w = self.measure_mono(&text_before);
             if w >= x {
                 if col > 0 {
                     let prev: String = line.chars().take(col - 1).collect();
-                    let prev_w = crate::text_measure::measure_text(&prev, font_size).width;
+                    let prev_w = self.measure_mono(&prev);
                     best_col = if (x - prev_w).abs() < (x - w).abs() {
                         col - 1
                     } else {
@@ -895,9 +906,11 @@ impl CodeEditor {
             Arc::new(Mutex::new(StatefulInner::new(TextFieldState::Idle)));
 
         let data_for_click = Arc::clone(state);
+        let data_for_drag = Arc::clone(state);
         let data_for_key = Arc::clone(state);
         let data_for_text = Arc::clone(state);
         let shared_for_click = Arc::clone(&shared_state);
+        let shared_for_drag = Arc::clone(&shared_state);
         let shared_for_key = Arc::clone(&shared_state);
         let shared_for_text = Arc::clone(&shared_state);
 
@@ -933,16 +946,81 @@ impl CodeEditor {
                         request_continuous_redraw_pub();
                     }
 
-                    // Account for padding offset and scroll position in click coordinates
-                    let adjusted_x = (click_x - d.config.padding).max(0.0);
+                    // Account for gutter, padding, and scroll in click coordinates
+                    let gutter_offset = if d.config.line_numbers {
+                        d.config.gutter_width
+                    } else {
+                        0.0
+                    };
+                    let adjusted_x = (click_x - gutter_offset - d.config.padding).max(0.0);
                     // Add scroll offset: local_y is viewport-relative, we need content-relative
                     let scroll_offset = d.scroll_physics.lock().map(|p| -p.offset_y).unwrap_or(0.0);
                     let adjusted_y = (click_y - d.config.padding + scroll_offset).max(0.0);
                     d.cursor_from_click(adjusted_x, adjusted_y);
+                    // Save click position as drag selection anchor
+                    // Will be cleared by shift-arrow if no drag occurs
+                    d.drag_anchor = Some(d.cursor);
                     d.reset_cursor_blink();
                 }
 
                 refresh_stateful(&shared_for_click);
+            })
+            .on_event(event_types::DRAG, move |ctx| {
+                let mut d = match data_for_drag.lock() {
+                    Ok(d) => d,
+                    Err(_) => return,
+                };
+                if !d.focused {
+                    return;
+                }
+
+                let gutter_offset = if d.config.line_numbers {
+                    d.config.gutter_width
+                } else {
+                    0.0
+                };
+                let adjusted_x = (ctx.local_x - gutter_offset - d.config.padding).max(0.0);
+                let scroll_offset = d.scroll_physics.lock().map(|p| -p.offset_y).unwrap_or(0.0);
+                let adjusted_y = (ctx.local_y - d.config.padding + scroll_offset).max(0.0);
+
+                // Move cursor to drag position (selection_start stays at mouse-down position)
+                let line_height = d.config.font_size * d.config.line_height;
+                let line_idx = ((adjusted_y / line_height).floor() as usize)
+                    .min(d.lines.len().saturating_sub(1));
+                let line = d.lines[line_idx].clone();
+                let char_count = line.chars().count();
+                let mut best_col = char_count;
+                for col in 0..=char_count {
+                    let text_before: String = line.chars().take(col).collect();
+                    let w = d.measure_mono(&text_before);
+                    if w >= adjusted_x {
+                        if col > 0 {
+                            let prev: String = line.chars().take(col - 1).collect();
+                            let prev_w = d.measure_mono(&prev);
+                            best_col = if (adjusted_x - prev_w).abs() < (adjusted_x - w).abs() {
+                                col - 1
+                            } else {
+                                col
+                            };
+                        } else {
+                            best_col = 0;
+                        }
+                        break;
+                    }
+                }
+                d.cursor = TextPosition::new(line_idx, best_col);
+
+                // Set selection from drag anchor to current cursor
+                if let Some(anchor) = d.drag_anchor {
+                    if anchor != d.cursor {
+                        d.selection_start = Some(anchor);
+                    } else {
+                        d.selection_start = None;
+                    }
+                }
+
+                drop(d);
+                crate::stateful::refresh_stateful(&shared_for_drag);
             })
             .on_event(event_types::TEXT_INPUT, move |ctx| {
                 let needs_refresh = {
@@ -1351,13 +1429,13 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
 
                 let x_start = if col_start > 0 {
                     let before: String = line_text.chars().take(col_start).collect();
-                    crate::text_measure::measure_text(&before, config.font_size).width
+                    data.measure_mono(&before)
                 } else {
                     0.0
                 };
                 let x_end = if col_end > 0 {
                     let before: String = line_text.chars().take(col_end).collect();
-                    crate::text_measure::measure_text(&before, config.font_size).width
+                    data.measure_mono(&before)
                 } else {
                     0.0
                 };
@@ -1399,7 +1477,7 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
 
         let cursor_x = if cursor_col > 0 && cursor_line < data.lines.len() {
             let text_before: String = data.lines[cursor_line].chars().take(cursor_col).collect();
-            crate::text_measure::measure_text(&text_before, config.font_size).width + pad
+            data.measure_mono(&text_before) + pad
         } else {
             pad
         };

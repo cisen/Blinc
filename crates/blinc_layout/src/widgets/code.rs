@@ -1783,16 +1783,18 @@ fn build_gutter(
             let is_fold_point = fold_regions.iter().any(|r| r.start_line == line_idx);
             let is_folded = folded_starts.contains(&line_idx);
             if is_fold_point {
+                // Small triangles that stay as text glyphs (not emoji)
                 let (marker, marker_color) = if is_folded {
-                    ("\u{25B6}", config.line_number_color) // ▶ folded
+                    ("\u{25B8}", config.line_number_color) // ▸ small right triangle
                 } else {
-                    ("\u{25BC}", config.indent_guide_color) // ▼ expanded
+                    ("\u{25BE}", config.indent_guide_color) // ▾ small down triangle
                 };
                 row = row.child(
                     div().w(12.0).items_center().justify_center().child(
                         text(marker)
-                            .size(config.font_size * 0.6)
-                            .color(marker_color),
+                            .size(config.font_size * 0.7)
+                            .color(marker_color)
+                            .monospace(),
                     ),
                 );
             } else {
@@ -1999,7 +2001,10 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
     let line_height_px = config.font_size * config.line_height;
     let visible_lines = data.visible_lines();
 
-    let container = div().flex_row().w_full();
+    // The Stateful container uses overflow_y_scroll, so its direct child
+    // must grow taller than the viewport for scrolling to work.
+    // Use a single flex_row: [gutter | code_area | minimap]
+    let mut container = div().flex_row().w_full();
 
     let pad = config.padding;
     let mut code_area = div().flex_col().flex_grow().relative();
@@ -2170,13 +2175,12 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
         code_area = code_area.child(cursor_canvas);
     }
 
-    // Build layout: [gutter] [code_area] [minimap]
-    // Scrolling is handled by the Stateful container's overflow_y_scroll
-    let mut inner = div().flex_row().flex_grow();
+    // Build layout: [gutter | code_area | minimap]
+    // All in a single flex_row — overflow_y_scroll on the Stateful parent handles scrolling
     if config.line_numbers || config.code_folding {
         let fold_regions = data.detect_fold_regions();
         let folded_starts: Vec<usize> = data.folded_regions.iter().map(|&(s, _)| s).collect();
-        inner = inner.child(build_gutter(
+        container = container.child(build_gutter(
             &visible_lines,
             line_height_px,
             config,
@@ -2184,14 +2188,14 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
             &folded_starts,
         ));
     }
-    inner = inner.child(code_area);
+    container = container.child(code_area);
 
     // Minimap on the right
     if config.minimap {
-        inner = inner.child(build_minimap(data, line_height_px));
+        container = container.child(build_minimap(data, line_height_px));
     }
 
-    container.child(inner)
+    container
 }
 
 // ============================================================================

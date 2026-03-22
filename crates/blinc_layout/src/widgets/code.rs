@@ -2678,14 +2678,14 @@ fn build_editor_content(
     container
 }
 
-// SVG icons for search bar (small, filled, tint-compatible)
-const ICON_UP: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M8 5l4 5H4z" fill="currentColor"/></svg>"#;
-const ICON_DOWN: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M4 6l4 5 4-5z" fill="currentColor"/></svg>"#;
-const ICON_CLOSE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M5 4l3 3 3-3 1 1-3 3 3 3-1 1-3-3-3 3-1-1 3-3-3-3z" fill="currentColor"/></svg>"#;
-const ICON_REPLACE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M7 5l3 3-3 3V8H4V7h3z" fill="currentColor"/></svg>"#;
-const ICON_REPLACE_ALL: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M7 3l3 2.5-3 2.5V6H4V5h3zM7 9l3 2.5L7 14v-2H4v-1h3z" fill="currentColor"/></svg>"#;
+// SVG icons for search bar (outline style using stroke)
+const ICON_UP: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M4 10l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>"#;
+const ICON_DOWN: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>"#;
+const ICON_CLOSE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>"#;
+const ICON_REPLACE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M3 8h8m-3-3l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>"#;
+const ICON_REPLACE_ALL: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M2 5h7m-3-3l3 3-3 3M2 11h7m-3-3l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>"#;
 
-/// Build an icon button for the search bar
+/// Ghost icon button — transparent bg, themed hover
 fn search_icon_button(
     key: &str,
     icon_svg: &'static str,
@@ -2693,23 +2693,28 @@ fn search_icon_button(
     color: Color,
     on_click: impl Fn() + Send + Sync + 'static,
 ) -> crate::widgets::button::Button {
+    let theme = ThemeState::get();
+    let hover = theme.color(ColorToken::SurfaceElevated);
+    let pressed = theme.color(ColorToken::SurfaceOverlay);
     let btn_state = crate::stateful::use_shared_state::<crate::stateful::ButtonState>(key);
-    crate::widgets::button::Button::with_content(btn_state, move |_state| {
-        div().child(
+    let s = icon_size + 4.0;
+    crate::widgets::button::Button::with_content(btn_state, move |_| {
+        div().w(s).h(s).items_center().justify_center().child(
             crate::svg::svg(icon_svg)
                 .size(icon_size, icon_size)
-                .tint(color),
+                .color(color),
         )
     })
     .bg_color(Color::TRANSPARENT)
-    .hover_color(Color::rgba(1.0, 1.0, 1.0, 0.1))
-    .pressed_color(Color::rgba(1.0, 1.0, 1.0, 0.15))
-    .rounded(3.0)
-    .p(0.5)
+    .hover_color(hover)
+    .pressed_color(pressed)
+    .rounded(4.0)
+    .px(0.0)
+    .py(0.0)
     .on_click(move |_| on_click())
 }
 
-/// Build a toggle button for the search bar (Aa, ab, .*)
+/// Outline toggle button — border when inactive, accent bg when active
 fn search_toggle_button(
     key: &str,
     label: &'static str,
@@ -2719,33 +2724,31 @@ fn search_toggle_button(
     font_size: f32,
     on_click: impl Fn() + Send + Sync + 'static,
 ) -> crate::widgets::button::Button {
+    let theme = ThemeState::get();
+    let hover = theme.color(ColorToken::SurfaceElevated);
+    let border_color = theme.color(ColorToken::Border);
     let btn_state = crate::stateful::use_shared_state::<crate::stateful::ButtonState>(key);
-    let bg = if active {
-        accent.with_alpha(0.3)
+
+    let (bg, border, tc) = if active {
+        (accent.with_alpha(0.15), accent, accent)
     } else {
-        Color::TRANSPARENT
+        (Color::TRANSPARENT, border_color, color)
     };
-    let text_color = if active { accent } else { color };
-    crate::widgets::button::Button::with_content(btn_state, move |_state| {
-        div().flex_row().items_center().child(
-            text(label)
-                .size(font_size)
-                .color(text_color)
-                .monospace()
-                .bold()
-                .no_wrap(),
-        )
+
+    crate::widgets::button::Button::with_content(btn_state, move |_| {
+        div()
+            .items_center()
+            .justify_center()
+            .child(text(label).size(font_size).color(tc).monospace().no_wrap())
     })
     .bg_color(bg)
-    .hover_color(if active {
-        accent.with_alpha(0.4)
-    } else {
-        Color::rgba(1.0, 1.0, 1.0, 0.1)
-    })
-    .pressed_color(accent.with_alpha(0.5))
-    .rounded(4.0)
-    .p(1.0)
-    .py(2.0)
+    .hover_color(hover)
+    .pressed_color(accent.with_alpha(0.3))
+    .border(1.0, border)
+    .rounded(3.0)
+    .border(1.0, border)
+    .px(1.0)
+    .py(0.0)
     .on_click(move |_| on_click())
 }
 
@@ -2773,7 +2776,7 @@ fn build_search_bar(
 
     // --- Find row ---
     let search_state = Arc::clone(&data.search_input_state);
-    let find_input = text_input(&search_state).w(160.0).text_size(small_font);
+    let find_input = text_input(&search_state).flex_grow().text_size(small_font);
 
     // Toggle buttons: [Aa] [ab] [.*]
     let state_for_regex = Arc::clone(shared_state);
@@ -2840,41 +2843,50 @@ fn build_search_bar(
         },
     );
 
+    // Row 1: [input] [.*]  [↑] [↓] [×]
     let find_row = div()
         .flex_row()
         .items_center()
         .gap_px(2.0)
         .child(find_input)
         .child(regex_toggle)
-        .child(
-            text(&match_info)
-                .size(small_font * 0.85)
-                .color(label_color)
-                .no_wrap(),
-        )
+        .child(div().flex_grow()) // spacer
         .child(prev_btn)
         .child(next_btn)
         .child(close_btn);
 
-    // --- Replace row (if active) ---
+    // --- Search bar container ---
     let mut search_bar = div()
         .absolute()
-        .right(8.0)
+        .right(4.0)
         .top(4.0)
+        .w(340.0)
         .flex_col()
-        .gap_px(4.0)
-        .p_px(6.0)
+        .gap_px(2.0)
+        .p_px(4.0)
         .bg(config.bg_color)
         .border(1.0, config.gutter_separator_color)
-        .rounded(6.0)
+        .rounded(4.0)
         .shadow_sm()
         .stack_layer()
         .on_mouse_down(|_| {})
         .child(find_row);
 
+    // Match info row (below find row)
+    if !match_info.is_empty() {
+        search_bar = search_bar.child(
+            div().flex_row().justify_end().child(
+                text(&match_info)
+                    .size(small_font * 0.85)
+                    .color(label_color)
+                    .no_wrap(),
+            ),
+        );
+    }
+
     if data.replace_active {
         let replace_state = Arc::clone(&data.replace_input_state);
-        let replace_input = text_input(&replace_state).w(160.0).text_size(small_font);
+        let replace_input = text_input(&replace_state).flex_grow().text_size(small_font);
 
         let state_for_replace = Arc::clone(shared_state);
         let replace_btn = search_icon_button(

@@ -572,11 +572,28 @@ impl CodeEditorData {
         let line_height = self.config.font_size * self.config.line_height;
         let line_idx = ((y / line_height).floor() as usize).min(self.lines.len().saturating_sub(1));
 
-        let char_count = self.lines[line_idx].chars().count();
-        let cw = self.char_width();
-        // For monospace: column = round(x / char_width), clamped to line length
-        let col = ((x / cw) + 0.5).floor() as usize;
-        let best_col = col.min(char_count);
+        let line = &self.lines[line_idx];
+        let char_count = line.chars().count();
+        let font_size = self.config.font_size;
+        let mut best_col = char_count;
+        for col in 0..=char_count {
+            let text_before: String = line.chars().take(col).collect();
+            let w = crate::text_measure::measure_text(&text_before, font_size).width;
+            if w >= x {
+                if col > 0 {
+                    let prev: String = line.chars().take(col - 1).collect();
+                    let prev_w = crate::text_measure::measure_text(&prev, font_size).width;
+                    best_col = if (x - prev_w).abs() < (x - w).abs() {
+                        col - 1
+                    } else {
+                        col
+                    };
+                } else {
+                    best_col = 0;
+                }
+                break;
+            }
+        }
 
         self.cursor = TextPosition::new(line_idx, best_col);
         self.selection_start = None;
@@ -1077,6 +1094,7 @@ impl CodeEditor {
             .on_blur(move |_ctx| {
                 // Blur handled by FSM transition
             })
+            .overflow_clip()
             .cursor_text();
 
         // Register the state callback that builds visual content
@@ -1326,8 +1344,18 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
                     line_char_count
                 };
 
-                let x_start = col_start as f32 * char_width;
-                let x_end = col_end as f32 * char_width;
+                let x_start = if col_start > 0 {
+                    let before: String = line_text.chars().take(col_start).collect();
+                    crate::text_measure::measure_text(&before, config.font_size).width
+                } else {
+                    0.0
+                };
+                let x_end = if col_end > 0 {
+                    let before: String = line_text.chars().take(col_end).collect();
+                    crate::text_measure::measure_text(&before, config.font_size).width
+                } else {
+                    0.0
+                };
                 let width = if col_end == line_char_count && line_idx != end.line {
                     (x_end - x_start) + config.font_size * 0.5
                 } else {
@@ -1364,7 +1392,12 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
         let cursor_line = data.cursor.line;
         let cursor_col = data.cursor.column;
 
-        let cursor_x = cursor_col as f32 * char_width + pad;
+        let cursor_x = if cursor_col > 0 && cursor_line < data.lines.len() {
+            let text_before: String = data.lines[cursor_line].chars().take(cursor_col).collect();
+            crate::text_measure::measure_text(&text_before, config.font_size).width + pad
+        } else {
+            pad
+        };
 
         let cursor_top =
             (cursor_line as f32 * line_height_px) + (line_height_px - cursor_height) / 2.0 + pad;

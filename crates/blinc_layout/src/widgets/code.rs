@@ -97,6 +97,16 @@ pub struct CodeConfig {
     pub gutter_bg_color: Color,
     /// Gutter separator color
     pub gutter_separator_color: Color,
+    /// Show minimap on the right side
+    pub minimap: bool,
+    /// Minimap width in pixels
+    pub minimap_width: f32,
+    /// Show indentation guides
+    pub indent_guides: bool,
+    /// Indentation guide color
+    pub indent_guide_color: Color,
+    /// Enable code folding
+    pub code_folding: bool,
 }
 
 impl Default for CodeConfig {
@@ -116,6 +126,11 @@ impl Default for CodeConfig {
             selection_color: theme.color(ColorToken::Selection),
             gutter_bg_color: theme.color(ColorToken::SurfaceOverlay),
             gutter_separator_color: theme.color(ColorToken::Border),
+            minimap: false,
+            minimap_width: 60.0,
+            indent_guides: false,
+            indent_guide_color: Color::rgba(1.0, 1.0, 1.0, 0.08),
+            code_folding: false,
         }
     }
 }
@@ -168,6 +183,19 @@ pub struct CodeEditorData {
     pub scroll_physics: SharedScrollPhysics,
     /// Cached viewport height (content area minus padding)
     pub viewport_height: f32,
+    /// Folded line ranges: each entry is (start_line, end_line) where
+    /// start_line is the line with `{` and end_line is the matching `}`.
+    /// Lines start_line+1..end_line are hidden when folded.
+    pub folded_regions: Vec<(usize, usize)>,
+}
+
+/// A foldable region detected from bracket matching
+#[derive(Debug, Clone, Copy)]
+pub struct FoldRegion {
+    /// Line containing the opening bracket
+    pub start_line: usize,
+    /// Line containing the closing bracket
+    pub end_line: usize,
 }
 
 /// Undo/redo entry
@@ -210,6 +238,7 @@ pub fn code_editor_state(content: impl Into<String>) -> SharedCodeEditorState {
         last_click_pos: TextPosition::default(),
         scroll_physics: Arc::new(Mutex::new(ScrollPhysics::default())),
         viewport_height: 0.0,
+        folded_regions: Vec::new(),
     }))
 }
 
@@ -673,6 +702,70 @@ impl CodeEditorData {
         }
     }
 
+    /// Detect foldable regions from bracket matching
+    pub fn detect_fold_regions(&self) -> Vec<FoldRegion> {
+        let mut regions = Vec::new();
+        let mut stack: Vec<usize> = Vec::new();
+        for (i, line) in self.lines.iter().enumerate() {
+            if self.is_line_folded(i) {
+                continue;
+            }
+            for ch in line.chars() {
+                if ch == '{' {
+                    stack.push(i);
+                } else if ch == '}' {
+                    if let Some(start) = stack.pop() {
+                        if start != i {
+                            regions.push(FoldRegion {
+                                start_line: start,
+                                end_line: i,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        regions
+    }
+
+    /// Check if a line is inside a folded region
+    pub fn is_line_folded(&self, line: usize) -> bool {
+        self.folded_regions
+            .iter()
+            .any(|&(start, end)| line > start && line < end)
+    }
+
+    /// Check if a line is the start of a folded region
+    pub fn is_fold_start(&self, line: usize) -> bool {
+        self.folded_regions.iter().any(|&(start, _)| start == line)
+    }
+
+    /// Toggle fold at a line (fold if unfolded, unfold if folded)
+    pub fn toggle_fold(&mut self, line: usize) {
+        // If already folded at this line, unfold
+        if let Some(idx) = self
+            .folded_regions
+            .iter()
+            .position(|&(start, _)| start == line)
+        {
+            self.folded_regions.remove(idx);
+            return;
+        }
+        // Otherwise, find the fold region starting at this line and fold it
+        let regions = self.detect_fold_regions();
+        if let Some(region) = regions.iter().find(|r| r.start_line == line) {
+            self.folded_regions
+                .push((region.start_line, region.end_line));
+        }
+    }
+
+    /// Get the visible line indices (skipping folded lines)
+    pub fn visible_lines(&self) -> Vec<usize> {
+        (0..self.lines.len())
+            .filter(|&i| !self.is_line_folded(i))
+            .collect()
+    }
+
     /// Smart Home: toggle between first non-whitespace and column 0
     pub fn move_to_line_start_smart(&mut self, select: bool) {
         if select && self.selection_start.is_none() {
@@ -799,6 +892,15 @@ impl CodeEditorData {
 
         self.cursor = TextPosition::new(line_idx, best_col);
         self.selection_start = None;
+    }
+
+    /// Get styled content without cache mutation (for minimap etc.)
+    fn get_styled_content_readonly(&self) -> StyledText {
+        if let Some(ref highlighter) = self.highlighter {
+            highlighter.highlight(&self.value())
+        } else {
+            StyledText::plain(&self.value(), self.config.text_color)
+        }
     }
 
     /// Total content height in pixels (includes padding)
@@ -1009,7 +1111,8 @@ impl Code {
             .overflow_clip();
 
         if self.config.line_numbers {
-            container = container.child(build_gutter(num_lines, line_height_px, &self.config));
+            let visible: Vec<usize> = (0..num_lines).collect();
+            container = container.child(build_gutter(&visible, line_height_px, &self.config, None));
         }
 
         let mut code_area = div()
@@ -1526,6 +1629,24 @@ impl CodeEditor {
         self
     }
 
+    /// Show minimap on the right side
+    pub fn minimap(self, enabled: bool) -> Self {
+        self.state.lock().unwrap().config.minimap = enabled;
+        self
+    }
+
+    /// Show indentation guides
+    pub fn indent_guides(self, enabled: bool) -> Self {
+        self.state.lock().unwrap().config.indent_guides = enabled;
+        self
+    }
+
+    /// Enable code folding (collapsible blocks)
+    pub fn code_folding(self, enabled: bool) -> Self {
+        self.state.lock().unwrap().config.code_folding = enabled;
+        self
+    }
+
     // Shadowed Div methods
     pub fn w(mut self, px: f32) -> Self {
         self.inner = self.inner.w(px);
@@ -1612,32 +1733,66 @@ impl ElementBuilder for CodeEditor {
 // Shared Visual Building Helpers
 // ============================================================================
 
-fn build_gutter(num_lines: usize, line_height_px: f32, config: &CodeConfig) -> Div {
+fn build_gutter(
+    visible_lines: &[usize],
+    line_height_px: f32,
+    config: &CodeConfig,
+    data: Option<&CodeEditorData>,
+) -> Div {
+    let fold_marker_color = config.line_number_color;
     let mut line_numbers_col = div()
         .flex_col()
         .padding_y_px(config.padding)
-        .padding_x_px(8.0);
+        .padding_x_px(4.0);
 
-    for line_num in 1..=num_lines {
-        line_numbers_col = line_numbers_col.child(
-            div()
-                .h(line_height_px)
-                .flex_row()
-                .justify_end()
-                .items_center()
-                .child(
-                    text(format!("{}", line_num))
-                        .size(config.font_size)
-                        .color(config.line_number_color)
-                        .text_right(),
-                ),
+    for &line_idx in visible_lines {
+        let line_num = line_idx + 1;
+        let mut row = div()
+            .h(line_height_px)
+            .flex_row()
+            .justify_end()
+            .items_center()
+            .gap(2.0);
+
+        // Fold marker (if code_folding enabled and line has a foldable region)
+        if config.code_folding {
+            if let Some(d) = data {
+                let fold_regions = d.detect_fold_regions();
+                let is_fold_point = fold_regions.iter().any(|r| r.start_line == line_idx);
+                let is_folded = d.is_fold_start(line_idx);
+                if is_fold_point {
+                    let marker = if is_folded { "+" } else { "-" };
+                    row = row.child(
+                        text(marker)
+                            .size(config.font_size * 0.8)
+                            .color(fold_marker_color)
+                            .monospace(),
+                    );
+                } else {
+                    row = row.child(div().w(config.font_size * 0.6));
+                }
+            }
+        }
+
+        row = row.child(
+            text(format!("{}", line_num))
+                .size(config.font_size)
+                .color(config.line_number_color)
+                .text_right(),
         );
+        line_numbers_col = line_numbers_col.child(row);
     }
+
+    let gutter_width = if config.code_folding {
+        config.gutter_width + 12.0
+    } else {
+        config.gutter_width
+    };
 
     div()
         .flex_row()
         .bg(config.gutter_bg_color)
-        .w(config.gutter_width)
+        .w(gutter_width)
         .child(line_numbers_col.flex_grow())
         .child(div().w(1.0).h_full().bg(config.gutter_separator_color))
 }
@@ -1669,14 +1824,136 @@ fn build_styled_line(
     line_div
 }
 
+/// Build a minimap — a scaled-down overview of all code lines
+fn build_minimap(data: &CodeEditorData, line_height_px: f32) -> Div {
+    let config = &data.config;
+    let minimap_line_h = 2.0_f32; // Each line is 2px tall in minimap
+    let visible_lines = data.visible_lines();
+    let total_h = visible_lines.len() as f32 * minimap_line_h;
+
+    let mut minimap = div()
+        .flex_col()
+        .w(config.minimap_width)
+        .bg(Color::rgba(0.0, 0.0, 0.0, 0.15))
+        .padding_y_px(4.0)
+        .padding_x_px(2.0);
+
+    // Viewport indicator
+    let viewport_h = data.viewport_height;
+    let content_h = data.content_height();
+    let scroll_offset = data
+        .scroll_physics
+        .lock()
+        .map(|p| -p.offset_y)
+        .unwrap_or(0.0);
+    let viewport_ratio = if content_h > 0.0 {
+        viewport_h / content_h
+    } else {
+        1.0
+    };
+    let indicator_h = (total_h * viewport_ratio).max(8.0);
+    let indicator_top = if content_h > viewport_h {
+        (scroll_offset / (content_h - viewport_h)) * (total_h - indicator_h)
+    } else {
+        0.0
+    };
+
+    // Build minimap content with viewport indicator
+    let mut content = div().flex_col().relative().w_full();
+
+    // Viewport indicator (absolute positioned)
+    content = content.child(
+        div()
+            .absolute()
+            .left(0.0)
+            .top(indicator_top + 4.0)
+            .w_full()
+            .h(indicator_h)
+            .bg(Color::rgba(1.0, 1.0, 1.0, 0.1))
+            .rounded(1.0),
+    );
+
+    // Render each visible line as a thin colored bar
+    let styled = data.get_styled_content_readonly();
+    for &line_idx in &visible_lines {
+        if line_idx >= styled.lines.len() {
+            break;
+        }
+        let styled_line = &styled.lines[line_idx];
+        let line_text = &styled_line.text;
+        let char_count = line_text.chars().count();
+
+        // Line width proportional to content length (capped)
+        let width_ratio = (char_count as f32 / 80.0).min(1.0);
+        let bar_w = (config.minimap_width - 4.0) * width_ratio;
+
+        // Use dominant color from first span, or default
+        let color = if let Some(span) = styled_line.spans.first() {
+            Color::rgba(span.color.r, span.color.g, span.color.b, 0.6)
+        } else {
+            Color::rgba(0.5, 0.5, 0.5, 0.3)
+        };
+
+        content = content.child(div().h(minimap_line_h).w(bar_w).bg(color).rounded(0.5));
+    }
+
+    minimap.child(content)
+}
+
+/// Build indentation guides as absolutely-positioned vertical lines
+fn build_indent_guides(
+    data: &CodeEditorData,
+    visible_lines: &[usize],
+    line_height_px: f32,
+    pad: f32,
+    char_width: f32,
+) -> Vec<Div> {
+    let config = &data.config;
+    let indent_size = 4; // spaces per indent level
+    let guide_color = config.indent_guide_color;
+    let mut guides = Vec::new();
+
+    // Find max indent level across visible lines
+    let max_indent = visible_lines
+        .iter()
+        .filter_map(|&i| {
+            let line = &data.lines[i];
+            let spaces = line.chars().take_while(|c| *c == ' ').count();
+            if spaces >= indent_size {
+                Some(spaces / indent_size)
+            } else {
+                None
+            }
+        })
+        .max()
+        .unwrap_or(0);
+
+    // For each indent level, draw a vertical line spanning the visible content
+    for level in 1..=max_indent {
+        let x = (level * indent_size) as f32 * char_width + pad;
+        let total_h = visible_lines.len() as f32 * line_height_px;
+        guides.push(
+            div()
+                .absolute()
+                .left(x)
+                .top(pad)
+                .w(1.0)
+                .h(total_h)
+                .bg(guide_color),
+        );
+    }
+
+    guides
+}
+
 /// Build the visual content for the editable code editor
 fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width: f32) -> Div {
     let styled = data.get_styled_content();
     let config = &data.config;
     let line_height_px = config.font_size * config.line_height;
-    let num_lines = styled.line_count().max(1);
+    let visible_lines = data.visible_lines();
 
-    let container = div().flex_col().w_full();
+    let container = div().flex_row().w_full();
 
     let pad = config.padding;
     let mut code_area = div().flex_col().flex_grow().relative();
@@ -1752,10 +2029,30 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
         }
     }
 
-    // Text lines in a padded wrapper
+    // Indentation guides (behind text)
+    if config.indent_guides {
+        for guide_div in build_indent_guides(data, &visible_lines, line_height_px, pad, char_width)
+        {
+            code_area = code_area.child(guide_div);
+        }
+    }
+
+    // Text lines in a padded wrapper (only visible lines)
     let mut text_wrapper = div().flex_col().padding_x_px(pad).padding_y_px(pad);
-    for styled_line in &styled.lines {
-        text_wrapper = text_wrapper.child(build_styled_line(styled_line, config, line_height_px));
+    for &line_idx in &visible_lines {
+        if line_idx < styled.lines.len() {
+            let mut line_div = build_styled_line(&styled.lines[line_idx], config, line_height_px);
+            // Show fold indicator on fold start lines
+            if config.code_folding && data.is_fold_start(line_idx) {
+                line_div = line_div.child(
+                    text(" ...")
+                        .size(config.font_size * 0.85)
+                        .color(config.line_number_color)
+                        .monospace(),
+                );
+            }
+            text_wrapper = text_wrapper.child(line_div);
+        }
     }
     code_area = code_area.child(text_wrapper);
 
@@ -1820,15 +2117,25 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
         code_area = code_area.child(cursor_canvas);
     }
 
-    // Build inner row with gutter + code_area
+    // Build layout: [gutter] [code_area] [minimap]
     // Scrolling is handled by the Stateful container's overflow_y_scroll
-    let mut inner_row = div().flex_row();
-    if config.line_numbers {
-        inner_row = inner_row.child(build_gutter(num_lines, line_height_px, config));
+    let mut inner = div().flex_row().flex_grow();
+    if config.line_numbers || config.code_folding {
+        inner = inner.child(build_gutter(
+            &visible_lines,
+            line_height_px,
+            config,
+            Some(data),
+        ));
     }
-    inner_row = inner_row.child(code_area);
+    inner = inner.child(code_area);
 
-    container.child(inner_row)
+    // Minimap on the right
+    if config.minimap {
+        inner = inner.child(build_minimap(data, line_height_px));
+    }
+
+    container.child(inner)
 }
 
 // ============================================================================

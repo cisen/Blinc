@@ -111,18 +111,26 @@ fn editable_code_section(state: &SharedCodeEditorState) -> Div {
                 .color(Color::rgba(0.6, 0.6, 0.7, 1.0)),
         )
         .child(
-            code_editor(state)
-                .syntax(SyntaxConfig::new(RustHighlighter::new()))
-                .line_numbers(true)
-                .minimap(true)
-                .indent_guides(true)
-                .code_folding(true)
-                .font_size(13.0)
+            div()
+                .flex_row()
                 .w_full()
                 .h(300.0)
-                .on_change(|new_content| {
-                    tracing::info!("Content changed ({} chars)", new_content.len());
-                }),
+                .overflow_clip()
+                .rounded(8.0)
+                .child(
+                    code_editor(state)
+                        .syntax(SyntaxConfig::new(RustHighlighter::new()))
+                        .line_numbers(true)
+                        .indent_guides(true)
+                        .code_folding(true)
+                        .font_size(13.0)
+                        .w_full()
+                        .h(300.0)
+                        .on_change(|new_content| {
+                            tracing::info!("Content changed ({} chars)", new_content.len());
+                        }),
+                )
+                .child(code_minimap(state)),
         )
 }
 

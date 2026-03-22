@@ -1736,7 +1736,6 @@ impl ElementBuilder for CodeEditor {
             shared.base_render_props = Some(self.inner.inner_render_props());
             shared.base_style = self.inner.inner_layout_style();
         }
-
         self.inner.build(tree)
     }
     fn render_props(&self) -> RenderProps {
@@ -1866,6 +1865,14 @@ fn build_styled_line(
 }
 
 /// Build a minimap — a scaled-down overview of all code lines
+/// Build a minimap widget from code editor state.
+/// This should be placed as a sibling OUTSIDE the code_editor, not inside it.
+pub fn code_minimap(state: &SharedCodeEditorState) -> Div {
+    let data = state.lock().unwrap();
+    let line_height_px = data.config.font_size * data.config.line_height;
+    build_minimap(&data, line_height_px)
+}
+
 fn build_minimap(data: &CodeEditorData, line_height_px: f32) -> Div {
     let config = &data.config;
     let minimap_line_h = 2.0_f32; // Each line is 2px tall in minimap
@@ -2219,11 +2226,6 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
         ));
     }
     container = container.child(code_area);
-
-    if config.minimap {
-        container = container.child(build_minimap(data, line_height_px));
-    }
-
     container
 }
 

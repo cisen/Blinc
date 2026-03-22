@@ -332,8 +332,8 @@ pub mod prelude {
 
     // Code block widget with syntax highlighting
     pub use crate::widgets::{
-        code, code_editor, code_editor_state, pre, Code, CodeConfig, CodeEditor, CodeEditorData,
-        SharedCodeEditorState,
+        code, code_editor, code_editor_state, code_minimap, pre, Code, CodeConfig, CodeEditor,
+        CodeEditorData, SharedCodeEditorState,
     };
 
     // CSS-like units for layout dimensions

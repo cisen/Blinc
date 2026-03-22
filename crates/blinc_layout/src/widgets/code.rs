@@ -179,6 +179,14 @@ pub struct CodeEditorData {
     last_click_time: f64,
     /// Last click position for double-click detection
     last_click_pos: TextPosition,
+    /// Search state
+    pub search_active: bool,
+    /// Current search query
+    pub search_query: String,
+    /// All match positions: (line, start_col, end_col)
+    pub search_matches: Vec<(usize, usize, usize)>,
+    /// Index of the currently focused match
+    pub search_match_idx: usize,
     /// Scroll physics for vertical scrolling
     pub scroll_physics: SharedScrollPhysics,
     /// Cached viewport height (content area minus padding)
@@ -236,6 +244,10 @@ pub fn code_editor_state(content: impl Into<String>) -> SharedCodeEditorState {
         drag_anchor: None,
         last_click_time: 0.0,
         last_click_pos: TextPosition::default(),
+        search_active: false,
+        search_query: String::new(),
+        search_matches: Vec::new(),
+        search_match_idx: 0,
         scroll_physics: Arc::new(Mutex::new(ScrollPhysics::default())),
         viewport_height: 0.0,
         folded_regions: Vec::new(),
@@ -869,6 +881,102 @@ impl CodeEditorData {
         self.sync_highlight_cache();
     }
 
+    /// Execute search: find all matches of query in content.
+    /// Supports plain text and regex (if query starts with /).
+    pub fn execute_search(&mut self) {
+        self.search_matches.clear();
+        self.search_match_idx = 0;
+
+        if self.search_query.is_empty() {
+            return;
+        }
+
+        // Check if regex mode (query starts and ends with /)
+        let is_regex = self.search_query.starts_with('/')
+            && self.search_query.len() > 2
+            && self.search_query.ends_with('/');
+
+        if is_regex {
+            let pattern = &self.search_query[1..self.search_query.len() - 1];
+            if let Ok(re) = regex::Regex::new(pattern) {
+                for (line_idx, line) in self.lines.iter().enumerate() {
+                    for m in re.find_iter(line) {
+                        let start_col = line[..m.start()].chars().count();
+                        let end_col = line[..m.end()].chars().count();
+                        self.search_matches.push((line_idx, start_col, end_col));
+                    }
+                }
+            }
+        } else {
+            // Case-insensitive plain text search
+            let query_lower = self.search_query.to_lowercase();
+            for (line_idx, line) in self.lines.iter().enumerate() {
+                let line_lower = line.to_lowercase();
+                let mut search_from = 0;
+                while let Some(byte_pos) = line_lower[search_from..].find(&query_lower) {
+                    let abs_byte = search_from + byte_pos;
+                    let start_col = line[..abs_byte].chars().count();
+                    let end_col = start_col + self.search_query.chars().count();
+                    self.search_matches.push((line_idx, start_col, end_col));
+                    search_from = abs_byte + query_lower.len();
+                }
+            }
+        }
+    }
+
+    /// Jump to next search match
+    pub fn search_next(&mut self) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        self.search_match_idx = (self.search_match_idx + 1) % self.search_matches.len();
+        let (line, col, _) = self.search_matches[self.search_match_idx];
+        self.cursor = TextPosition::new(line, col);
+        self.selection_start = None;
+        self.ensure_cursor_visible();
+    }
+
+    /// Jump to previous search match
+    pub fn search_prev(&mut self) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        if self.search_match_idx == 0 {
+            self.search_match_idx = self.search_matches.len() - 1;
+        } else {
+            self.search_match_idx -= 1;
+        }
+        let (line, col, _) = self.search_matches[self.search_match_idx];
+        self.cursor = TextPosition::new(line, col);
+        self.selection_start = None;
+        self.ensure_cursor_visible();
+    }
+
+    /// Insert a character into the search query
+    pub fn search_insert(&mut self, ch: char) {
+        self.search_query.push(ch);
+        self.execute_search();
+        // Jump to nearest match from cursor
+        if !self.search_matches.is_empty() {
+            self.search_match_idx = self
+                .search_matches
+                .iter()
+                .position(|&(l, c, _)| {
+                    l > self.cursor.line || (l == self.cursor.line && c >= self.cursor.column)
+                })
+                .unwrap_or(0);
+            let (line, col, _) = self.search_matches[self.search_match_idx];
+            self.cursor = TextPosition::new(line, col);
+            self.ensure_cursor_visible();
+        }
+    }
+
+    /// Delete last character from search query
+    pub fn search_backspace(&mut self) {
+        self.search_query.pop();
+        self.execute_search();
+    }
+
     /// Position cursor from click coordinates
     pub fn cursor_from_click(&mut self, x: f32, y: f32) {
         let line_height = self.config.font_size * self.config.line_height;
@@ -1397,11 +1505,15 @@ impl CodeEditor {
                         if c.is_control() && c != '\t' {
                             return;
                         }
-                        d.insert(&c.to_string());
-                        d.reset_cursor_blink();
-                        d.ensure_cursor_visible();
-                        if let Some(ref cb) = d.on_change {
-                            cb(&d.value());
+                        if d.search_active {
+                            d.search_insert(c);
+                        } else {
+                            d.insert(&c.to_string());
+                            d.reset_cursor_blink();
+                            d.ensure_cursor_visible();
+                            if let Some(ref cb) = d.on_change {
+                                cb(&d.value());
+                            }
                         }
                         true
                     } else {
@@ -1420,6 +1532,36 @@ impl CodeEditor {
                     };
                     if !d.focused {
                         return;
+                    }
+
+                    // When search bar is active, intercept keys for search
+                    if d.search_active && !(ctx.meta || ctx.ctrl) {
+                        let handled = match ctx.key_code {
+                            13 => {
+                                if ctx.shift {
+                                    d.search_prev();
+                                } else {
+                                    d.search_next();
+                                }
+                                true
+                            }
+                            27 => {
+                                d.search_active = false;
+                                d.search_query.clear();
+                                d.search_matches.clear();
+                                true
+                            }
+                            8 => {
+                                d.search_backspace();
+                                true
+                            }
+                            _ => false,
+                        };
+                        if handled {
+                            drop(d);
+                            refresh_stateful(&shared_for_key);
+                            return;
+                        }
                     }
 
                     let mut cursor_changed = true;
@@ -1537,6 +1679,26 @@ impl CodeEditor {
                                         if let Some(clip) = text_edit::clipboard_read() {
                                             d.insert(&clip);
                                             text_changed = true;
+                                        }
+                                    }
+                                    // F = Find (toggle search bar)
+                                    70 => {
+                                        d.search_active = !d.search_active;
+                                        if !d.search_active {
+                                            d.search_query.clear();
+                                            d.search_matches.clear();
+                                        }
+                                        needs_visual_refresh = true;
+                                        cursor_changed = false;
+                                    }
+                                    // G = Next match / Shift+G = Previous match
+                                    71 => {
+                                        if d.search_active {
+                                            if ctx.shift {
+                                                d.search_prev();
+                                            } else {
+                                                d.search_next();
+                                            }
                                         }
                                     }
                                     // Z = Undo / Shift+Z = Redo
@@ -2235,6 +2397,42 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
         }
     }
 
+    // Search match highlights
+    if data.search_active && !data.search_matches.is_empty() {
+        let match_bg = Color::rgba(1.0, 0.8, 0.0, 0.25);
+        let active_bg = Color::rgba(1.0, 0.6, 0.0, 0.5);
+        for (match_idx, &(line_idx, col_start, col_end)) in data.search_matches.iter().enumerate() {
+            if let Some(vis_row) = visible_lines.iter().position(|&l| l == line_idx) {
+                if line_idx < data.lines.len() {
+                    let before: String = data.lines[line_idx].chars().take(col_start).collect();
+                    let matched: String = data.lines[line_idx]
+                        .chars()
+                        .skip(col_start)
+                        .take(col_end - col_start)
+                        .collect();
+                    let x = data.measure_mono(&before) + pad;
+                    let w = data.measure_mono(&matched);
+                    let y = vis_row as f32 * line_height_px + pad;
+                    let bg = if match_idx == data.search_match_idx {
+                        active_bg
+                    } else {
+                        match_bg
+                    };
+                    code_area = code_area.child(
+                        div()
+                            .absolute()
+                            .left(x)
+                            .top(y)
+                            .w(w)
+                            .h(line_height_px)
+                            .bg(bg)
+                            .rounded(2.0),
+                    );
+                }
+            }
+        }
+    }
+
     // Text lines in a padded wrapper (only visible lines)
     let mut text_wrapper = div()
         .flex_col()
@@ -2342,7 +2540,77 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
         ));
     }
     container = container.child(code_area);
-    container
+
+    // Wrap in a flex_col if search bar is active
+    if data.search_active {
+        let match_count = data.search_matches.len();
+        let match_info = if match_count > 0 {
+            format!("{} of {} matches", data.search_match_idx + 1, match_count)
+        } else if data.search_query.is_empty() {
+            String::new()
+        } else {
+            "No matches".to_string()
+        };
+
+        let is_regex = data.search_query.starts_with('/')
+            && data.search_query.len() > 2
+            && data.search_query.ends_with('/');
+
+        let search_bar = div()
+            .flex_row()
+            .items_center()
+            .gap_px(8.0)
+            .p_px(6.0)
+            .bg(config.bg_color)
+            .border_bottom(1.0, config.gutter_separator_color)
+            .child(
+                div()
+                    .flex_row()
+                    .items_center()
+                    .flex_grow()
+                    .bg(Color::rgba(1.0, 1.0, 1.0, 0.06))
+                    .rounded(4.0)
+                    .p_px(4.0)
+                    .child(
+                        text(if data.search_query.is_empty() {
+                            "Find..."
+                        } else {
+                            &data.search_query
+                        })
+                        .size(config.font_size * 0.9)
+                        .color(if data.search_query.is_empty() {
+                            config.line_number_color
+                        } else {
+                            config.text_color
+                        })
+                        .monospace(),
+                    ),
+            )
+            .child(
+                text(&match_info)
+                    .size(config.font_size * 0.8)
+                    .color(config.line_number_color),
+            );
+
+        let regex_label = if is_regex {
+            Some(
+                text("regex")
+                    .size(config.font_size * 0.7)
+                    .color(config.cursor_color),
+            )
+        } else {
+            None
+        };
+
+        let mut bar = search_bar;
+        if let Some(label) = regex_label {
+            bar = bar.child(label);
+        }
+
+        div().flex_col().w_full().child(bar).child(container)
+    } else {
+        container
+    }
 }
 
 // ============================================================================

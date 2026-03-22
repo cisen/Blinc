@@ -200,6 +200,8 @@ pub struct CodeEditorData {
     pub search_whole_word: bool,
     /// Whether replace row is visible
     pub replace_active: bool,
+    /// Overlay handle for the search bar (if open)
+    pub search_overlay_handle: Option<crate::widgets::overlay::OverlayHandle>,
     /// All match positions: (line, start_col, end_col)
     pub search_matches: Vec<(usize, usize, usize)>,
     /// Index of the currently focused match
@@ -270,6 +272,7 @@ pub fn code_editor_state(content: impl Into<String>) -> SharedCodeEditorState {
         search_case_sensitive: false,
         search_whole_word: false,
         replace_active: false,
+        search_overlay_handle: None,
         search_matches: Vec::new(),
         search_match_idx: 0,
         scroll_physics: Arc::new(Mutex::new(ScrollPhysics::default())),
@@ -1643,20 +1646,8 @@ impl CodeEditor {
                     if d.search_active {
                         let mod_key = ctx.meta || ctx.ctrl;
                         if !mod_key {
-                            // Only handle Escape; everything else goes to text_input
                             if ctx.key_code == 27 {
-                                d.search_active = false;
-                                d.replace_active = false;
-                                d.search_query.clear();
-                                d.search_matches.clear();
-                                if let Ok(mut input) = d.search_input_state.lock() {
-                                    input.value.clear();
-                                    input.cursor = 0;
-                                }
-                                if let Ok(mut input) = d.replace_input_state.lock() {
-                                    input.value.clear();
-                                    input.cursor = 0;
-                                }
+                                close_search_overlay(&mut d);
                                 drop(d);
                                 refresh_stateful(&shared_for_key);
                             }
@@ -1783,12 +1774,13 @@ impl CodeEditor {
                                             text_changed = true;
                                         }
                                     }
-                                    // F = Find (toggle search bar)
+                                    // F = Find (toggle search bar overlay)
                                     70 => {
-                                        d.search_active = !d.search_active;
-                                        if !d.search_active {
-                                            d.search_query.clear();
-                                            d.search_matches.clear();
+                                        if d.search_active {
+                                            // Close search
+                                            close_search_overlay(&mut d);
+                                        } else {
+                                            d.search_active = true;
                                         }
                                         needs_visual_refresh = true;
                                         cursor_changed = false;
@@ -1849,10 +1841,17 @@ impl CodeEditor {
                             cb(&d.value());
                         }
                     }
-                    cursor_changed || text_changed || needs_visual_refresh
+                    let should_open_search = d.search_active && d.search_overlay_handle.is_none();
+                    (
+                        cursor_changed || text_changed || needs_visual_refresh,
+                        should_open_search,
+                    )
                 };
-                if needs_refresh {
+                if needs_refresh.0 {
                     refresh_stateful(&shared_for_key);
+                }
+                if needs_refresh.1 {
+                    open_search_overlay(&data_for_key, &format!("{}:search", "code_editor"));
                 }
             })
             .on_blur(move |_ctx| {
@@ -2709,14 +2708,63 @@ fn build_editor_content(
             pad,
         ));
     }
-    // Search bar — absolutely positioned top-right overlay
-    if data.search_active {
-        if let Some(ref shared) = shared_state {
-            code_area = code_area.child(build_search_bar(data, config, shared, instance_key));
-        }
-    }
+    // Search bar is rendered as an overlay (not inside scroll content)
     container = container.child(code_area);
     container
+}
+
+/// Close the search overlay and reset search state
+fn close_search_overlay(data: &mut CodeEditorData) {
+    data.search_active = false;
+    data.replace_active = false;
+    data.search_query.clear();
+    data.search_matches.clear();
+    if let Some(handle) = data.search_overlay_handle.take() {
+        if let Some(ctx) = crate::overlay_state::OverlayContext::try_get() {
+            ctx.overlay_manager().lock().unwrap().close(handle);
+        }
+    }
+    if let Ok(mut i) = data.search_input_state.lock() {
+        i.value.clear();
+        i.cursor = 0;
+    }
+    if let Ok(mut i) = data.replace_input_state.lock() {
+        i.value.clear();
+        i.cursor = 0;
+    }
+}
+
+/// Open the search bar as an overlay
+fn open_search_overlay(shared_state: &SharedCodeEditorState, instance_key: &str) {
+    use crate::overlay_state::get_overlay_manager;
+    use crate::widgets::overlay::{OverlayAnimation, OverlayManagerExt};
+
+    let mgr = get_overlay_manager();
+    let state_for_content = Arc::clone(shared_state);
+    let key = instance_key.to_string();
+
+    let handle = mgr
+        .dropdown()
+        .animation(OverlayAnimation::none())
+        .dismiss_on_escape(true)
+        .on_close({
+            let state_for_close = Arc::clone(shared_state);
+            move || {
+                if let Ok(mut d) = state_for_close.lock() {
+                    d.search_active = false;
+                    d.replace_active = false;
+                    d.search_overlay_handle = None;
+                }
+            }
+        })
+        .content(move || {
+            let data = state_for_content.lock().unwrap();
+            let config = data.config.clone();
+            build_search_bar(&data, &config, &state_for_content, &key)
+        })
+        .show();
+
+    shared_state.lock().unwrap().search_overlay_handle = Some(handle);
 }
 
 // SVG icons for search bar (outline style using stroke)
@@ -2940,18 +2988,7 @@ fn build_search_bar(
         text_col,
         move || {
             if let Ok(mut d) = state_for_close.lock() {
-                d.search_active = false;
-                d.replace_active = false;
-                d.search_query.clear();
-                d.search_matches.clear();
-                if let Ok(mut i) = d.search_input_state.lock() {
-                    i.value.clear();
-                    i.cursor = 0;
-                }
-                if let Ok(mut i) = d.replace_input_state.lock() {
-                    i.value.clear();
-                    i.cursor = 0;
-                }
+                close_search_overlay(&mut d);
             }
         },
     );
@@ -2974,21 +3011,17 @@ fn build_search_bar(
     }
     find_row = find_row.child(prev_btn).child(next_btn).child(close_btn);
 
-    // === CONTAINER ===
+    // === CONTAINER (rendered inside overlay, no absolute/foreground needed) ===
+    let bar_w = input_w + 160.0;
     let mut search_bar = div()
-        .absolute()
-        .right(4.0)
-        .top(0.0)
+        .w(bar_w)
         .flex_col()
         .gap_px(4.0)
-        .p_px(4.0)
+        .p_px(6.0)
         .bg(config.bg_color)
         .border(1.0, border_color)
         .rounded(4.0)
         .shadow_md()
-        .stack_layer()
-        .foreground()
-        .on_mouse_down(|_| {})
         .child(find_row);
 
     // === REPLACE ROW: [spacer] [input] [⇄] [⇄⇄] ===

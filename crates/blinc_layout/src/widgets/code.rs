@@ -1396,11 +1396,7 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
     let line_height_px = config.font_size * config.line_height;
     let num_lines = styled.line_count().max(1);
 
-    let mut container = div().flex_row().w_full().h_full().overflow_clip();
-
-    if config.line_numbers {
-        container = container.child(build_gutter(num_lines, line_height_px, config));
-    }
+    let container = div().w_full().h_full().overflow_clip();
 
     let pad = config.padding;
     let mut code_area = div().flex_col().flex_grow().relative();
@@ -1530,12 +1526,18 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
         code_area = code_area.child(cursor_canvas);
     }
 
-    // Wrap code_area in a Scroll container for vertical scrolling
+    // Build inner row with gutter + code_area, both inside the scroll
+    let mut inner_row = div().flex_row();
+    if config.line_numbers {
+        inner_row = inner_row.child(build_gutter(num_lines, line_height_px, config));
+    }
+    inner_row = inner_row.child(code_area);
+
     let scrollable = Scroll::with_physics(Arc::clone(&data.scroll_physics))
         .direction(ScrollDirection::Vertical)
         .no_bounce()
         .flex_grow()
-        .child(code_area);
+        .child(inner_row);
 
     container.child(scrollable)
 }

@@ -1379,9 +1379,12 @@ impl ElementBuilder for Code {
 pub struct CodeEditor {
     inner: crate::stateful::Stateful<crate::stateful::TextFieldState>,
     state: SharedCodeEditorState,
+    /// Unique instance key for state persistence
+    instance_key: String,
 }
 
 impl CodeEditor {
+    #[track_caller]
     pub fn new(state: &SharedCodeEditorState) -> Self {
         use crate::stateful::{
             refresh_stateful, SharedState, StateTransitions, Stateful, StatefulInner,
@@ -1389,8 +1392,9 @@ impl CodeEditor {
         };
         use blinc_core::events::event_types;
 
-        let shared_state: SharedState<TextFieldState> =
-            Arc::new(Mutex::new(StatefulInner::new(TextFieldState::Idle)));
+        let instance_key = crate::InstanceKey::new("code_editor").get().to_string();
+        let state_key = format!("_code_editor_{}", instance_key);
+        let shared_state = crate::stateful::use_shared_state::<TextFieldState>(&state_key);
 
         let data_for_click = Arc::clone(state);
         let data_for_drag = Arc::clone(state);
@@ -1433,11 +1437,7 @@ impl CodeEditor {
                         request_continuous_redraw_pub();
                     }
 
-                    // Close search bar when clicking on code area
-                    if d.search_active {
-                        d.search_active = false;
-                        d.replace_active = false;
-                    }
+                    // Don't close search on code click — use Escape or close button
 
                     // Account for gutter, padding, and scroll in click coordinates
                     let gutter_w = if d.config.line_numbers || d.config.code_folding {
@@ -1824,9 +1824,11 @@ impl CodeEditor {
         // Register the state callback that builds visual content
         {
             let data_for_callback = Arc::clone(state);
+            let instance_key_for_cb = instance_key.clone();
             let mut shared = shared_state.lock().unwrap();
             shared.state_callback = Some(Arc::new(
                 move |visual: &crate::stateful::TextFieldState, container: &mut Div| {
+                    let instance_key = &instance_key_for_cb;
                     let mut data = data_for_callback.lock().unwrap();
                     let cw = data.char_width();
                     // Sync search query from text_input state
@@ -1869,6 +1871,7 @@ impl CodeEditor {
                         visual.is_focused(),
                         cw,
                         Some(&data_for_callback),
+                        instance_key,
                     );
 
                     // Apply visual styling
@@ -1892,6 +1895,7 @@ impl CodeEditor {
         Self {
             inner,
             state: Arc::clone(state),
+            instance_key,
         }
     }
 
@@ -2393,6 +2397,7 @@ fn build_editor_content(
     is_focused: bool,
     char_width: f32,
     shared_state: Option<&SharedCodeEditorState>,
+    instance_key: &str,
 ) -> Div {
     let styled = data.get_styled_content();
     let config = &data.config;
@@ -2666,19 +2671,19 @@ fn build_editor_content(
     // Search bar — absolutely positioned top-right overlay
     if data.search_active {
         if let Some(ref shared) = shared_state {
-            code_area = code_area.child(build_search_bar(data, config, shared));
+            code_area = code_area.child(build_search_bar(data, config, shared, instance_key));
         }
     }
     container = container.child(code_area);
     container
 }
 
-// SVG icons for search bar buttons
-const ICON_CHEVRON_UP: &str = r#"<svg viewBox="0 0 16 16"><path d="M4 10l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>"#;
-const ICON_CHEVRON_DOWN: &str = r#"<svg viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>"#;
-const ICON_CLOSE: &str = r#"<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>"#;
-const ICON_REPLACE: &str = r#"<svg viewBox="0 0 16 16"><path d="M3 8h7M7 5l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>"#;
-const ICON_REPLACE_ALL: &str = r#"<svg viewBox="0 0 16 16"><path d="M2 6h6M5 3l3 3-3 3M2 12h6M5 9l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"#;
+// SVG icons for search bar (small, filled, tint-compatible)
+const ICON_UP: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M8 5l4 5H4z" fill="currentColor"/></svg>"#;
+const ICON_DOWN: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M4 6l4 5 4-5z" fill="currentColor"/></svg>"#;
+const ICON_CLOSE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M5 4l3 3 3-3 1 1-3 3 3 3-1 1-3-3-3 3-1-1 3-3-3-3z" fill="currentColor"/></svg>"#;
+const ICON_REPLACE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M7 5l3 3-3 3V8H4V7h3z" fill="currentColor"/></svg>"#;
+const ICON_REPLACE_ALL: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M7 3l3 2.5-3 2.5V6H4V5h3zM7 9l3 2.5L7 14v-2H4v-1h3z" fill="currentColor"/></svg>"#;
 
 /// Build an icon button for the search bar
 fn search_icon_button(
@@ -2699,9 +2704,8 @@ fn search_icon_button(
     .bg_color(Color::TRANSPARENT)
     .hover_color(Color::rgba(1.0, 1.0, 1.0, 0.1))
     .pressed_color(Color::rgba(1.0, 1.0, 1.0, 0.15))
-    .rounded(4.0)
-    .px(3.0)
-    .py(3.0)
+    .rounded(3.0)
+    .p(0.5)
     .on_click(move |_| on_click())
 }
 
@@ -2723,12 +2727,13 @@ fn search_toggle_button(
     };
     let text_color = if active { accent } else { color };
     crate::widgets::button::Button::with_content(btn_state, move |_state| {
-        div().child(
+        div().flex_row().items_center().child(
             text(label)
                 .size(font_size)
                 .color(text_color)
                 .monospace()
-                .bold(),
+                .bold()
+                .no_wrap(),
         )
     })
     .bg_color(bg)
@@ -2739,7 +2744,7 @@ fn search_toggle_button(
     })
     .pressed_color(accent.with_alpha(0.5))
     .rounded(4.0)
-    .px(4.0)
+    .p(1.0)
     .py(2.0)
     .on_click(move |_| on_click())
 }
@@ -2749,6 +2754,7 @@ fn build_search_bar(
     data: &CodeEditorData,
     config: &CodeConfig,
     shared_state: &SharedCodeEditorState,
+    instance_key: &str,
 ) -> Div {
     let match_count = data.search_matches.len();
     let match_info = if match_count > 0 {
@@ -2772,7 +2778,7 @@ fn build_search_bar(
     // Toggle buttons: [Aa] [ab] [.*]
     let state_for_regex = Arc::clone(shared_state);
     let regex_toggle = search_toggle_button(
-        "code_search_regex",
+        &format!("{}:search_regex", instance_key),
         ".*",
         data.search_regex,
         label_color,
@@ -2789,8 +2795,8 @@ fn build_search_bar(
     // Nav buttons: [↑] [↓]
     let state_for_prev = Arc::clone(shared_state);
     let prev_btn = search_icon_button(
-        "code_search_prev",
-        ICON_CHEVRON_UP,
+        &format!("{}:search_prev", instance_key),
+        ICON_UP,
         icon_size,
         text_col,
         move || {
@@ -2802,8 +2808,8 @@ fn build_search_bar(
 
     let state_for_next = Arc::clone(shared_state);
     let next_btn = search_icon_button(
-        "code_search_next",
-        ICON_CHEVRON_DOWN,
+        &format!("{}:search_next", instance_key),
+        ICON_DOWN,
         icon_size,
         text_col,
         move || {
@@ -2816,7 +2822,7 @@ fn build_search_bar(
     // Close button [×]
     let state_for_close = Arc::clone(shared_state);
     let close_btn = search_icon_button(
-        "code_search_close",
+        &format!("{}:search_close", instance_key),
         ICON_CLOSE,
         icon_size,
         text_col,
@@ -2872,7 +2878,7 @@ fn build_search_bar(
 
         let state_for_replace = Arc::clone(shared_state);
         let replace_btn = search_icon_button(
-            "code_replace_one",
+            &format!("{}:replace_one", instance_key),
             ICON_REPLACE,
             icon_size,
             text_col,
@@ -2885,7 +2891,7 @@ fn build_search_bar(
 
         let state_for_replace_all = Arc::clone(shared_state);
         let replace_all_btn = search_icon_button(
-            "code_replace_all",
+            &format!("{}:replace_all", instance_key),
             ICON_REPLACE_ALL,
             icon_size,
             text_col,
@@ -2925,6 +2931,7 @@ pub fn pre(content: impl Into<String>) -> Code {
 }
 
 /// Create an editable code editor widget
+#[track_caller]
 pub fn code_editor(state: &SharedCodeEditorState) -> CodeEditor {
     CodeEditor::new(state)
 }

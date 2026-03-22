@@ -1,13 +1,14 @@
 //! Code Element Demo
 //!
-//! This example demonstrates the code/pre elements for displaying code
-//! with syntax highlighting and optional line numbers.
+//! Demonstrates both read-only code display and editable code editor.
 //!
 //! Features demonstrated:
 //! - Syntax highlighting with built-in Rust and JSON highlighters
 //! - Line numbers in the gutter
-//! - Custom highlighters via the SyntaxHighlighter trait
-//! - Token click callbacks for intellisense integration
+//! - Editable code editor with Stateful incremental updates
+//! - Cursor, selection, clipboard (Cmd+C/X/V), undo/redo (Cmd+Z)
+//! - Word navigation (Cmd+Left/Right), select all (Cmd+A)
+//! - Vertical scrolling in the editor
 //!
 //! Run with: cargo run -p blinc_app --example code_demo --features windowed
 
@@ -32,6 +33,27 @@ fn main() -> Result<()> {
 }
 
 fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
+    // Create editable code state outside the UI builder so it persists
+    let editor_state = code_editor_state(
+        r#"use blinc_layout::prelude::*;
+
+fn main() {
+    let ui = div()
+        .flex_col()
+        .gap(16.0)
+        .child(text("Hello, World!").size(24.0))
+        .child(button("Click me").on_click(|_| {
+            println!("Button clicked!");
+        }));
+
+    // Try editing this code!
+    // Cmd+C/X/V for clipboard, Cmd+Z for undo
+    // Cmd+Left/Right for word navigation
+    // Cmd+A to select all
+    render(ui);
+}"#,
+    );
+
     div()
         .w(ctx.width)
         .h(ctx.height)
@@ -43,7 +65,7 @@ fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
         // Title
         .child(text("Code Element Demo").size(28.0).color(Color::WHITE))
         .child(
-            text("Syntax highlighting with the code() element")
+            text("Read-only display + editable code editor")
                 .size(18.0)
                 .color(Color::rgba(0.6, 0.6, 0.7, 1.0)),
         )
@@ -63,6 +85,7 @@ fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
                         .flex_col()
                         .gap(16.0)
                         .flex_grow()
+                        .child(editable_code_section(&editor_state))
                         .child(rust_code_section())
                         .child(json_code_section())
                         .child(plain_code_section())
@@ -71,28 +94,52 @@ fn build_ui(ctx: &WindowedContext) -> impl ElementBuilder {
         )
 }
 
-/// Rust code with syntax highlighting
+/// Editable code editor with syntax highlighting
+fn editable_code_section(state: &SharedCodeEditorState) -> Div {
+    div()
+        .flex_col()
+        .gap(2.0)
+        .child(
+            text("Editable Code Editor")
+                .size(18.0)
+                .color(Color::WHITE)
+                .bold(),
+        )
+        .child(
+            text("Click to focus, then type. Supports selection, clipboard, undo/redo, word nav.")
+                .size(12.0)
+                .color(Color::rgba(0.6, 0.6, 0.7, 1.0)),
+        )
+        .child(
+            code_editor(state)
+                .syntax(SyntaxConfig::new(RustHighlighter::new()))
+                .line_numbers(true)
+                .font_size(13.0)
+                .w_full()
+                .h(300.0)
+                .on_change(|new_content| {
+                    tracing::info!("Content changed ({} chars)", new_content.len());
+                }),
+        )
+}
+
+/// Read-only Rust code with syntax highlighting
 fn rust_code_section() -> Div {
     let rust_code = r#"use blinc_layout::prelude::*;
 
-fn main() {
-    let ui = div()
-        .flex_col()
-        .gap(16.0)
-        .child(text("Hello, World!").size(24.0))
-        .child(button("Click me").on_click(|_| {
-            println!("Button clicked!");
-        }));
-
-    // Render the UI
-    render(ui);
+fn fibonacci(n: u32) -> u32 {
+    match n {
+        0 => 0,
+        1 => 1,
+        _ => fibonacci(n - 1) + fibonacci(n - 2),
+    }
 }"#;
 
     div()
         .flex_col()
         .gap(2.0)
         .child(
-            text("Rust Syntax Highlighting")
+            text("Rust Syntax Highlighting (read-only)")
                 .size(18.0)
                 .color(Color::WHITE)
                 .bold(),
@@ -107,13 +154,7 @@ fn main() {
                 .syntax(SyntaxConfig::new(RustHighlighter::new()))
                 .line_numbers(true)
                 .font_size(13.0)
-                .w_full()
-                .on_token_click(|hit| {
-                    println!(
-                        "Clicked on {:?}: '{}' at line {}, col {}",
-                        hit.token_type, hit.text, hit.line, hit.start_column
-                    );
-                }),
+                .w_full(),
         )
 }
 

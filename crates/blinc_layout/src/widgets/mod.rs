@@ -105,7 +105,10 @@ pub use cursor::{
 };
 
 // Re-export code widget
-pub use code::{code, pre, Code, CodeConfig};
+pub use code::{
+    code, code_editor, code_editor_state, pre, Code, CodeConfig, CodeEditor, CodeEditorData,
+    SharedCodeEditorState,
+};
 
 // Re-export overlay widget
 pub use overlay::{

@@ -936,7 +936,14 @@ impl CodeEditor {
                     if !d.focused {
                         return;
                     }
+                    // Skip control characters and modifier combos (Cmd+C/V/Z etc.)
+                    if ctx.meta || ctx.ctrl {
+                        return;
+                    }
                     if let Some(c) = ctx.key_char {
+                        if c.is_control() && c != '\t' {
+                            return;
+                        }
                         d.insert(&c.to_string());
                         d.reset_cursor_blink();
                         d.ensure_cursor_visible();
@@ -1287,7 +1294,7 @@ fn build_editor_content(data: &mut CodeEditorData, is_focused: bool, char_width:
     let line_height_px = config.font_size * config.line_height;
     let num_lines = styled.line_count().max(1);
 
-    let mut container = div().flex_row().overflow_clip();
+    let mut container = div().flex_row().w_full().h_full().overflow_clip();
 
     if config.line_numbers {
         container = container.child(build_gutter(num_lines, line_height_px, config));

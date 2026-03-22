@@ -1728,7 +1728,15 @@ impl TextArea {
                         return;
                     }
 
+                    // Skip control characters and modifier combos (Cmd+C/V/Z etc.)
+                    if ctx.meta || ctx.ctrl {
+                        return;
+                    }
+
                     if let Some(c) = ctx.key_char {
+                        if c.is_control() && c != '\t' {
+                            return;
+                        }
                         d.insert(&c.to_string());
                         d.reset_cursor_blink();
                         // Recompute visual lines after text change

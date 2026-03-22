@@ -610,30 +610,40 @@ impl CodeEditorData {
         self.selection_start = None;
     }
 
-    /// Total content height in pixels
+    /// Total content height in pixels (includes padding)
     pub fn content_height(&self) -> f32 {
         let line_height = self.config.font_size * self.config.line_height;
-        self.lines.len() as f32 * line_height
+        let pad = self.config.padding;
+        self.lines.len() as f32 * line_height + pad * 2.0
     }
 
-    /// Ensure cursor is within the visible scroll viewport
+    /// Ensure cursor is within the visible scroll viewport.
+    /// Only scrolls when cursor would be outside the visible area.
     pub fn ensure_cursor_visible(&mut self) {
         let line_height = self.config.font_size * self.config.line_height;
+        let pad = self.config.padding;
         if self.viewport_height <= 0.0 {
             return;
         }
 
-        let cursor_y = self.cursor.line as f32 * line_height;
+        // Cursor Y in scroll content coordinates (includes top padding)
+        let cursor_y = self.cursor.line as f32 * line_height + pad;
         let cursor_bottom = cursor_y + line_height;
 
         let mut physics = self.scroll_physics.lock().unwrap();
         let current_offset = -physics.offset_y;
+        let visible_bottom = current_offset + self.viewport_height;
+
+        // Only scroll if cursor is outside the visible range
+        if cursor_y >= current_offset && cursor_bottom <= visible_bottom {
+            return; // Cursor is visible, no scroll needed
+        }
 
         let mut new_offset = current_offset;
         if cursor_y < current_offset {
             new_offset = cursor_y;
         }
-        if cursor_bottom > current_offset + self.viewport_height {
+        if cursor_bottom > visible_bottom {
             new_offset = cursor_bottom - self.viewport_height;
         }
 

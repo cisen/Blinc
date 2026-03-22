@@ -604,6 +604,156 @@ impl CodeEditorData {
         }
     }
 
+    /// Delete word backward (Ctrl/Cmd+Backspace)
+    pub fn delete_word_backward(&mut self) {
+        if self.delete_selection() {
+            return;
+        }
+        self.push_undo();
+        if self.cursor.column == 0 && self.cursor.line > 0 {
+            // Merge with previous line
+            let current_line = self.lines.remove(self.cursor.line);
+            self.cursor.line -= 1;
+            self.cursor.column = self.lines[self.cursor.line].chars().count();
+            self.lines[self.cursor.line].push_str(&current_line);
+            self.invalidate_all_highlights();
+        } else if self.cursor.line < self.lines.len() {
+            let new_col =
+                text_edit::word_boundary_left(&self.lines[self.cursor.line], self.cursor.column);
+            let line = &mut self.lines[self.cursor.line];
+            let start_byte = char_to_byte_pos(line, new_col);
+            let end_byte = char_to_byte_pos(line, self.cursor.column);
+            line.replace_range(start_byte..end_byte, "");
+            self.cursor.column = new_col;
+            self.invalidate_highlight_line(self.cursor.line);
+            self.sync_highlight_cache();
+        }
+    }
+
+    /// Delete word forward (Ctrl/Cmd+Delete)
+    pub fn delete_word_forward(&mut self) {
+        if self.delete_selection() {
+            return;
+        }
+        self.push_undo();
+        if self.cursor.line < self.lines.len() {
+            let line_len = self.lines[self.cursor.line].chars().count();
+            if self.cursor.column >= line_len && self.cursor.line + 1 < self.lines.len() {
+                let next_line = self.lines.remove(self.cursor.line + 1);
+                self.lines[self.cursor.line].push_str(&next_line);
+                self.invalidate_all_highlights();
+            } else {
+                let new_col = text_edit::word_boundary_right(
+                    &self.lines[self.cursor.line],
+                    self.cursor.column,
+                );
+                let line = &mut self.lines[self.cursor.line];
+                let start_byte = char_to_byte_pos(line, self.cursor.column);
+                let end_byte = char_to_byte_pos(line, new_col);
+                line.replace_range(start_byte..end_byte, "");
+                self.invalidate_highlight_line(self.cursor.line);
+                self.sync_highlight_cache();
+            }
+        }
+    }
+
+    /// Smart Home: toggle between first non-whitespace and column 0
+    pub fn move_to_line_start_smart(&mut self, select: bool) {
+        if select && self.selection_start.is_none() {
+            self.selection_start = Some(self.cursor);
+        } else if !select {
+            self.selection_start = None;
+        }
+        if self.cursor.line < self.lines.len() {
+            let line = &self.lines[self.cursor.line];
+            let first_non_ws = line.chars().take_while(|c| c.is_whitespace()).count();
+            if self.cursor.column == first_non_ws || first_non_ws == line.chars().count() {
+                self.cursor.column = 0;
+            } else {
+                self.cursor.column = first_non_ws;
+            }
+        }
+    }
+
+    /// Page Up: move cursor up by viewport_height / line_height lines
+    pub fn page_up(&mut self, select: bool) {
+        if select && self.selection_start.is_none() {
+            self.selection_start = Some(self.cursor);
+        } else if !select {
+            self.selection_start = None;
+        }
+        let line_height = self.config.font_size * self.config.line_height;
+        let page_lines = (self.viewport_height / line_height).floor() as usize;
+        self.cursor.line = self.cursor.line.saturating_sub(page_lines.max(1));
+        let line_len = self.lines[self.cursor.line].chars().count();
+        self.cursor.column = self.cursor.column.min(line_len);
+    }
+
+    /// Page Down: move cursor down by viewport_height / line_height lines
+    pub fn page_down(&mut self, select: bool) {
+        if select && self.selection_start.is_none() {
+            self.selection_start = Some(self.cursor);
+        } else if !select {
+            self.selection_start = None;
+        }
+        let line_height = self.config.font_size * self.config.line_height;
+        let page_lines = (self.viewport_height / line_height).floor() as usize;
+        let max_line = self.lines.len().saturating_sub(1);
+        self.cursor.line = (self.cursor.line + page_lines.max(1)).min(max_line);
+        let line_len = self.lines[self.cursor.line].chars().count();
+        self.cursor.column = self.cursor.column.min(line_len);
+    }
+
+    /// Indent selected lines (Tab with selection) or indent at cursor
+    pub fn indent_lines(&mut self) {
+        if let Some(sel_start) = self.selection_start {
+            let (start, end) = order_positions(sel_start, self.cursor);
+            self.push_undo();
+            for line_idx in start.line..=end.line {
+                if line_idx < self.lines.len() {
+                    self.lines[line_idx] = format!("    {}", self.lines[line_idx]);
+                    self.invalidate_highlight_line(line_idx);
+                }
+            }
+            // Adjust selection and cursor columns
+            self.selection_start = Some(TextPosition::new(start.line, start.column + 4));
+            self.cursor = TextPosition::new(end.line, end.column + 4);
+            self.sync_highlight_cache();
+        } else {
+            self.insert("    ");
+        }
+    }
+
+    /// Dedent selected lines (Shift+Tab)
+    pub fn dedent_lines(&mut self) {
+        let (start_line, end_line) = if let Some(sel_start) = self.selection_start {
+            let (start, end) = order_positions(sel_start, self.cursor);
+            (start.line, end.line)
+        } else {
+            (self.cursor.line, self.cursor.line)
+        };
+        self.push_undo();
+        for line_idx in start_line..=end_line {
+            if line_idx < self.lines.len() {
+                let line = &self.lines[line_idx];
+                let spaces = line.chars().take(4).take_while(|c| *c == ' ').count();
+                if spaces > 0 {
+                    self.lines[line_idx] = self.lines[line_idx][spaces..].to_string();
+                    self.invalidate_highlight_line(line_idx);
+                }
+            }
+        }
+        // Adjust cursor column
+        if self.cursor.line < self.lines.len() {
+            let line_len = self.lines[self.cursor.line].chars().count();
+            self.cursor.column = self.cursor.column.saturating_sub(4).min(line_len);
+        }
+        if let Some(ref mut sel) = self.selection_start {
+            sel.column = sel.column.saturating_sub(4);
+        }
+        self.sync_highlight_cache();
+    }
+
     /// Position cursor from click coordinates
     pub fn cursor_from_click(&mut self, x: f32, y: f32) {
         let line_height = self.config.font_size * self.config.line_height;
@@ -1128,11 +1278,21 @@ impl CodeEditor {
 
                     match ctx.key_code {
                         8 => {
-                            d.delete_backward();
+                            // Backspace / Cmd+Backspace
+                            if mod_key {
+                                d.delete_word_backward();
+                            } else {
+                                d.delete_backward();
+                            }
                             text_changed = true;
                         }
                         127 => {
-                            d.delete_forward();
+                            // Delete / Cmd+Delete
+                            if mod_key {
+                                d.delete_word_forward();
+                            } else {
+                                d.delete_forward();
+                            }
                             text_changed = true;
                         }
                         13 => {
@@ -1140,7 +1300,7 @@ impl CodeEditor {
                             text_changed = true;
                         }
                         37 => {
-                            // Left
+                            // Left / Cmd+Left
                             if mod_key {
                                 d.move_word_left(ctx.shift);
                             } else {
@@ -1148,19 +1308,41 @@ impl CodeEditor {
                             }
                         }
                         39 => {
-                            // Right
+                            // Right / Cmd+Right
                             if mod_key {
                                 d.move_word_right(ctx.shift);
                             } else {
                                 d.move_right(ctx.shift);
                             }
                         }
-                        38 => d.move_up(ctx.shift),
-                        40 => d.move_down(ctx.shift),
-                        36 => d.move_to_line_start(ctx.shift),
+                        38 => {
+                            // Up
+                            d.move_up(ctx.shift);
+                        }
+                        40 => {
+                            // Down
+                            d.move_down(ctx.shift);
+                        }
+                        36 => {
+                            // Home — smart home
+                            d.move_to_line_start_smart(ctx.shift);
+                        }
                         35 => d.move_to_line_end(ctx.shift),
+                        33 => {
+                            // Page Up
+                            d.page_up(ctx.shift);
+                        }
+                        34 => {
+                            // Page Down
+                            d.page_down(ctx.shift);
+                        }
                         9 => {
-                            d.insert("    ");
+                            // Tab / Shift+Tab
+                            if ctx.shift {
+                                d.dedent_lines();
+                            } else {
+                                d.indent_lines();
+                            }
                             text_changed = true;
                         }
                         27 => {
@@ -1375,6 +1557,16 @@ impl CodeEditor {
 
 impl ElementBuilder for CodeEditor {
     fn build(&self, tree: &mut LayoutTree) -> LayoutNodeId {
+        // Set base render props and layout style so the Stateful system
+        // preserves container dimensions (h, overflow, bg, rounded) across rebuilds.
+        // This must happen here because builder methods (.w(), .h()) are called
+        // AFTER new() but BEFORE build().
+        {
+            let shared_state = self.inner.shared_state();
+            let mut shared = shared_state.lock().unwrap();
+            shared.base_render_props = Some(self.inner.inner_render_props());
+            shared.base_style = self.inner.inner_layout_style();
+        }
         self.inner.build(tree)
     }
     fn render_props(&self) -> RenderProps {

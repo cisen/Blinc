@@ -204,6 +204,8 @@ pub struct CodeEditorData {
     pub search_overlay_handle: Option<crate::widgets::overlay::OverlayHandle>,
     /// Editor bounds (updated on mouse events for overlay positioning)
     pub editor_bounds: (f32, f32, f32, f32), // (x, y, width, height)
+    /// Signal ID for search state changes (triggers overlay Stateful rebuild)
+    pub search_signal_id: Option<blinc_core::reactive::SignalId>,
     /// All match positions: (line, start_col, end_col)
     pub search_matches: Vec<(usize, usize, usize)>,
     /// Index of the currently focused match
@@ -276,6 +278,7 @@ pub fn code_editor_state(content: impl Into<String>) -> SharedCodeEditorState {
         replace_active: false,
         search_overlay_handle: None,
         editor_bounds: (0.0, 0.0, 800.0, 300.0),
+        search_signal_id: None,
         search_matches: Vec::new(),
         search_match_idx: 0,
         scroll_physics: Arc::new(Mutex::new(ScrollPhysics::default())),
@@ -938,6 +941,7 @@ impl CodeEditorData {
                 }
             }
         } else {
+            #[allow(clippy::type_complexity)]
             let (query_cmp, make_line_cmp): (String, Box<dyn Fn(&str) -> String>) =
                 if self.search_case_sensitive {
                     (self.search_query.clone(), Box::new(|s: &str| s.to_string()))
@@ -1856,16 +1860,15 @@ impl CodeEditor {
                         }
                     }
                     let should_open_search = d.search_active && d.search_overlay_handle.is_none();
-                    (
-                        cursor_changed || text_changed || needs_visual_refresh,
-                        should_open_search,
-                    )
+                    let needs_editor_refresh =
+                        cursor_changed || text_changed || needs_visual_refresh;
+                    (needs_editor_refresh, should_open_search)
                 };
-                if needs_refresh.0 {
-                    refresh_stateful(&shared_for_key);
-                }
                 if needs_refresh.1 {
+                    // Open search overlay — don't refresh editor for this
                     open_search_overlay(&data_for_key, &format!("{}:search", "code_editor"));
+                } else if needs_refresh.0 {
+                    refresh_stateful(&shared_for_key);
                 }
             })
             .on_blur(move |_ctx| {
@@ -2748,20 +2751,34 @@ fn close_search_overlay(data: &mut CodeEditorData) {
     }
 }
 
-/// Open the search bar as an overlay
+/// Open the search bar as an overlay with a signal-driven Stateful inside
 fn open_search_overlay(shared_state: &SharedCodeEditorState, instance_key: &str) {
     use crate::overlay_state::get_overlay_manager;
     use crate::widgets::overlay::{OverlayAnimation, OverlayManagerExt};
 
     let mgr = get_overlay_manager();
-    let state_for_content = Arc::clone(shared_state);
-    let key = instance_key.to_string();
+
+    // Create a signal for search state changes
+    let signal = blinc_core::context_state::use_signal_keyed(
+        &format!("{}:search_signal", instance_key),
+        || 0u64,
+    );
+    let signal_id = signal.id();
+
+    // Store signal ID in data so button callbacks can fire it
+    {
+        let mut d = shared_state.lock().unwrap();
+        d.search_signal_id = Some(signal_id);
+    }
 
     // Position at top-right of editor bounds
     let (ex, ey, ew, _eh) = shared_state.lock().unwrap().editor_bounds;
     let bar_w = 400.0;
     let overlay_x = (ex + ew - bar_w - 8.0).max(ex);
     let overlay_y = ey + 4.0;
+
+    let state_for_content = Arc::clone(shared_state);
+    let key = instance_key.to_string();
 
     let handle = mgr
         .dropdown()
@@ -2775,17 +2792,47 @@ fn open_search_overlay(shared_state: &SharedCodeEditorState, instance_key: &str)
                     d.search_active = false;
                     d.replace_active = false;
                     d.search_overlay_handle = None;
+                    d.search_signal_id = None;
                 }
             }
         })
         .content(move || {
-            let data = state_for_content.lock().unwrap();
-            let config = data.config.clone();
-            build_search_bar(&data, &config, &state_for_content, &key)
+            // Wrap search bar in a Stateful that rebuilds when signal fires
+            let state_for_stateful = Arc::clone(&state_for_content);
+            let key_for_stateful = key.clone();
+
+            let search_stateful_state = crate::stateful::use_shared_state::<
+                crate::stateful::ButtonState,
+            >(&format!("{}:search_stateful", key));
+
+            div().child(
+                crate::stateful::Stateful::with_shared_state(search_stateful_state)
+                    .deps(&[signal_id])
+                    .on_state({
+                        let s = Arc::clone(&state_for_content);
+                        let k = key_for_stateful.clone();
+                        move |_ctx, container| {
+                            let data = s.lock().unwrap();
+                            let config = data.config.clone();
+                            let bar = build_search_bar(&data, &config, &s, &k);
+                            container.set_child(bar);
+                        }
+                    }),
+            )
         })
         .show();
 
     shared_state.lock().unwrap().search_overlay_handle = Some(handle);
+}
+
+/// Fire the search signal to trigger overlay content rebuild
+fn fire_search_signal(shared_state: &SharedCodeEditorState) {
+    if let Ok(d) = shared_state.lock() {
+        if let Some(signal_id) = d.search_signal_id {
+            drop(d); // Release lock before firing signal
+            crate::stateful::check_stateful_deps(&[signal_id]);
+        }
+    }
 }
 
 // SVG icons for search bar (outline style using stroke)
@@ -2897,22 +2944,14 @@ fn build_search_bar(
         FOLD_COLLAPSED_SVG
     };
     let state_for_toggle = Arc::clone(shared_state);
-    // Helper: reopen search overlay after state change
-    let reopen = |state: &SharedCodeEditorState, key: &str| {
+    // Helper: fire signal to rebuild overlay content
+    let notify = |state: &SharedCodeEditorState| {
         let s = Arc::clone(state);
-        let k = key.to_string();
-        move || {
-            // Close and reopen to rebuild content with new state
-            if let Ok(mut d) = s.lock() {
-                close_search_overlay(&mut d);
-                d.search_active = true;
-            }
-            open_search_overlay(&s, &k);
-        }
+        move || fire_search_signal(&s)
     };
 
     // --- Chevron toggle (expand/collapse replace) ---
-    let reopen_for_toggle = reopen(shared_state, instance_key);
+    let notify_toggle = notify(shared_state);
     let chevron = search_icon_button(
         &format!("{}:stoggle", instance_key),
         chevron_svg,
@@ -2922,13 +2961,13 @@ fn build_search_bar(
             if let Ok(mut d) = state_for_toggle.lock() {
                 d.replace_active = !d.replace_active;
             }
-            reopen_for_toggle();
+            notify_toggle();
         },
     );
 
     // --- Toggle buttons (Aa, ab, .*) — absolutely positioned inside find input ---
     let state_for_case = Arc::clone(shared_state);
-    let reopen_for_case = reopen(shared_state, instance_key);
+    let notify_case = notify(shared_state);
     let case_btn = search_toggle_button(
         &format!("{}:scase", instance_key),
         "Aa",
@@ -2941,11 +2980,11 @@ fn build_search_bar(
                 d.search_case_sensitive = !d.search_case_sensitive;
                 d.execute_search();
             }
-            reopen_for_case();
+            notify_case();
         },
     );
     let state_for_word = Arc::clone(shared_state);
-    let reopen_for_word = reopen(shared_state, instance_key);
+    let notify_word = notify(shared_state);
     let word_btn = search_toggle_button(
         &format!("{}:sword", instance_key),
         "ab",
@@ -2958,11 +2997,11 @@ fn build_search_bar(
                 d.search_whole_word = !d.search_whole_word;
                 d.execute_search();
             }
-            reopen_for_word();
+            notify_word();
         },
     );
     let state_for_regex = Arc::clone(shared_state);
-    let reopen_for_regex = reopen(shared_state, instance_key);
+    let notify_regex = notify(shared_state);
     let regex_btn = search_toggle_button(
         &format!("{}:sregex", instance_key),
         ".*",
@@ -2975,7 +3014,7 @@ fn build_search_bar(
                 d.search_regex = !d.search_regex;
                 d.execute_search();
             }
-            reopen_for_regex();
+            notify_regex();
         },
     );
 
@@ -3055,10 +3094,9 @@ fn build_search_bar(
     }
     find_row = find_row.child(prev_btn).child(next_btn).child(close_btn);
 
-    // === CONTAINER (rendered inside overlay, no absolute/foreground needed) ===
-    let bar_w = input_w + 160.0;
+    // === CONTAINER (sized by content, not fixed) ===
     let mut search_bar = div()
-        .w(bar_w)
+        .w_fit()
         .flex_col()
         .gap_px(4.0)
         .p_px(6.0)
@@ -3071,10 +3109,12 @@ fn build_search_bar(
     // === REPLACE ROW: [spacer] [input] [⇄] [⇄⇄] ===
     if data.replace_active {
         let replace_state = Arc::clone(&data.replace_input_state);
-        let replace_input = text_input(&replace_state).w(input_w).text_size(small_font);
+        let replace_input = div()
+            .w(input_w)
+            .child(text_input(&replace_state).w_full().text_size(small_font));
 
         let state_for_r1 = Arc::clone(shared_state);
-        let reopen_for_r1 = reopen(shared_state, instance_key);
+        let notify_r1 = notify(shared_state);
         let replace_btn = search_icon_button(
             &format!("{}:sr1", instance_key),
             ICON_REPLACE,
@@ -3084,11 +3124,11 @@ fn build_search_bar(
                 if let Ok(mut d) = state_for_r1.lock() {
                     d.replace_current();
                 }
-                reopen_for_r1();
+                notify_r1();
             },
         );
         let state_for_ra = Arc::clone(shared_state);
-        let reopen_for_ra = reopen(shared_state, instance_key);
+        let notify_ra = notify(shared_state);
         let replace_all_btn = search_icon_button(
             &format!("{}:sra", instance_key),
             ICON_REPLACE_ALL,
@@ -3098,16 +3138,17 @@ fn build_search_bar(
                 if let Ok(mut d) = state_for_ra.lock() {
                     d.replace_all();
                 }
-                reopen_for_ra();
+                notify_ra();
             },
         );
 
-        let chevron_w = icon_size + 8.0;
+        // Spacer matches chevron button: icon_size + 4 (content) + button padding
+        let chevron_w = icon_size + 4.0;
         let replace_row = div()
             .flex_row()
             .items_center()
             .gap_px(4.0)
-            .child(div().w(chevron_w)) // spacer to align with find input
+            .child(div().w(chevron_w))
             .child(replace_input)
             .child(replace_btn)
             .child(replace_all_btn);
